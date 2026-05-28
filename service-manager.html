@@ -156,6 +156,9 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 .req-items-table td{padding:6px 10px;border-bottom:1px solid #f8fafc}
 .owner-only{display:none}
 .admin-or-owner{display:none}
+.dashboard-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.finance-stats-grid{grid-template-columns:repeat(3,1fr) !important}
+.dashboard-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:8px;flex-wrap:wrap}
 /* MOBILE */
 #mobile-menu-btn{display:none;background:none;border:none;cursor:pointer;color:#1e293b;font-size:22px;padding:2px 6px;line-height:1;flex-shrink:0}
 .sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:98}
@@ -176,16 +179,22 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
   .req-card{padding:10px 12px}
   #user-badge span{display:none}
   /* Dashboard */
-  .dashboard-grid{grid-template-columns:1fr !important}
+  .dashboard-grid{grid-template-columns:1fr}
+  .dashboard-header{font-size:12px}
+  .dashboard-header .btn{font-size:10px !important;padding:3px 7px !important}
   /* Finance */
   .finance-stats-grid{grid-template-columns:1fr !important}
   .finance-table th:nth-child(3),.finance-table td:nth-child(3),
   .finance-table th:nth-child(4),.finance-table td:nth-child(4){display:none}
-  .price-input{width:90px !important;font-size:12px !important}
+  .price-input{width:80px !important;font-size:12px !important}
+  /* Providers grid */
+  .prov-grid{grid-template-columns:repeat(2,1fr) !important;padding:8px;gap:6px}
+  .prov-tile{padding:8px}
+  /* Year nav */
+  .year-nav{margin-left:0}
   /* General */
   .card-header{flex-wrap:wrap;gap:6px}
   .card-header h3{font-size:13px}
-  .btn{font-size:11px !important;padding:5px 10px !important}
 }
 </style>
 </head>
@@ -994,7 +1003,7 @@ function renderDashboard() {
     </div>`).join('');
 
   return `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <div class="dashboard-header">
       <div style="font-size:14px;font-weight:600;color:#374151">Статистика за ${cy} год</div>
       <button class="btn btn-outline" style="font-size:11px;padding:4px 10px" onclick="debugRecords()">🔍 Диагностика</button>
       <div class="year-nav">
@@ -1022,7 +1031,7 @@ function renderDashboard() {
       </div>
     </div>
 
-    <div class="dashboard-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div class="dashboard-grid">
       <div class="card">
         <div class="card-header">
           <h3>Услуги в этом месяце — ${MONTHS[realCm-1]} ${realCy}</h3>
@@ -2216,7 +2225,7 @@ function renderFinance() {
   const fmt = n => n.toLocaleString('ru-RU');
 
   return `
-    <div class="stats-grid finance-stats-grid" style="grid-template-columns:repeat(3,1fr)">
+    <div class="stats-grid finance-stats-grid">
       <div class="stat-card" style="border-left:4px solid #2563eb">
         <div class="stat-value" style="font-size:20px" id="fin-monthly">${fmt(monthlyTotal)} ₽</div>
         <div class="stat-label">Известных затрат в месяц</div>
