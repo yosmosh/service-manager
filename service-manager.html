@@ -175,6 +175,17 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
   .stat-card{padding:10px 12px}
   .req-card{padding:10px 12px}
   #user-badge span{display:none}
+  /* Dashboard */
+  .dashboard-grid{grid-template-columns:1fr !important}
+  /* Finance */
+  .finance-stats-grid{grid-template-columns:1fr !important}
+  .finance-table th:nth-child(3),.finance-table td:nth-child(3),
+  .finance-table th:nth-child(4),.finance-table td:nth-child(4){display:none}
+  .price-input{width:90px !important;font-size:12px !important}
+  /* General */
+  .card-header{flex-wrap:wrap;gap:6px}
+  .card-header h3{font-size:13px}
+  .btn{font-size:11px !important;padding:5px 10px !important}
 }
 </style>
 </head>
@@ -1011,7 +1022,7 @@ function renderDashboard() {
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div class="dashboard-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card">
         <div class="card-header">
           <h3>Услуги в этом месяце — ${MONTHS[realCm-1]} ${realCy}</h3>
@@ -2205,7 +2216,7 @@ function renderFinance() {
   const fmt = n => n.toLocaleString('ru-RU');
 
   return `
-    <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
+    <div class="stats-grid finance-stats-grid" style="grid-template-columns:repeat(3,1fr)">
       <div class="stat-card" style="border-left:4px solid #2563eb">
         <div class="stat-value" style="font-size:20px" id="fin-monthly">${fmt(monthlyTotal)} ₽</div>
         <div class="stat-label">Известных затрат в месяц</div>
