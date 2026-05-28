@@ -227,9 +227,15 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
     </div>
     <div class="form-group">
       <label>Пароль</label>
-      <input type="password" class="form-control" id="login-pwd"
-             placeholder="Введите пароль..." autocomplete="current-password"
-             onkeydown="if(event.key==='Enter')doLogin()">
+      <div style="position:relative">
+        <input type="password" class="form-control" id="login-pwd"
+               placeholder="Введите пароль..." autocomplete="current-password"
+               onkeydown="if(event.key==='Enter')doLogin()"
+               style="padding-right:42px">
+        <button type="button" id="pwd-eye" onclick="togglePwdVisibility()"
+          style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:18px;color:#9ca3af;line-height:1;padding:4px;opacity:.7"
+          title="Показать/скрыть пароль">👁</button>
+      </div>
     </div>
     <div class="login-error" id="login-error">Неверное имя пользователя или пароль.</div>
     <button class="btn btn-primary" style="width:100%;justify-content:center;padding:10px"
@@ -591,6 +597,18 @@ function doLogin() {
     errEl.style.display = 'block';
     document.getElementById('login-pwd').value = '';
     document.getElementById('login-pwd').focus();
+  }
+}
+
+function togglePwdVisibility() {
+  const input = document.getElementById('login-pwd');
+  const btn = document.getElementById('pwd-eye');
+  if (input.type === 'password') {
+    input.type = 'text';
+    btn.textContent = '🙈';
+  } else {
+    input.type = 'password';
+    btn.textContent = '👁';
   }
 }
 
