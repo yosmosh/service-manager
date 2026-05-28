@@ -156,6 +156,26 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 .req-items-table td{padding:6px 10px;border-bottom:1px solid #f8fafc}
 .owner-only{display:none}
 .admin-or-owner{display:none}
+/* MOBILE */
+#mobile-menu-btn{display:none;background:none;border:none;cursor:pointer;color:#1e293b;font-size:22px;padding:2px 6px;line-height:1;flex-shrink:0}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:98}
+.sidebar-overlay.active{display:block}
+@media(max-width:768px){
+  body{overflow:auto;height:auto;min-height:100vh}
+  #mobile-menu-btn{display:block}
+  .sidebar{position:fixed;left:0;top:0;bottom:0;height:100vh;z-index:99;transform:translateX(-280px);transition:transform .25s ease}
+  .sidebar.mobile-open{transform:translateX(0)}
+  .main{width:100vw}
+  .topbar{padding:10px 12px;gap:8px}
+  .topbar h2{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px}
+  .content{padding:10px}
+  .stats-grid{grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}
+  .months-grid{grid-template-columns:repeat(2,1fr);gap:8px;padding:10px}
+  .stat-value{font-size:20px}
+  .stat-card{padding:10px 12px}
+  .req-card{padding:10px 12px}
+  #user-badge span{display:none}
+}
 </style>
 </head>
 <body>
@@ -214,6 +234,7 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 
 <div class="main">
   <div class="topbar">
+    <button id="mobile-menu-btn" onclick="toggleMobileSidebar()">☰</button>
     <h2 id="page-title">Панель управления</h2>
     <div style="display:flex;align-items:center;gap:8px">
       <div id="topbar-actions"></div>
@@ -229,6 +250,7 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
   <div class="content" id="content"></div>
 </div>
 
+<div id="sidebar-overlay" class="sidebar-overlay" onclick="closeMobileSidebar()"></div>
 <div class="modal-overlay hidden" id="modal-overlay" onclick="overlayClick(event)">
   <div class="modal" id="modal">
     <div class="modal-header">
@@ -827,11 +849,21 @@ function dbDel(id) {
 // ==============================
 // НАВИГАЦИЯ
 // ==============================
+function toggleMobileSidebar() {
+  document.getElementById('sidebar').classList.toggle('mobile-open');
+  document.getElementById('sidebar-overlay').classList.toggle('active');
+}
+function closeMobileSidebar() {
+  document.getElementById('sidebar').classList.remove('mobile-open');
+  document.getElementById('sidebar-overlay').classList.remove('active');
+}
+
 function showView(v, pid) {
   view = v; activeProvider = pid || null;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   const navEl = document.getElementById(v === 'provider' ? `nav-${pid}` : `nav-${v}`);
   if (navEl) navEl.classList.add('active');
+  closeMobileSidebar();
   render();
 }
 
