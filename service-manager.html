@@ -211,7 +211,12 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 
 <!-- LOGIN SCREEN -->
 <div class="login-screen" id="login-screen">
-  <div class="login-box">
+  <div id="login-loading" style="text-align:center;color:white">
+    <div style="font-size:48px;margin-bottom:12px">🏗️</div>
+    <div style="font-size:22px;font-weight:800;letter-spacing:1px">Сад будущего</div>
+    <div style="font-size:13px;opacity:.6;margin-top:8px">Загрузка данных...</div>
+  </div>
+  <div class="login-box" id="login-box" style="display:none">
     <div class="login-logo">
       <div class="logo-icon">🏗️</div>
       <div style="font-size:28px;font-weight:800;color:#1e293b;letter-spacing:1px;margin-bottom:4px">Сад будущего</div>
@@ -297,6 +302,9 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
   </div>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 <script>
 // ==============================
 // ДАННЫЕ ПОСТАВЩИКОВ
@@ -823,17 +831,90 @@ function saveAllPins() {
 }
 
 // ==============================
-// ХРАНИЛИЩЕ
+// FIREBASE CONFIG
+// כאשר יש לך config מ-Firebase Console — הכנס אותו כאן
 // ==============================
-const getLS = k => { try { return JSON.parse(localStorage.getItem(k)||'null'); } catch { return null; } };
-const setLS = (k,v) => localStorage.setItem(k, JSON.stringify(v));
+const FIREBASE_CONFIG = null;
+/*
+  כדי להפעיל סנכרון בין כל המכשירים, החלף את null בconfig שלך:
+  const FIREBASE_CONFIG = {
+    apiKey: "...",
+    authDomain: "....firebaseapp.com",
+    projectId: "...",
+    storageBucket: "....appspot.com",
+    messagingSenderId: "...",
+    appId: "..."
+  };
+*/
+
+let _firestoreDB = null, _storageRoot = null, _useFirebase = false;
+if (FIREBASE_CONFIG) {
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    _firestoreDB = firebase.firestore();
+    _storageRoot = firebase.storage().ref();
+    _useFirebase = true;
+  } catch(e) { console.error('Firebase init error:', e); }
+}
+
+// ==============================
+// ХРАНИЛИЩЕ (Firebase или localStorage)
+// ==============================
+let _state = {};
+
+const getLS = k => {
+  if (_useFirebase) return _state[k] !== undefined ? _state[k] : null;
+  try { return JSON.parse(localStorage.getItem(k)||'null'); } catch { return null; }
+};
+const setLS = (k, v) => {
+  if (_useFirebase) { _state[k] = v; _scheduleSave(); }
+  else localStorage.setItem(k, JSON.stringify(v));
+};
+
+let _saveTimer = null;
+function _scheduleSave() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(_flushState, 800);
+}
+async function _flushState() {
+  if (!_firestoreDB) return;
+  try { await _firestoreDB.collection('appdata').doc('state').set(_state); }
+  catch(e) { console.error('Ошибка сохранения:', e); }
+}
+async function _loadState() {
+  if (!_firestoreDB) return;
+  try {
+    const doc = await _firestoreDB.collection('appdata').doc('state').get();
+    if (doc.exists && Object.keys(doc.data()).length > 0) {
+      _state = doc.data() || {};
+    } else {
+      // первый запуск — мигрируем из localStorage
+      const keys = ['admin_pwd','admin_username','owner_pwd','owner_username',
+        'provider_pins','provider_usernames','provider_prices','prices_locked',
+        'sos_items','purchase_requests','svc_records'];
+      for (const k of keys) {
+        try { const v = JSON.parse(localStorage.getItem(k)||'null'); if (v !== null) _state[k] = v; } catch(e) {}
+      }
+      await _flushState();
+    }
+  } catch(e) { console.error('Ошибка загрузки:', e); }
+}
+function _setupSync() {
+  if (!_firestoreDB) return;
+  _firestoreDB.collection('appdata').doc('state').onSnapshot(doc => {
+    if (!doc.metadata.hasPendingWrites && doc.exists) {
+      _state = doc.data() || {};
+      if (currentUser) render();
+    }
+  });
+}
+
 const getRecords = () => getLS('svc_records') || {};
 const getSOS = () => getLS('sos_items') || [];
 
 function getRecord(pid, yr, mo) {
   return (getRecords())[`${pid}_${yr}_${mo}`] || {};
 }
-
 function saveRecord(pid, yr, mo, data) {
   const all = getRecords();
   const key = `${pid}_${yr}_${mo}`;
@@ -842,7 +923,7 @@ function saveRecord(pid, yr, mo, data) {
 }
 
 // ==============================
-// INDEXEDDB
+// ФАЙЛОВОЕ ХРАНИЛИЩЕ
 // ==============================
 function initDB() {
   return new Promise((res, rej) => {
@@ -857,15 +938,6 @@ function initDB() {
   });
 }
 
-function dbSave(fileData) {
-  return new Promise((res, rej) => {
-    const tx = db.transaction('files','readwrite');
-    const r = tx.objectStore('files').add(fileData);
-    r.onsuccess = () => res(r.result);
-    r.onerror = rej;
-  });
-}
-
 function dataURLtoBlob(data) {
   if (!data || !data.startsWith('data:')) return new Blob([data]);
   const [header, b64] = data.split(',');
@@ -876,7 +948,31 @@ function dataURLtoBlob(data) {
   return new Blob([arr], {type: mime});
 }
 
-function dbGet(id) {
+async function dbSave(fileData) {
+  if (_useFirebase) {
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
+    const blob = dataURLtoBlob(fileData.data);
+    const ref = _storageRoot.child(`files/${id}`);
+    await ref.put(blob, { contentType: fileData.type });
+    const url = await ref.getDownloadURL();
+    const files = getLS('files') || {};
+    files[id] = { id, name: fileData.name, type: fileData.type, size: fileData.size, url };
+    setLS('files', files);
+    return id;
+  }
+  return new Promise((res, rej) => {
+    const tx = db.transaction('files','readwrite');
+    const r = tx.objectStore('files').add(fileData);
+    r.onsuccess = () => res(r.result);
+    r.onerror = rej;
+  });
+}
+
+async function dbGet(id) {
+  if (_useFirebase) {
+    const files = getLS('files') || {};
+    return files[id] || null;
+  }
   return new Promise((res, rej) => {
     const tx = db.transaction('files','readonly');
     const r = tx.objectStore('files').get(Number(id));
@@ -885,7 +981,14 @@ function dbGet(id) {
   });
 }
 
-function dbDel(id) {
+async function dbDel(id) {
+  if (_useFirebase) {
+    try { await _storageRoot.child(`files/${id}`).delete(); } catch(e) {}
+    const files = getLS('files') || {};
+    delete files[id];
+    setLS('files', files);
+    return;
+  }
   return new Promise(res => {
     const tx = db.transaction('files','readwrite');
     tx.objectStore('files').delete(Number(id));
@@ -1417,6 +1520,7 @@ function fmtSize(b) {
 async function openFile(id, type, name) {
   const f = await dbGet(id);
   if (!f) { alert('Файл не найден'); return; }
+  if (_useFirebase && f.url) { window.open(f.url, '_blank'); return; }
   const blob = dataURLtoBlob(f.data);
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1429,13 +1533,13 @@ async function previewFile(id, type, name) {
   const f = await dbGet(id);
   if (!f) { alert('Файл не найден'); return; }
   const ft = f.type || type;
-  const blob = dataURLtoBlob(f.data);
-  const url = URL.createObjectURL(blob);
   const fn = f.name || name;
+  const isFirebaseUrl = _useFirebase && f.url;
+  const url = isFirebaseUrl ? f.url : URL.createObjectURL(dataURLtoBlob(f.data));
 
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px 20px';
-  overlay.onclick = e => { if (e.target === overlay) { overlay.remove(); URL.revokeObjectURL(url); } };
+  overlay.onclick = e => { if (e.target === overlay) { overlay.remove(); if (!isFirebaseUrl) URL.revokeObjectURL(url); } };
 
   let mediaHtml;
   if (ft.startsWith('image/')) {
@@ -2181,15 +2285,14 @@ function renderJournal() {
 async function loadJournalImages() {
   const imgs = document.querySelectorAll('img.jthumb[data-fid]');
   for (const img of imgs) {
-    const fid = parseInt(img.dataset.fid);
+    const fid = img.dataset.fid;
     const ftype = img.dataset.ftype || '';
     if (!ftype.startsWith('image/')) continue;
     try {
       const f = await dbGet(fid);
-      if (f && f.data) {
-        const blob = dataURLtoBlob(f.data);
-        img.src = URL.createObjectURL(blob);
-      }
+      if (!f) continue;
+      if (_useFirebase && f.url) { img.src = f.url; }
+      else if (f.data) { img.src = URL.createObjectURL(dataURLtoBlob(f.data)); }
     } catch(e) {}
   }
 }
@@ -2518,7 +2621,15 @@ function overlayClick(e) {
 // ИНИЦИАЛИЗАЦИЯ
 // ==============================
 async function init() {
-  await initDB();
+  if (_useFirebase) {
+    await _loadState();
+    _setupSync();
+  } else {
+    await initDB();
+  }
+
+  document.getElementById('login-loading').style.display = 'none';
+  document.getElementById('login-box').style.display = 'block';
 
   // Build sidebar nav
   const nav = document.getElementById('providers-nav');
@@ -2526,9 +2637,6 @@ async function init() {
     <div class="nav-item" id="nav-${p.id}" onclick="showView('provider','${p.id}')">
       <span>${p.emoji}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</span>
     </div>`).join('');
-
-  // Show login screen (app starts locked)
-  document.getElementById('login-screen').style.display = 'flex';
 }
 
 init();
