@@ -1,0 +1,2458 @@
+<!DOCTYPE html>
+<html dir="ltr" lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Управление поставщиками услуг</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --primary:#2563eb;--primary-light:#dbeafe;
+  --success:#16a34a;--success-light:#dcfce7;
+  --warning:#d97706;--warning-light:#fef3c7;
+  --danger:#dc2626;--danger-light:#fee2e2;
+  --gray:#6b7280;--gray-light:#f3f4f6;
+  --sidebar:#1e293b;--sidebar-text:#94a3b8;--sidebar-hover:#334155;
+}
+body{font-family:'Segoe UI',Arial,sans-serif;direction:ltr;background:#f8fafc;color:#1e293b;display:flex;height:100vh;overflow:hidden}
+/* SIDEBAR */
+.sidebar{width:260px;background:var(--sidebar);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0}
+.sidebar-header{padding:18px 20px;border-bottom:1px solid #334155}
+.sidebar-header h1{color:white;font-size:15px;font-weight:700}
+.sidebar-header p{color:var(--sidebar-text);font-size:11px;margin-top:3px}
+.sidebar-section-title{padding:14px 20px 4px;color:#64748b;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.nav-item{display:flex;align-items:center;gap:9px;padding:9px 20px;color:var(--sidebar-text);cursor:pointer;transition:.15s;font-size:13px}
+.nav-item:hover{background:var(--sidebar-hover);color:white}
+.nav-item.active{background:var(--primary);color:white}
+/* MAIN */
+.main{flex:1;overflow-y:auto;display:flex;flex-direction:column}
+.topbar{background:white;border-bottom:1px solid #e2e8f0;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
+.topbar h2{font-size:17px;font-weight:700}
+.content{padding:22px;flex:1}
+/* CARDS */
+.card{background:white;border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;margin-bottom:18px}
+.card-header{padding:14px 18px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between}
+.card-header h3{font-size:14px;font-weight:600}
+/* STATS */
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+.stat-card{background:white;border:1px solid #e2e8f0;border-radius:12px;padding:14px 18px}
+.stat-value{font-size:26px;font-weight:700}
+.stat-label{font-size:11px;color:var(--gray);margin-top:3px}
+/* MONTHS GRID */
+.months-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:16px}
+.month-card{border:1px solid #e2e8f0;border-radius:10px;padding:12px;cursor:pointer;transition:.15s}
+.month-card:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.08)}
+.month-card.done{background:#f0fdf4;border-color:#86efac}
+.month-card.pending{background:#fffbeb;border-color:#fcd34d}
+.month-card.overdue{background:#fef2f2;border-color:#fca5a5}
+.month-card.none{background:#f8fafc}
+.month-card.current-month{box-shadow:0 0 0 2px var(--primary)}
+.month-name{font-size:13px;font-weight:600}
+.month-sub{font-size:11px;color:var(--gray);margin-top:3px}
+.month-icon{font-size:18px;margin-bottom:5px}
+/* BADGES */
+.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:500}
+.badge-success{background:var(--success-light);color:var(--success)}
+.badge-warning{background:var(--warning-light);color:var(--warning)}
+.badge-danger{background:var(--danger-light);color:var(--danger)}
+.badge-gray{background:var(--gray-light);color:var(--gray)}
+.badge-blue{background:var(--primary-light);color:var(--primary)}
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none;transition:.15s;font-family:inherit}
+.btn-primary{background:var(--primary);color:white}
+.btn-primary:hover{background:#1d4ed8}
+.btn-success{background:var(--success);color:white}
+.btn-danger{background:var(--danger);color:white}
+.btn-danger:hover{background:#b91c1c}
+.btn-outline{background:white;border:1px solid #e2e8f0;color:#374151}
+.btn-outline:hover{background:#f8fafc}
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px}
+.modal{background:white;border-radius:16px;width:100%;max-width:580px;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal-header{padding:18px 22px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:white;z-index:1}
+.modal-header h3{font-size:15px;font-weight:700}
+.modal-body{padding:18px 22px}
+.modal-footer{padding:14px 22px;border-top:1px solid #f1f5f9;display:flex;gap:8px;justify-content:flex-end;position:sticky;bottom:0;background:white}
+.close-btn{background:none;border:none;cursor:pointer;color:var(--gray);font-size:18px;padding:4px 6px;border-radius:6px;line-height:1}
+.close-btn:hover{background:var(--gray-light)}
+/* FORM */
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:5px}
+.form-control{width:100%;padding:8px 11px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;direction:ltr;font-family:inherit;background:white}
+.form-control:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-light)}
+textarea.form-control{resize:vertical;min-height:70px}
+/* TOGGLE */
+.toggle-wrap{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--gray-light);border-radius:8px}
+.toggle{position:relative;width:42px;height:22px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;cursor:pointer;inset:0;background:#d1d5db;border-radius:22px;transition:.2s}
+.toggle-slider:before{content:'';position:absolute;height:16px;width:16px;left:3px;bottom:3px;background:white;border-radius:50%;transition:.2s}
+input:checked+.toggle-slider{background:var(--success)}
+input:checked+.toggle-slider:before{transform:translateX(20px)}
+/* FILE UPLOAD */
+.upload-zone{border:2px dashed #d1d5db;border-radius:10px;padding:20px;text-align:center;cursor:pointer;transition:.15s;color:var(--gray);font-size:13px}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--primary);background:var(--primary-light);color:var(--primary)}
+.file-list{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.file-item{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--gray-light);border-radius:8px;font-size:12px}
+.file-item .fn{flex:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-item .fs{color:var(--gray);flex-shrink:0}
+.file-item button{background:none;border:none;cursor:pointer;font-size:14px;padding:0 2px;flex-shrink:0}
+/* PROVIDER HEADER */
+.prov-header{background:white;border-radius:12px;border:1px solid #e2e8f0;padding:18px 22px;margin-bottom:16px;display:flex;align-items:center;gap:14px}
+.prov-icon{width:50px;height:50px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:26px;flex-shrink:0}
+.prov-name{font-size:17px;font-weight:700}
+.prov-cat{font-size:12px;color:var(--gray);margin-top:2px}
+/* YEAR NAV */
+.year-nav{display:flex;align-items:center;gap:10px;margin-left:auto}
+.year-btn{background:var(--gray-light);border:none;border-radius:6px;padding:5px 9px;cursor:pointer;font-size:14px}
+.year-btn:hover{background:#e2e8f0}
+.year-display{font-size:15px;font-weight:700;min-width:52px;text-align:center}
+/* SOS */
+.sos-item{background:white;border:1px solid #e2e8f0;border-radius:12px;padding:14px 18px;display:flex;gap:14px;align-items:flex-start;margin-bottom:10px}
+.sos-bar{width:8px;border-radius:4px;align-self:stretch;flex-shrink:0}
+.pri-high{background:var(--danger)}
+.pri-medium{background:var(--warning)}
+.pri-low{background:var(--success)}
+/* PROVIDER GRID */
+.prov-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:14px 16px}
+.prov-tile{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;cursor:pointer;transition:.15s}
+.prov-tile:hover{border-color:var(--primary);background:var(--primary-light)}
+/* MONTHS CHECKBOX GRID */
+.months-check-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.month-check-item{display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;padding:5px 7px;border:1px solid #e2e8f0;border-radius:6px;transition:.15s}
+.month-check-item:hover{background:#f1f5f9}
+/* SCROLLBAR */
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+.hidden{display:none!important}
+/* LOGIN SCREEN */
+.login-screen{position:fixed;inset:0;background:linear-gradient(135deg,#1e293b 0%,#0f172a 100%);display:flex;align-items:center;justify-content:center;z-index:2000}
+.login-box{background:white;border-radius:20px;padding:36px 32px;width:400px;box-shadow:0 30px 80px rgba(0,0,0,.4)}
+.login-logo{text-align:center;margin-bottom:24px}
+.login-logo .logo-icon{font-size:46px;margin-bottom:10px}
+.login-logo h1{font-size:20px;font-weight:700;color:#1e293b}
+.login-logo p{color:#6b7280;font-size:13px;margin-top:4px}
+.login-error{color:#dc2626;font-size:12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:8px 10px;margin-bottom:12px;display:none}
+/* PROVIDER MODE (no sidebar) */
+.provider-topbar-user{display:flex;align-items:center;gap:10px;padding:10px 16px;background:#f0fdf4;border-radius:8px;margin-right:8px}
+/* FINANCE TABLE */
+.finance-table{width:100%;border-collapse:collapse;font-size:13px}
+.finance-table th{background:#f8fafc;padding:10px 14px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;border-bottom:2px solid #e2e8f0}
+.finance-table td{padding:10px 14px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.finance-table tr:last-child td{border-bottom:none}
+.finance-table tr:hover td{background:#fafafa}
+.price-input{width:120px;padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;text-align:right;font-family:inherit}
+.price-input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-light)}
+/* PURCHASE REQUESTS */
+.req-card{background:white;border:1px solid #e2e8f0;border-radius:12px;padding:14px 18px;margin-bottom:12px;border-left:4px solid #94a3b8;transition:.15s}
+.req-card.status-pending{border-left-color:#d97706}
+.req-card.status-approved{border-left-color:#16a34a}
+.req-card.status-partial{border-left-color:#2563eb}
+.req-card.status-rejected{border-left-color:#dc2626}
+.req-card.status-owner_approved{border-left-color:#7c3aed}
+.req-card.status-owner_rejected{border-left-color:#b91c1c}
+.req-items-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.req-items-table th{background:#f8fafc;padding:6px 10px;text-align:left;font-weight:600;color:#64748b;border-bottom:1px solid #e2e8f0}
+.req-items-table td{padding:6px 10px;border-bottom:1px solid #f8fafc}
+.owner-only{display:none}
+.admin-or-owner{display:none}
+</style>
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div class="login-screen" id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="logo-icon">🏗️</div>
+      <div style="font-size:28px;font-weight:800;color:#1e293b;letter-spacing:1px;margin-bottom:4px">Сад будущего</div>
+      <div style="width:48px;height:3px;background:linear-gradient(90deg,#2563eb,#7c3aed);border-radius:2px;margin:0 auto 10px"></div>
+      <h1 style="font-size:15px;font-weight:600;color:#475569">Управление услугами</h1>
+      <p style="font-size:12px;color:#94a3b8;margin-top:3px">Система мониторинга технического обслуживания</p>
+    </div>
+    <div class="form-group">
+      <label>Имя пользователя</label>
+      <input type="text" class="form-control" id="login-username"
+             placeholder="Введите имя пользователя..." autocomplete="username"
+             onkeydown="if(event.key==='Enter')document.getElementById('login-pwd').focus()">
+    </div>
+    <div class="form-group">
+      <label>Пароль</label>
+      <input type="password" class="form-control" id="login-pwd"
+             placeholder="Введите пароль..." autocomplete="current-password"
+             onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <div class="login-error" id="login-error">Неверное имя пользователя или пароль.</div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:10px"
+            onclick="doLogin()">Войти →</button>
+  </div>
+</div>
+
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h1>🏗️ Управление услугами</h1>
+    <p>Система мониторинга и ТО</p>
+  </div>
+  <div>
+    <div class="sidebar-section-title">Главная</div>
+    <div class="nav-item" id="nav-dashboard" onclick="showView('dashboard')">📊 Панель управления</div>
+    <div class="nav-item" id="nav-journal" onclick="showView('journal')">📋 Журнал визитов</div>
+    <div class="nav-item" id="nav-sos" onclick="showView('sos')">🚨 Экстренное ТО (SOS)</div>
+    <div class="nav-item" id="nav-finance" onclick="showView('finance')">💰 Финансовая сводка</div>
+    <div class="nav-item admin-or-owner" id="nav-requests" onclick="showView('requests')" style="justify-content:space-between">
+      <span>🔔 Заявки на закупку</span>
+      <span id="req-badge" style="display:none;background:#ef4444;color:white;border-radius:10px;font-size:10px;font-weight:700;padding:2px 8px;min-width:20px;text-align:center;flex-shrink:0"></span>
+    </div>
+    <div class="nav-item admin-or-owner" id="nav-settings" onclick="openSettingsModal()">⚙️ Настройки доступа</div>
+    <div class="nav-item owner-only" id="nav-export" onclick="exportCSV()">📊 Экспорт данных (CSV)</div>
+  </div>
+  <div>
+    <div class="sidebar-section-title">Поставщики услуг</div>
+    <div id="providers-nav"></div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="topbar">
+    <h2 id="page-title">Панель управления</h2>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div id="topbar-actions"></div>
+      <div id="provider-req-btn" style="display:none">
+        <button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="showView('requests')">📦 Мои заявки</button>
+      </div>
+      <div id="user-badge" style="display:flex;align-items:center;gap:8px;padding-left:12px;border-left:1px solid #e2e8f0">
+        <span id="user-label" style="font-size:12px;color:#6b7280;font-weight:500"></span>
+        <button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="logout()">Выйти</button>
+      </div>
+    </div>
+  </div>
+  <div class="content" id="content"></div>
+</div>
+
+<div class="modal-overlay hidden" id="modal-overlay" onclick="overlayClick(event)">
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <h3 id="modal-title"></h3>
+      <button class="close-btn" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-footer" id="modal-footer"></div>
+  </div>
+</div>
+
+<script>
+// ==============================
+// ДАННЫЕ ПОСТАВЩИКОВ
+// ==============================
+const PROVIDERS = [
+  { id:'mosoblgaz', name:'Мособлгаз АО', cat:'Газоснабжение', emoji:'🔥', color:'#f97316', bg:'#fff7ed',
+    details:{
+      description:'Техническое обслуживание газового оборудования на объекте. Обеспечивает телеметрический контроль потребления газа через шкаф узла учёта.',
+      services:['ТО шкафа телеметрии узла учёта газа','Проверка и калибровка приборов учёта','Контроль герметичности соединений','Передача данных показаний счётчиков в систему мониторинга'],
+      frequency:'2 раза в год (май, ноябрь)',
+      price:'По договору',
+      contractType:'Договор на техническое обслуживание газового оборудования'
+    },
+    schedules:[{desc:'ТО шкафа телеметрии узла учёта газа (2 раза в год)', months:[5,11]}] },
+
+  { id:'rosseti', name:'Россети МР ПАО', cat:'Электроснабжение', emoji:'⚡', color:'#eab308', bg:'#fefce8',
+    details:{
+      description:'Абонентское обслуживание кабельных линий электропередачи 10 кВ и трансформаторной подстанции на территории объекта.',
+      services:['ТО кабельной линии КЛ-10кВ протяжённостью 5.05 км','ТО кабельной линии КЛ-10кВ протяжённостью 1.73 км','ТО распределительной трансформаторной подстанции РТП-7','Профилактические осмотры и замеры параметров сети','Оперативное устранение аварийных ситуаций'],
+      frequency:'Ежемесячно',
+      price:'Абонентская плата (ежемесячно)',
+      contractType:'Договор абонентского обслуживания электросетевого имущества'
+    },
+    schedules:[{desc:'Абонентское обслуживание КЛ-10кВ (5.05км + 1.73км) и РТП-7 (ежемесячно)', months:[1,2,3,4,5,6,7,8,9,10,11,12]}] },
+
+  { id:'energiya', name:'Энергия ООО', cat:'Котельная / ВЗУ', emoji:'🏭', color:'#a855f7', bg:'#faf5ff',
+    details:{
+      description:'Комплексное техническое обслуживание котельного оборудования и водозаборного узла (ВЗУ). Обеспечивает теплоснабжение и горячее водоснабжение всего объекта.',
+      services:['ТО котлов Buderus Logano (теплоснабжение)','Обслуживание КИПиА — контрольно-измерительные приборы и автоматика','ТО насосного оборудования (циркуляционные и сетевые насосы)','Обслуживание газоанализаторов и датчиков загазованности','Химводоподготовка (умягчение воды, предотвращение накипи)','ТО систем водозаборного узла (ВЗУ) — скважинные насосы'],
+      frequency:'Ежемесячно',
+      price:'55 500 руб./мес.',
+      contractType:'Договор технического обслуживания котельной и ВЗУ'
+    },
+    schedules:[{desc:'ТО котельного оборудования (котлы Logano, КИПиА, насосы, газоанализаторы, химводоподготовка)', months:[1,2,3,4,5,6,7,8,9,10,11,12]}] },
+
+  { id:'aquavita', name:'АКВА-ВИТА ООО', cat:'Водоподготовка / Бассейн', emoji:'💧', color:'#06b6d4', bg:'#ecfeff',
+    details:{
+      description:'Техническое обслуживание очистных сооружений биологической очистки стоков (ЛО-БИО-80) и оборудования крытого бассейна.',
+      services:['ТО очистных сооружений ЛО-БИО-80 (биологическая очистка)','Обслуживание насосных станций очистных сооружений','ТО оборудования крытого бассейна (фильтрация, рециркуляция)','Контроль качества воды и параметров очистки','Регулировка и замена расходных материалов биофильтров'],
+      frequency:'Февраль–декабрь (11 месяцев в году)',
+      price:'По договору',
+      contractType:'Договор на техническое обслуживание очистных сооружений'
+    },
+    schedules:[{desc:'ТО очистных сооружений ЛО-БИО-80 и бассейна (февраль–декабрь)', months:[2,3,4,5,6,7,8,9,10,11,12]}] },
+
+  { id:'ruskhem', name:'РусХимХолдинг ООО', cat:'Химреагенты', emoji:'🧪', color:'#8b5cf6', bg:'#f5f3ff',
+    details:{
+      description:'Поставка профессиональных моющих и дезинфицирующих средств для обеспечения санитарного состояния объекта.',
+      services:['Поставка моющих средств для пищеблока и технических помещений','Поставка дезинфицирующих средств','Поставка средств для уборки и санитарной обработки помещений','Консультации по применению химических средств'],
+      frequency:'По заявкам (без фиксированного расписания)',
+      price:'По заявкам',
+      contractType:'Договор поставки химических средств'
+    },
+    schedules:[{desc:'Поставка моющих и дезинфицирующих средств (по заявкам)', months:[]}] },
+
+  { id:'ekoregion', name:'Экорегионсервис ООО', cat:'Вывоз отходов IV–V кл.', emoji:'♻️', color:'#22c55e', bg:'#f0fdf4',
+    details:{
+      description:'Транспортирование и утилизация отходов производства IV и V классов опасности с объекта к лицензированным местам размещения.',
+      services:['Сбор и транспортирование отходов IV класса опасности','Сбор и транспортирование отходов V класса опасности','Оформление сопроводительной документации (талоны, путевые листы)','Передача отходов на лицензированные площадки размещения'],
+      frequency:'Ежемесячно (по мере накопления отходов)',
+      price:'1 575 руб./м³',
+      contractType:'Договор на транспортирование отходов IV–V класса опасности'
+    },
+    schedules:[{desc:'Транспортирование отходов IV–V класса опасности к месту размещения (1575 руб/м³)', months:[1,2,3,4,5,6,7,8,9,10,11,12]}] },
+
+  { id:'ruzoperator', name:'Рузский РО ООО', cat:'ТКО', emoji:'🗑️', color:'#84cc16', bg:'#f7fee7',
+    details:{
+      description:'Региональный оператор по обращению с твёрдыми коммунальными отходами (ТКО) в Рузском районе Московской области.',
+      services:['Вывоз твёрдых коммунальных отходов (ТКО) с контейнерных площадок','Транспортирование ТКО на полигон по утверждённому маршруту','Обеспечение нормативного вывоза отходов согласно расписанию'],
+      frequency:'По утверждённому графику вывоза',
+      price:'По нормативу накопления ТКО',
+      contractType:'Договор на оказание услуг по обращению с ТКО'
+    },
+    schedules:[{desc:'Обращение с твёрдыми коммунальными отходами (ТКО)', months:[1,2,3,4,5,6,7,8,9,10,11,12]}] },
+
+  { id:'asspb', name:'АСС Русь-ПБ ООО', cat:'Промышленная безопасность', emoji:'🆘', color:'#ef4444', bg:'#fef2f2',
+    details:{
+      description:'Профессиональное аварийно-спасательное формирование (ПАФ) для обслуживания опасного производственного объекта (ОПО) — газового хозяйства.',
+      services:['Локализация аварийных ситуаций на газовом объекте (ОПО)','Ликвидация последствий газовых аварий','Круглосуточная готовность аварийной бригады (дежурство)','Профилактические инструктажи по промышленной безопасности на ОПО','Разработка и актуализация планов ликвидации аварий (ПЛАС)'],
+      frequency:'Ежемесячно (абонентское дежурство)',
+      price:'По договору',
+      contractType:'Договор на аварийно-спасательное обслуживание ОПО'
+    },
+    schedules:[{desc:'Обслуживание ОПО: локализация и ликвидация аварийных ситуаций на газовом объекте', months:[1,2,3,4,5,6,7,8,9,10,11,12]}] },
+
+  { id:'algorithm', name:'Алгоритм ПБ ООО', cat:'Пожарная безопасность', emoji:'🚒', color:'#f43f5e', bg:'#fff1f2',
+    details:{
+      description:'Комплексное обслуживание систем пожарной безопасности: автоматической пожарной сигнализации (СПС), системы оповещения и управления эвакуацией (СОУЭ) и внутреннего противопожарного водопровода (ВПВ).',
+      services:['ТО системы пожарной сигнализации (СПС) — все корпуса, ежемесячно','ТО системы оповещения и управления эвакуацией (СОУЭ)','Проверка шлейфов, датчиков, оповещателей и ПКП','ТО внутреннего противопожарного водопровода (ВПВ) — 2 раза в год','Испытание ВПВ на водоотдачу и давление (май, ноябрь)','Перемотка пожарных рукавов — 1 раз в год (июнь)','Гидравлическое испытание пожарных рукавов на прочность'],
+      frequency:'СПС/СОУЭ: ежемесячно; ВПВ: май и ноябрь; Рукава: июнь',
+      price:'По договору',
+      contractType:'Договор технического обслуживания систем пожарной безопасности'
+    },
+    schedules:[
+      {desc:'ТО СПС и СОУЭ во всех корпусах (ежемесячно)', months:[1,2,3,4,5,6,7,8,9,10,11,12]},
+      {desc:'ТО внутреннего противопожарного водопровода (ВПВ) — 2 раза в год', months:[5,11]},
+      {desc:'Перемотка и испытание пожарных рукавов — 1 раз в год', months:[6]}
+    ]},
+
+  { id:'vdpo', name:'Истринское ВДПО', cat:'Пожарная безопасность', emoji:'📡', color:'#dc2626', bg:'#fff5f5',
+    details:{
+      description:'Техническое обслуживание автоматизированной радиосистемы пожарного мониторинга «Стрелец-Мониторинг», обеспечивающей автоматическую передачу тревожных сигналов в пожарную часть.',
+      services:['ТО радиосистемы мониторинга «Стрелец-Мониторинг»','Проверка качества связи с пунктом пожарной охраны','Техническая диагностика радиопередающего оборудования','Устранение неисправностей системы радиомониторинга','Проверка автоматической передачи сигналов тревоги'],
+      frequency:'1 раз в год (январь)',
+      price:'По договору',
+      contractType:'Договор технического обслуживания системы «Стрелец-Мониторинг»'
+    },
+    schedules:[{desc:'ТО радиосистемы мониторинга «Стрелец-Мониторинг» (ежегодно)', months:[1]}] },
+
+  { id:'cigie', name:'ФБУЗ ЦГиЭ в МО', cat:'Санитарный надзор', emoji:'🏥', color:'#0ea5e9', bg:'#f0f9ff',
+    details:{
+      description:'Проведение санитарно-эпидемиологических замеров и исследований на объекте в рамках производственного контроля. Государственная лаборатория Роспотребнадзора.',
+      services:['Замеры искусственной освещённости на рабочих местах','Замеры параметров микроклимата (температура, влажность, скорость воздуха)','Исследование качества питьевой воды (бактериологические и химические показатели)','Исследование качества воды бассейна','Выдача санитарно-эпидемиологического заключения по результатам'],
+      frequency:'2 раза в год (март, сентябрь)',
+      price:'По договору',
+      contractType:'Договор на проведение санитарно-эпидемиологических исследований'
+    },
+    schedules:[{desc:'Санитарно-эпидемиологическая экспертиза и замеры (освещённость, микроклимат, качество воды)', months:[3,9]}] },
+
+  { id:'istranet', name:'ИСТРА.НЕТ', cat:'Интернет / Связь', emoji:'🌐', color:'#6366f1', bg:'#eef2ff',
+    details:{
+      description:'Предоставление услуг широкополосного интернет-доступа для административных и технических нужд объекта.',
+      services:['Широкополосный доступ в сеть Интернет','Техническая поддержка при возникновении неполадок','Обеспечение стабильного и непрерывного соединения'],
+      frequency:'Ежемесячная абонентская плата',
+      price:'Абонентская плата (ежемесячно)',
+      contractType:'Договор об оказании услуг связи (интернет-доступ)'
+    },
+    schedules:[{desc:'Интернет-связь (абонентская плата)', months:[1,2,3,4,5,6,7,8,9,10,11,12]}] },
+
+  { id:'remkhold', name:'РемХолодСервис ООО', cat:'Холодильное оборудование', emoji:'❄️', color:'#14b8a6', bg:'#f0fdfa',
+    details:{
+      description:'Техническое обслуживание и ремонт холодильного оборудования на объекте — пищеблок, склады и технологические помещения.',
+      services:['ТО холодильных камер и витрин','ТО холодильных агрегатов и компрессоров','Проверка фреонового контура, дозаправка холодагентом при необходимости','Чистка теплообменников, конденсаторов и испарителей','Диагностика и устранение неисправностей'],
+      frequency:'Ежемесячно',
+      price:'По договору',
+      contractType:'Договор технического обслуживания холодильного оборудования'
+    },
+    schedules:[{desc:'ТО холодильного оборудования (ежемесячно)', months:[1,2,3,4,5,6,7,8,9,10,11,12]}] },
+
+  { id:'leshtaev', name:'Лештаев В.Б. ИП', cat:'Вентиляция / Кондиционирование', emoji:'💨', color:'#78716c', bg:'#fafaf9',
+    details:{
+      description:'Техническое обслуживание вентиляционных систем столовой и бассейна, а также климатических систем кондиционирования.',
+      services:['ТО приточно-вытяжных вентиляционных установок столовой','ТО кондиционирующих блоков (К/К) столовой','ТО системы вентиляции бассейна (приток и вытяжка)','Замена фильтров и расходных элементов','Проверка и балансировка воздухообмена в помещениях'],
+      frequency:'Столовая: ежеквартально (май–сентябрь); Бассейн: ежемесячно',
+      price:'По договору',
+      contractType:'Договор технического обслуживания систем вентиляции и кондиционирования'
+    },
+    schedules:[
+      {desc:'ТО вентустановок и К/К блоков столовой (ежеквартально, май–сентябрь)', months:[5,6,7,8,9]},
+      {desc:'ТО вентиляционного оборудования бассейна (ежемесячно)', months:[1,2,3,4,5,6,7,8,9,10,11,12]}
+    ]},
+
+  { id:'byrdin', name:'Бырдин С.В. ИП', cat:'Бассейн (дезинфекция)', emoji:'🏊', color:'#0284c7', bg:'#f0f9ff',
+    details:{
+      description:'Сервисное техническое обслуживание системы автоматической дезинфекции воды и оборудования крытого бассейна.',
+      services:['ТО системы автоматической дезинфекции воды бассейна','Контроль и регулировка хлорирования и уровня pH воды','ТО насосно-фильтрационного оборудования бассейна','Обслуживание ультрафиолетовых установок обеззараживания','Проверка безопасности водных параметров по нормам СанПиН'],
+      frequency:'2 выезда в месяц (круглогодично)',
+      price:'По договору',
+      contractType:'Договор сервисного обслуживания бассейна (дезинфекция)'
+    },
+    schedules:[{desc:'Сервисное ТО системы дезинфекции и оборудования крытого бассейна (2 выезда в месяц)', months:[1,2,3,4,5,6,7,8,9,10,11,12], visits:2}] },
+
+
+  { id:'security', name:'УВО ВНГ России по МО', cat:'Охрана (тревожная кнопка)', emoji:'🚔', color:'#1e40af', bg:'#eff6ff',
+    details:{
+      description:'Вневедомственная охрана Министерства внутренних дел России. Оказание услуг охраны объекта с использованием кнопки тревожной сигнализации — экстренный вызов наряда полиции.',
+      services:['Мониторинг тревожной сигнализации (кнопка тревоги) в режиме 24/7','Экстренный выезд наряда полиции при срабатывании тревоги','Реагирование на несанкционированное проникновение на объект','Обеспечение общественного порядка на территории объекта'],
+      frequency:'Ежемесячная абонентская плата (охрана круглосуточно)',
+      price:'Абонентская плата (ежемесячно)',
+      contractType:'Договор об оказании охранных услуг (тревожная сигнализация)'
+    },
+    schedules:[{desc:'Услуги по экстренному вызову наряда полиции (тревожная сигнализация)', months:[1,2,3,4,5,6,7,8,9,10,11,12]}] },
+
+  { id:'oscar', name:'ОП Оскар ООО', cat:'Охрана (ТО систем)', emoji:'🔒', color:'#6b7280', bg:'#f9fafb',
+    details:{
+      description:'Техническое обслуживание комплекса технических средств охраны (КТСО) — охранной сигнализации, датчиков и сопутствующего оборудования.',
+      services:['ТО охранных извещателей (датчики движения, датчики открытия)','ТО приёмно-контрольных приборов (ПКП) охранной сигнализации','ТО шлейфов и линий связи охранной сигнализации','ТО систем контроля и управления доступом (СКУД)','Диагностика и устранение неисправностей КТСО'],
+      frequency:'Ежемесячно',
+      price:'3 800 руб./мес.',
+      contractType:'Договор технического обслуживания КТСО'
+    },
+    schedules:[{desc:'ТО комплекса технических средств охраны (охранная сигнализация)', months:[1,2,3,4,5,6,7,8,9,10,11,12]}] },
+
+  { id:'evstratov', name:'Евстратов М.К. ИП', cat:'Видеонаблюдение / СКС', emoji:'📹', color:'#0f766e', bg:'#f0fdfa',
+    details:{
+      description:'Техническое обслуживание систем видеонаблюдения (СВН) и структурированной кабельной сети (СКС) объекта.',
+      services:['ТО камер видеонаблюдения (регулировка ракурса, чистка, диагностика)','ТО видеорегистраторов и серверов видеозаписи','Обслуживание структурированной кабельной сети (СКС)','Проверка работоспособности всех сетевых точек подключения','Устранение неисправностей видеосистемы и кабельной сети'],
+      frequency:'4 выезда в месяц (круглогодично)',
+      price:'По договору',
+      contractType:'Договор технического обслуживания СВН и СКС'
+    },
+    schedules:[{desc:'ТО систем видеонаблюдения (СВН) и структурированной кабельной сети (4 выезда в месяц)', months:[1,2,3,4,5,6,7,8,9,10,11,12], visits:4}] }
+];
+
+const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+const MONTHS_SHORT = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+
+const DEFAULT_PRICES = {
+  energiya: 55500,
+  oscar: 3800
+};
+
+const DISPLAY_VISITS = 5; // slots shown per month for every provider
+
+function getVisitData(pid, yr, mo, required) {
+  const slots = Math.max(required || 1, DISPLAY_VISITS);
+  const r = getRecord(pid, yr, mo);
+  let arr = [];
+  if (r.visits) arr = [...r.visits];
+  else if (r.completed !== undefined) arr = [{...r}];
+  while (arr.length < slots) arr.push({});
+  return arr;
+}
+
+function getPrices() { return getLS('provider_prices') || {}; }
+function getPriceLock() { return getLS('prices_locked') || false; }
+function lockPrices() {
+  if (currentUser !== 'owner') { alert('Блокировка цен доступна только владельцу (yosef).'); return; }
+  setLS('prices_locked', true); render();
+}
+function unlockPrices() {
+  if (currentUser !== 'owner') { alert('Разблокировка цен доступна только владельцу (yosef).'); return; }
+  if (confirm('Разблокировать редактирование цен?')) { setLS('prices_locked', false); render(); }
+}
+function getProviderMonthlyPrice(pid) {
+  const custom = getPrices()[pid];
+  if (custom !== undefined && custom !== '') return Number(custom);
+  return DEFAULT_PRICES[pid] !== undefined ? DEFAULT_PRICES[pid] : null;
+}
+function saveProviderPrice(pid, val) {
+  const pr = getPrices();
+  pr[pid] = val;
+  setLS('provider_prices', pr);
+}
+
+// ==============================
+// СОСТОЯНИЕ
+// ==============================
+let view = 'dashboard';
+let activeProvider = null;
+let displayYear = new Date().getFullYear();
+let journalMonth = new Date().getMonth() + 1;
+let journalYear = new Date().getFullYear();
+let db = null;
+let pendingFiles = [];
+let pendingVisitFiles = {}; // {vi: [{name,type,size,data}]}
+let currentVisits = [];    // visit data for currently open modal
+let currentUser = null; // null=not logged in, 'admin'=admin, else=provider id
+
+// ==============================
+// АУТЕНТИФИКАЦИЯ
+// ==============================
+function getAdminPwd() { return getLS('admin_pwd') || 'admin123'; }
+function getAdminUser() { return getLS('admin_username') || 'admin'; }
+function getOwnerPwd() { return getLS('owner_pwd') || 'yosef123'; }
+function getOwnerUser() { return getLS('owner_username') || 'yosef'; }
+function getProviderPins() { return getLS('provider_pins') || {}; }
+function getProviderPin(pid) { const pins = getProviderPins(); return pins[pid] || '1234'; }
+function getProviderUsernames() { return getLS('provider_usernames') || {}; }
+function getProviderUsername(pid) { const u = getProviderUsernames(); return u[pid] || pid; }
+
+function doLogin() {
+  const username = (document.getElementById('login-username').value || '').trim().toLowerCase();
+  const pwd = document.getElementById('login-pwd').value;
+  const errEl = document.getElementById('login-error');
+
+  // Check owner (super-admin) first
+  if (username === getOwnerUser().toLowerCase() && pwd === getOwnerPwd()) {
+    currentUser = 'owner';
+    document.getElementById('login-screen').style.display = 'none';
+    applyUserLayout();
+    showView('dashboard');
+    return;
+  }
+
+  // Check admin
+  if (username === getAdminUser().toLowerCase() && pwd === getAdminPwd()) {
+    currentUser = 'admin';
+    document.getElementById('login-screen').style.display = 'none';
+    applyUserLayout();
+    showView('dashboard');
+    return;
+  }
+
+  // Check providers
+  const usernames = getProviderUsernames();
+  const provider = PROVIDERS.find(p => {
+    const uname = (usernames[p.id] || p.id).toLowerCase();
+    return uname === username && pwd === getProviderPin(p.id);
+  });
+
+  if (provider) {
+    currentUser = provider.id;
+    document.getElementById('login-screen').style.display = 'none';
+    applyUserLayout();
+    showView('provider', provider.id);
+  } else {
+    errEl.style.display = 'block';
+    document.getElementById('login-pwd').value = '';
+    document.getElementById('login-pwd').focus();
+  }
+}
+
+function logout() {
+  if (!confirm('Выйти из системы?')) return;
+  currentUser = null;
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('login-username').value = '';
+  document.getElementById('login-pwd').value = '';
+  document.getElementById('login-error').style.display = 'none';
+}
+
+function applyUserLayout() {
+  const sidebar = document.getElementById('sidebar');
+  const provReqBtn = document.getElementById('provider-req-btn');
+  document.querySelectorAll('.owner-only').forEach(el => el.style.display = 'none');
+  document.querySelectorAll('.admin-or-owner').forEach(el => el.style.display = 'flex');
+  if (provReqBtn) provReqBtn.style.display = 'none';
+
+  if (currentUser === 'owner') {
+    sidebar.style.display = '';
+    document.getElementById('user-label').textContent = '🏛️ Владелец (yosef)';
+    document.querySelectorAll('.owner-only').forEach(el => el.style.display = 'flex');
+  } else if (currentUser === 'admin') {
+    sidebar.style.display = '';
+    document.getElementById('user-label').textContent = '👑 Администратор';
+  } else {
+    sidebar.style.display = 'none';
+    if (provReqBtn) provReqBtn.style.display = '';
+    const p = PROVIDERS.find(x => x.id === currentUser);
+    const lbl = document.getElementById('user-label');
+    lbl.textContent = p ? `${p.emoji} ${p.name}` : '';
+    lbl.style.cursor = 'pointer';
+    lbl.title = 'Перейти на главную страницу';
+    lbl.onclick = () => showView('provider', currentUser);
+  }
+  updateRequestBadge();
+}
+
+function updateRequestBadge() {
+  const badge = document.getElementById('req-badge');
+  if (!badge) return;
+  if (currentUser !== 'admin' && currentUser !== 'owner') { badge.style.display = 'none'; return; }
+  const reqs = getRequests();
+  let count = 0;
+  if (currentUser === 'admin') {
+    count = reqs.filter(r => r.status === 'pending').length;
+  } else {
+    count = reqs.filter(r => r.status === 'approved' || r.status === 'partial').length;
+  }
+  if (count > 0) {
+    badge.textContent = count;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function openSettingsModal() {
+  document.getElementById('modal-title').textContent = '⚙️ Настройки доступа';
+  const pins = getProviderPins();
+  const usernames = getProviderUsernames();
+  const isOwner = currentUser === 'owner';
+
+  const ownerCredsHtml = isOwner ? `
+    <div style="margin-bottom:16px;padding:12px 14px;background:#faf5ff;border:1px solid #d8b4fe;border-radius:10px">
+      <div style="font-size:12px;font-weight:700;color:#7c3aed;margin-bottom:8px">🏛️ Учётная запись Владельца (yosef)</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
+          <input type="text" class="form-control" id="new-owner-user" value="${getOwnerUser()}" placeholder="yosef">
+        </div>
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
+          <input type="text" class="form-control" id="new-owner-pwd" value="${getOwnerPwd()}" placeholder="Пароль владельца...">
+        </div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center;background:#7c3aed;border-color:#7c3aed" onclick="saveOwnerCreds()">💾 Сохранить учётную запись владельца</button>
+    </div>` : '';
+
+  const adminCredsHtml = isOwner ? `
+    <div style="margin-bottom:16px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px;color:#374151">👑 Учётная запись администратора</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
+          <input type="text" class="form-control" id="new-admin-user" value="${getAdminUser()}" placeholder="admin">
+        </div>
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
+          <input type="text" class="form-control" id="new-admin-pwd" value="${getAdminPwd()}" placeholder="Новый пароль...">
+        </div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveAdminCreds()">💾 Сохранить данные администратора</button>
+    </div>` : `
+    <div style="margin-bottom:14px;padding:10px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;color:#6b7280">
+      👑 Изменение учётной записи администратора доступно только владельцу (yosef).
+    </div>`;
+
+  const dangerHtml = isOwner ? `
+    <div style="margin-top:20px;padding-top:14px;border-top:1px solid #fee2e2">
+      <div style="font-size:13px;font-weight:600;margin-bottom:6px;color:#dc2626">⚠️ Опасная зона (только владелец)</div>
+      <div style="font-size:12px;color:#6b7280;margin-bottom:10px">Сброс удалит все записи о визитах и загруженные файлы. Это действие нельзя отменить.</div>
+      <button class="btn btn-danger" onclick="clearAllData()">🗑️ Сбросить все данные о визитах</button>
+    </div>` : '';
+
+  document.getElementById('modal-body').innerHTML = `
+    ${ownerCredsHtml}
+    ${adminCredsHtml}
+    <div style="font-size:13px;font-weight:600;margin-bottom:6px;color:#374151;border-top:1px solid #f1f5f9;padding-top:14px">
+      Учётные записи поставщиков
+    </div>
+    <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 10px;align-items:center;margin-bottom:4px">
+      <div></div>
+      <div style="font-size:11px;font-weight:600;color:#6b7280">Имя пользователя</div>
+      <div style="font-size:11px;font-weight:600;color:#6b7280">Пароль</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      ${PROVIDERS.map(p => `
+        <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 10px;align-items:center">
+          <span style="font-size:15px">${p.emoji}</span>
+          <input type="text" class="form-control" id="uname-${p.id}"
+                 value="${usernames[p.id]||p.id}" placeholder="${p.id}" style="font-size:12px">
+          <input type="text" class="form-control" id="pin-${p.id}"
+                 value="${pins[p.id]||'1234'}" placeholder="1234" style="font-size:12px">
+        </div>`).join('')}
+    </div>
+    ${dangerHtml}`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
+    <button class="btn btn-primary" onclick="saveAllPins()">💾 Сохранить данные поставщиков</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function saveOwnerCreds() {
+  const u = (document.getElementById('new-owner-user').value||'').trim();
+  const p = (document.getElementById('new-owner-pwd').value||'').trim();
+  if (!u) { alert('Введите имя пользователя'); return; }
+  if (!p) { alert('Введите пароль'); return; }
+  setLS('owner_username', u);
+  setLS('owner_pwd', p);
+  alert('Данные владельца сохранены');
+}
+
+function saveAdminCreds() {
+  const u = (document.getElementById('new-admin-user').value||'').trim();
+  const p = (document.getElementById('new-admin-pwd').value||'').trim();
+  if (!u) { alert('Введите имя пользователя'); return; }
+  if (!p) { alert('Введите пароль'); return; }
+  setLS('admin_username', u);
+  setLS('admin_pwd', p);
+  alert('Данные администратора сохранены');
+}
+
+function debugRecords() {
+  const all = getRecords();
+  const keys = Object.keys(all);
+  if (keys.length === 0) {
+    alert('localStorage пуст — записей не найдено.\n\nПроверьте: нажали ли вы "Сохранить" после отметки визита?');
+    return;
+  }
+  let msg = `displayYear = ${displayYear}\n`;
+  msg += `Найдено ${keys.length} записей в localStorage:\n\n`;
+  keys.forEach(k => {
+    const r = all[k];
+    const visits = r.visits || [];
+    const done = visits.filter(v => v.completed).length;
+    const hasFiles = visits.some(v => (v.fileIds||[]).length > 0);
+    msg += `• ${k}\n  → ${done} выполнено из ${visits.length} слотов, файлы: ${hasFiles ? 'есть' : 'нет'}\n`;
+  });
+  // also count what dashboard would compute
+  let dashDone = 0;
+  PROVIDERS.forEach(p => {
+    p.schedules.forEach(s => {
+      s.months.forEach(m => {
+        const required = s.visits || 1;
+        const visits = getVisitData(p.id, displayYear, m, required);
+        dashDone += visits.filter(v => v.completed).length;
+      });
+    });
+  });
+  msg += `\nДашборд считает: ${dashDone} визитов выполнено`;
+  alert(msg);
+}
+
+function clearAllData() {
+  if (currentUser !== 'owner') { alert('Сброс данных доступен только владельцу (yosef).'); return; }
+  if (!confirm('Вы уверены? Все записи о визитах и загруженные файлы будут удалены безвозвратно.')) return;
+  localStorage.removeItem('svc_records');
+  if (db) {
+    const tx = db.transaction('files', 'readwrite');
+    tx.objectStore('files').clear();
+  }
+  closeModal();
+  render();
+  alert('Все данные сброшены.');
+}
+
+function saveAllPins() {
+  const pins = {};
+  const usernames = {};
+  PROVIDERS.forEach(p => {
+    const pin = (document.getElementById(`pin-${p.id}`)?.value||'').trim();
+    const uname = (document.getElementById(`uname-${p.id}`)?.value||'').trim();
+    pins[p.id] = pin || '1234';
+    usernames[p.id] = uname || p.id;
+  });
+  setLS('provider_pins', pins);
+  setLS('provider_usernames', usernames);
+  alert('Данные поставщиков сохранены');
+  closeModal();
+}
+
+// ==============================
+// ХРАНИЛИЩЕ
+// ==============================
+const getLS = k => { try { return JSON.parse(localStorage.getItem(k)||'null'); } catch { return null; } };
+const setLS = (k,v) => localStorage.setItem(k, JSON.stringify(v));
+const getRecords = () => getLS('svc_records') || {};
+const getSOS = () => getLS('sos_items') || [];
+
+function getRecord(pid, yr, mo) {
+  return (getRecords())[`${pid}_${yr}_${mo}`] || {};
+}
+
+function saveRecord(pid, yr, mo, data) {
+  const all = getRecords();
+  const key = `${pid}_${yr}_${mo}`;
+  all[key] = { ...(all[key]||{}), ...data };
+  setLS('svc_records', all);
+}
+
+// ==============================
+// INDEXEDDB
+// ==============================
+function initDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open('SvcFiles', 1);
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('files'))
+        d.createObjectStore('files', { keyPath:'id', autoIncrement:true });
+    };
+    req.onsuccess = e => { db = e.target.result; res(); };
+    req.onerror = rej;
+  });
+}
+
+function dbSave(fileData) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction('files','readwrite');
+    const r = tx.objectStore('files').add(fileData);
+    r.onsuccess = () => res(r.result);
+    r.onerror = rej;
+  });
+}
+
+function dataURLtoBlob(data) {
+  if (!data || !data.startsWith('data:')) return new Blob([data]);
+  const [header, b64] = data.split(',');
+  const mime = header.match(/:(.*?);/)[1];
+  const binary = atob(b64);
+  const arr = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+  return new Blob([arr], {type: mime});
+}
+
+function dbGet(id) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction('files','readonly');
+    const r = tx.objectStore('files').get(Number(id));
+    r.onsuccess = () => res(r.result);
+    r.onerror = rej;
+  });
+}
+
+function dbDel(id) {
+  return new Promise(res => {
+    const tx = db.transaction('files','readwrite');
+    tx.objectStore('files').delete(Number(id));
+    tx.oncomplete = res;
+  });
+}
+
+// ==============================
+// НАВИГАЦИЯ
+// ==============================
+function showView(v, pid) {
+  view = v; activeProvider = pid || null;
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  const navEl = document.getElementById(v === 'provider' ? `nav-${pid}` : `nav-${v}`);
+  if (navEl) navEl.classList.add('active');
+  render();
+}
+
+function render() {
+  updateRequestBadge();
+  const content = document.getElementById('content');
+  const title = document.getElementById('page-title');
+  const actions = document.getElementById('topbar-actions');
+  actions.innerHTML = '';
+
+  if (view === 'dashboard') {
+    title.textContent = 'Панель управления';
+    content.innerHTML = renderDashboard();
+  } else if (view === 'journal') {
+    title.textContent = '📋 Журнал визитов';
+    content.innerHTML = renderJournal();
+    loadJournalImages();
+  } else if (view === 'sos') {
+    title.textContent = '🚨 Экстренное ТО (SOS)';
+    actions.innerHTML = `<button class="btn btn-danger" onclick="openSosModal()">+ Добавить событие</button>`;
+    content.innerHTML = renderSOS();
+  } else if (view === 'finance') {
+    title.textContent = '💰 Финансовая сводка';
+    content.innerHTML = renderFinance();
+  } else if (view === 'requests') {
+    if (currentUser === 'owner') {
+      title.textContent = '📦 Заявки на закупку — Согласование';
+    } else if (currentUser === 'admin') {
+      title.textContent = '📦 Заявки на закупку — Все';
+    } else {
+      title.textContent = '📦 Мои заявки на закупку';
+      actions.innerHTML = `<button class="btn btn-primary" onclick="openRequestModal()">+ Новая заявка</button>`;
+    }
+    content.innerHTML = renderRequests();
+  } else if (view === 'provider') {
+    const p = PROVIDERS.find(x => x.id === activeProvider);
+    if (!p) return;
+    title.textContent = p.name;
+    if (currentUser === 'admin' || currentUser === 'owner') {
+      actions.innerHTML = `<button class="btn btn-outline" onclick="openAddSchedule('${p.id}')">+ Добавить услугу</button>`;
+    }
+    content.innerHTML = renderProvider(p);
+  }
+}
+
+// ==============================
+// ПАНЕЛЬ УПРАВЛЕНИЯ
+// ==============================
+function renderDashboard() {
+  const now = new Date();
+  const realCm = now.getMonth() + 1;
+  const realCy = now.getFullYear();
+  const cy = displayYear; // use same year as provider pages
+  const cm = (cy === realCy) ? realCm : (cy < realCy ? 12 : 0);
+  let total=0, done=0, overdue=0, pending=0;
+
+  // Count done from ALL saved records for this year (including unscheduled months)
+  const allRecs = getRecords();
+  Object.keys(allRecs).forEach(key => {
+    if (key.includes('_' + cy + '_')) {
+      const r = allRecs[key];
+      if (r.visits) done += r.visits.filter(v => v.completed).length;
+      else if (r.completed) done += 1;
+    }
+  });
+
+  // Count total/overdue/pending from schedule
+  PROVIDERS.forEach(p => {
+    p.schedules.forEach(s => {
+      s.months.forEach(m => {
+        const required = s.visits || 1;
+        total += required;
+        const visits = getVisitData(p.id, cy, m, required);
+        const doneCnt = visits.filter(v => v.completed).length;
+        const remaining = required - doneCnt;
+        if (remaining > 0) {
+          if (m < cm) overdue += remaining;
+          else pending += remaining;
+        }
+      });
+    });
+  });
+
+  const thisMonth = [];
+  PROVIDERS.forEach(p => {
+    p.schedules.forEach(s => {
+      if (s.months.includes(realCm) && cy === realCy) {
+        const required = s.visits || 1;
+        const visits = getVisitData(p.id, cy, realCm, required);
+        const doneCnt = visits.filter(v => v.completed).length;
+        thisMonth.push({ p, desc: s.desc, doneCnt, required });
+      }
+    });
+  });
+
+  const monthRows = thisMonth.length ? thisMonth.map(({p,desc,doneCnt,required}) => `
+    <div style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;cursor:pointer"
+         onclick="showView('provider','${p.id}')">
+      <div style="width:34px;height:34px;background:${p.bg};border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:17px">${p.emoji}</div>
+      <div style="flex:1">
+        <div style="font-weight:600;font-size:13px">${p.name}</div>
+        <div style="font-size:11px;color:#6b7280">${desc}</div>
+      </div>
+      <span class="badge ${doneCnt>=required?'badge-success':'badge-warning'}">${doneCnt>=required?'✓ Выполнено':'Ожидает'}</span>
+    </div>`).join('') :
+    `<p style="color:#6b7280;text-align:center;padding:24px">Нет запланированных услуг в этом месяце</p>`;
+
+  const sosList = getSOS().filter(s => s.status !== 'resolved').slice(0,3);
+  const sosRows = sosList.map(s => `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #fee2e2;border-radius:8px;margin-bottom:6px;background:#fef2f2">
+      <span style="font-size:14px">🚨</span>
+      <div style="flex:1">
+        <div style="font-weight:600;font-size:12px">${s.title}</div>
+        <div style="font-size:11px;color:#6b7280">${s.date}</div>
+      </div>
+      <span class="badge badge-danger">${s.status==='in_progress'?'В работе':'Ожидает'}</span>
+    </div>`).join('');
+
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="font-size:14px;font-weight:600;color:#374151">Статистика за ${cy} год</div>
+      <button class="btn btn-outline" style="font-size:11px;padding:4px 10px" onclick="debugRecords()">🔍 Диагностика</button>
+      <div class="year-nav">
+        <button class="year-btn" onclick="displayYear--;render()">◄</button>
+        <div class="year-display">${cy}</div>
+        <button class="year-btn" onclick="displayYear++;render()">►</button>
+      </div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card" style="border-left:4px solid #2563eb">
+        <div class="stat-value">${total}</div>
+        <div class="stat-label">Визитов запланировано на год</div>
+      </div>
+      <div class="stat-card" style="border-left:4px solid #16a34a">
+        <div class="stat-value" style="color:#16a34a">${done}</div>
+        <div class="stat-label">Визитов выполнено</div>
+      </div>
+      <div class="stat-card" style="border-left:4px solid #d97706">
+        <div class="stat-value" style="color:#d97706">${pending}</div>
+        <div class="stat-label">Визитов ожидают</div>
+      </div>
+      <div class="stat-card" style="border-left:4px solid #dc2626">
+        <div class="stat-value" style="color:#dc2626">${overdue}</div>
+        <div class="stat-label">Визитов просрочено</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-header">
+          <h3>Услуги в этом месяце — ${MONTHS[realCm-1]} ${realCy}</h3>
+          <span class="badge badge-blue">${thisMonth.length}</span>
+        </div>
+        <div style="padding:14px 16px">${monthRows}</div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="card-header"><h3>Открытые SOS</h3><span class="badge badge-danger">${sosList.length}</span></div>
+          <div style="padding:14px 16px">
+            ${sosRows || '<p style="color:#6b7280;text-align:center;padding:16px">Нет открытых событий</p>'}
+            <button class="btn btn-outline" style="width:100%;justify-content:center;margin-top:8px" onclick="showView('sos')">Показать все</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Все поставщики</h3></div>
+          <div class="prov-grid">
+            ${PROVIDERS.map(p => `
+              <div class="prov-tile" onclick="showView('provider','${p.id}')">
+                <span style="font-size:18px">${p.emoji}</span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-weight:600;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</div>
+                  <div style="font-size:10px;color:#6b7280">${p.cat}</div>
+                </div>
+                <button onclick="event.stopPropagation();openProviderInfo('${p.id}')"
+                  style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px 3px;border-radius:4px;flex-shrink:0;line-height:1;opacity:.6"
+                  title="Подробнее о поставщике">ℹ️</button>
+              </div>`).join('')}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ==============================
+// СТРАНИЦА ПОСТАВЩИКА
+// ==============================
+function renderProvider(p) {
+  const now = new Date();
+  const cm = now.getMonth() + 1;
+  const cy = now.getFullYear();
+
+  const cards = Array.from({length:12}, (_,i) => {
+    const m = i + 1;
+    const sched = p.schedules.find(s => s.months.includes(m));
+    const requiredVisits = sched ? (sched.visits || 1) : 0;
+    const r = getRecord(p.id, displayYear, m);
+    const visits = getVisitData(p.id, displayYear, m, requiredVisits);
+    const doneCnt = visits.filter(v => v.completed).length;
+    const desc = sched?.desc || (r.description ? r.description : '');
+
+    let status = 'none';
+    if (requiredVisits === 0 && !r.description) status = 'none';
+    else if (requiredVisits > 0 && doneCnt >= requiredVisits) status = 'done';
+    else if (requiredVisits > 0 && displayYear <= cy && m < cm) status = 'overdue';
+    else if (requiredVisits > 0 || r.description) status = 'pending';
+
+    const icon = {done:'✅', overdue:'❌', pending:'⏳', none:'📅'}[status];
+    const isCur = m === cm && displayYear === cy;
+
+    const dotsHtml = requiredVisits > 0 ? `
+      <div style="display:flex;gap:2px;margin-top:5px;align-items:center;flex-wrap:wrap">
+        ${Array.from({length:DISPLAY_VISITS}, (_,vi) => `<span style="font-size:12px;line-height:1;color:${visits[vi]?.completed ? 'var(--success)' : (vi < requiredVisits && status==='overdue' ? 'var(--danger)' : '#d1d5db')}">${visits[vi]?.completed ? '●' : '○'}</span>`).join('')}
+        <span style="font-size:10px;color:#6b7280;margin-left:3px">${doneCnt}/${requiredVisits}</span>
+      </div>` : '';
+
+    const subText = doneCnt > 0
+      ? (doneCnt >= requiredVisits ? `✓ ${doneCnt} визит(а) выполнено` : `${doneCnt} из ${requiredVisits} выполнено`)
+      : (desc || '—');
+
+    return `
+      <div class="month-card ${status} ${isCur?'current-month':''}"
+           onclick="openRecordModal('${p.id}',${displayYear},${m})">
+        <div class="month-icon">${icon}</div>
+        <div class="month-name">${MONTHS[m-1]}</div>
+        <div class="month-sub" style="font-size:10px;line-height:1.3">${subText}</div>
+        ${dotsHtml}
+      </div>`;
+  }).join('');
+
+  let pDone=0, pPending=0, pOver=0;
+  p.schedules.forEach(s => s.months.forEach(m => {
+    const required = s.visits || 1;
+    const visits = getVisitData(p.id, displayYear, m, required);
+    const doneCnt = visits.filter(v => v.completed).length;
+    if (doneCnt >= required) pDone++;
+    else if (displayYear <= cy && m < cm) pOver++;
+    else pPending++;
+  }));
+
+  return `
+    <div class="prov-header">
+      <div class="prov-icon" style="background:${p.bg}">${p.emoji}</div>
+      <div>
+        <div class="prov-name">${p.name}</div>
+        <div class="prov-cat">${p.cat}</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-left:auto;align-items:center">
+        <span class="badge badge-success">✓ ${pDone} выполнено</span>
+        <span class="badge badge-warning">⏳ ${pPending} ожидает</span>
+        ${pOver ? `<span class="badge badge-danger">❌ ${pOver} просрочено</span>` : ''}
+        <button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="openProviderInfo('${p.id}')">ℹ️ О поставщике</button>
+        <div class="year-nav">
+          <button class="year-btn" onclick="displayYear--;render()">◄</button>
+          <div class="year-display">${displayYear}</div>
+          <button class="year-btn" onclick="displayYear++;render()">►</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>Календарь — ${displayYear}</h3>
+        <div style="display:flex;gap:12px;font-size:11px;color:#6b7280">
+          <span>✅ Выполнено</span><span>⏳ Ожидает</span><span>❌ Просрочено</span><span>📅 Не запланировано</span>
+        </div>
+      </div>
+      <div class="months-grid">${cards}</div>
+    </div>`;
+}
+
+// ==============================
+// МОДАЛЬНОЕ ОКНО ЗАПИСИ
+// ==============================
+function openRecordModal(pid, yr, mo) {
+  const p = PROVIDERS.find(x => x.id === pid);
+  const sched = p.schedules.find(s => s.months.includes(mo));
+  const requiredVisits = sched ? (sched.visits || 1) : 1;
+  const visits = getVisitData(pid, yr, mo, requiredVisits);
+  pendingFiles = [];
+  pendingVisitFiles = {};
+  currentVisits = visits;
+
+  document.getElementById('modal-title').textContent = `${MONTHS[mo-1]} ${yr} — ${p.name}`;
+
+  const visitSections = Array.from({length:DISPLAY_VISITS}, (_,vi) => {
+    const v = visits[vi] || {};
+    const isRequired = vi < requiredVisits;
+    const existFileCount = (v.fileIds||[]).length;
+
+    const existingFilesHtml = (v.fileIds||[]).map((fid,fi) => {
+      const ftype = (v.fileTypes||[])[fi]||'';
+      const fname = ((v.fileNames||[])[fi]||'file').replace(/'/g,"\\'");
+      return `
+      <div class="file-item">
+        <span>${fileEmoji(ftype)}</span>
+        <span class="fn">${(v.fileNames||[])[fi]||'Файл'}</span>
+        <button onclick="previewFile(${fid},'${ftype}','${fname}')" style="color:#2563eb" title="Просмотр">👁</button>
+        ${(currentUser === 'owner' || currentUser === pid) ? `<button onclick="delVisitFile('${pid}',${yr},${mo},${vi},${fi})" style="color:#dc2626" title="Удалить файл">✕</button>` : ''}
+      </div>`;
+    }).join('');
+
+    return `
+      <div id="visit-card-${vi}" style="border:1px solid ${isRequired ? (v.completed?'#86efac':'#e2e8f0') : '#f1f5f9'};border-radius:10px;padding:12px 14px;margin-bottom:10px;background:${v.completed?'#f0fdf4':isRequired?'#f8fafc':'#fafafa'}">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <div style="width:24px;height:24px;background:${isRequired?p.bg:'#f1f5f9'};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:${isRequired?p.color:'#94a3b8'};flex-shrink:0">${vi+1}</div>
+          <div style="font-weight:600;font-size:13px;color:${isRequired?'#1e293b':'#94a3b8'}">
+            Посещение ${vi+1} ${isRequired?`<span style="font-size:10px;color:${p.color}">●по договору</span>`:'<span style="font-size:10px;color:#94a3b8">резерв</span>'}
+          </div>
+          <span style="font-size:16px;margin-left:auto">${v.completed?'✅':'○'}</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom:10px">
+          <label style="display:flex;align-items:center;gap:5px">
+            Отчёт о посещении
+            <span style="color:#dc2626;font-size:11px;font-weight:700">* обязательно</span>
+            ${existFileCount > 0 ? `<span class="badge badge-success" style="font-size:10px">📎 ${existFileCount} файл(ов)</span>` : ''}
+          </label>
+          ${existingFilesHtml ? `<div class="file-list" style="margin-bottom:6px">${existingFilesHtml}</div>` : ''}
+          <div class="upload-zone" id="visit-drop-${vi}"
+               onclick="document.getElementById('visit-fi-${vi}').click()"
+               style="padding:12px;font-size:12px">
+            📷 Фото / 🎬 Видео / 📄 Документ — перетащите или нажмите
+            <input type="file" id="visit-fi-${vi}" multiple accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx"
+                   style="display:none" onchange="onVisitFilePick(${vi},this)">
+          </div>
+          <div class="file-list" id="visit-pending-${vi}"></div>
+          <div id="v-err-${vi}" style="display:none;color:#dc2626;font-size:12px;margin-top:5px;padding:6px 10px;background:#fef2f2;border-radius:6px;border:1px solid #fca5a5">
+            ⚠️ Необходимо прикрепить фото, видео или документ перед отметкой выполнения
+          </div>
+        </div>
+
+        <div class="toggle-wrap" style="margin-bottom:8px;padding:8px 12px">
+          <label class="toggle">
+            <input type="checkbox" id="v-done-${vi}" ${v.completed?'checked':''} onchange="onVisitToggle(${vi})">
+            <span class="toggle-slider"></span>
+          </label>
+          <span id="v-label-${vi}" style="font-weight:600;font-size:13px">${v.completed?'✅ Выполнено':'⏳ Не выполнено'}</span>
+        </div>
+        <div id="v-date-grp-${vi}" style="${v.completed?'':'display:none'}">
+          <div class="form-group" style="margin-bottom:8px">
+            <label>Дата выполнения</label>
+            <input type="date" class="form-control" id="v-date-${vi}" value="${v.completedDate||''}">
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label>Примечания</label>
+          <textarea class="form-control" id="v-notes-${vi}" placeholder="Примечания к посещению ${vi+1}..." style="min-height:44px">${v.notes||''}</textarea>
+        </div>
+      </div>`;
+  }).join('');
+
+  const doneCnt = visits.filter(v => v.completed).length;
+  document.getElementById('modal-body').innerHTML = `
+    <div style="background:${p.bg};border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:12px;color:${p.color};font-weight:600">${p.emoji} ${sched?.desc||p.name}</div>
+      <div style="display:flex;gap:2px;align-items:center">
+        ${Array.from({length:DISPLAY_VISITS}, (_,vi) => `<span style="font-size:14px;color:${visits[vi]?.completed?'var(--success)':vi<requiredVisits?'#cbd5e1':'#f1f5f9'}">${visits[vi]?.completed?'●':'○'}</span>`).join('')}
+        <span style="font-size:11px;color:#6b7280;margin-left:5px">${doneCnt}/${requiredVisits}</span>
+      </div>
+    </div>
+    ${visitSections}`;
+
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveRecord2('${pid}',${yr},${mo},${DISPLAY_VISITS})">💾 Сохранить</button>`;
+
+  // Setup drag-and-drop for each visit zone
+  Array.from({length:DISPLAY_VISITS}, (_,vi) => setupVisitDrop(vi));
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function onToggle() {
+  const cb = document.getElementById('done-cb');
+  document.getElementById('done-label').textContent = cb.checked ? '✅ Работа выполнена' : '⏳ Не выполнено';
+  const dg = document.getElementById('date-grp');
+  dg.style.display = cb.checked ? '' : 'none';
+  if (cb.checked && !document.getElementById('done-date').value)
+    document.getElementById('done-date').value = new Date().toISOString().slice(0,10);
+}
+
+function onVisitToggle(vi) {
+  const cb = document.getElementById(`v-done-${vi}`);
+  if (cb.checked) {
+    const existingCount = (currentVisits[vi]?.fileIds || []).length;
+    const pendingCount = (pendingVisitFiles[vi] || []).length;
+    if (existingCount + pendingCount === 0) {
+      cb.checked = false;
+      const errEl = document.getElementById(`v-err-${vi}`);
+      if (errEl) {
+        errEl.style.display = '';
+        setTimeout(() => { errEl.style.display = 'none'; }, 4000);
+      }
+      // highlight upload zone
+      const zone = document.getElementById(`visit-drop-${vi}`);
+      if (zone) {
+        zone.style.borderColor = '#dc2626';
+        zone.style.background = '#fef2f2';
+        setTimeout(() => { zone.style.borderColor = ''; zone.style.background = ''; }, 3000);
+      }
+      return;
+    }
+  }
+  const dg = document.getElementById(`v-date-grp-${vi}`);
+  const lbl = document.getElementById(`v-label-${vi}`);
+  lbl.textContent = cb.checked ? '✅ Выполнено' : '⏳ Не выполнено';
+  dg.style.display = cb.checked ? '' : 'none';
+  if (cb.checked && !document.getElementById(`v-date-${vi}`).value)
+    document.getElementById(`v-date-${vi}`).value = new Date().toISOString().slice(0,10);
+}
+
+function onVisitFilePick(vi, input) {
+  readVisitFiles(vi, input.files);
+}
+
+function readVisitFiles(vi, files) {
+  if (!pendingVisitFiles[vi]) pendingVisitFiles[vi] = [];
+  Array.from(files).forEach(f => {
+    const fr = new FileReader();
+    fr.onload = e => {
+      pendingVisitFiles[vi].push({name:f.name, type:f.type, size:f.size, data:e.target.result});
+      renderVisitPending(vi);
+      // hide error if it was shown
+      const errEl = document.getElementById(`v-err-${vi}`);
+      if (errEl) errEl.style.display = 'none';
+      const zone = document.getElementById(`visit-drop-${vi}`);
+      if (zone) { zone.style.borderColor = ''; zone.style.background = ''; }
+    };
+    fr.readAsArrayBuffer(f);
+  });
+}
+
+function renderVisitPending(vi) {
+  const el = document.getElementById(`visit-pending-${vi}`);
+  if (!el) return;
+  el.innerHTML = (pendingVisitFiles[vi] || []).map((f,i) => `
+    <div class="file-item">
+      <span>${fileEmoji(f.type)}</span>
+      <span class="fn">${f.name}</span>
+      <span class="fs">${fmtSize(f.size)}</span>
+      <button onclick="removeVisitFile(${vi},${i})" style="color:#dc2626">✕</button>
+    </div>`).join('');
+}
+
+function removeVisitFile(vi, idx) {
+  if (pendingVisitFiles[vi]) pendingVisitFiles[vi].splice(idx, 1);
+  renderVisitPending(vi);
+}
+
+function setupVisitDrop(vi) {
+  const z = document.getElementById(`visit-drop-${vi}`);
+  if (!z) return;
+  z.addEventListener('dragover', e => { e.preventDefault(); z.classList.add('drag'); });
+  z.addEventListener('dragleave', () => z.classList.remove('drag'));
+  z.addEventListener('drop', e => { e.preventDefault(); z.classList.remove('drag'); readVisitFiles(vi, e.dataTransfer.files); });
+}
+
+function setupDrop(zoneId) {
+  const z = document.getElementById(zoneId);
+  if (!z) return;
+  z.addEventListener('dragover', e => { e.preventDefault(); z.classList.add('drag'); });
+  z.addEventListener('dragleave', () => z.classList.remove('drag'));
+  z.addEventListener('drop', e => { e.preventDefault(); z.classList.remove('drag'); readFiles(e.dataTransfer.files); });
+}
+
+function onFilePick(e) { readFiles(e.target.files); }
+
+function readFiles(files) {
+  Array.from(files).forEach(f => {
+    const fr = new FileReader();
+    fr.onload = e => {
+      pendingFiles.push({ name:f.name, type:f.type, size:f.size, data:e.target.result });
+      renderPending();
+    };
+    fr.readAsArrayBuffer(f);
+  });
+}
+
+function renderPending() {
+  const el = document.getElementById('pending-list');
+  if (!el) return;
+  el.innerHTML = pendingFiles.map((f,i) => `
+    <div class="file-item">
+      <span>${fileEmoji(f.type)}</span>
+      <span class="fn">${f.name}</span>
+      <span class="fs">${fmtSize(f.size)}</span>
+      <button onclick="pendingFiles.splice(${i},1);renderPending()" style="color:#dc2626">✕</button>
+    </div>`).join('');
+}
+
+function fileEmoji(t) {
+  if (!t) return '📎';
+  if (t.startsWith('image/')) return '🖼️';
+  if (t.startsWith('video/')) return '🎬';
+  if (t==='application/pdf') return '📄';
+  return '📎';
+}
+
+function fmtSize(b) {
+  if (b < 1024) return b+' Б';
+  if (b < 1024*1024) return (b/1024).toFixed(1)+' КБ';
+  return (b/1024/1024).toFixed(1)+' МБ';
+}
+
+async function openFile(id, type, name) {
+  const f = await dbGet(id);
+  if (!f) { alert('Файл не найден'); return; }
+  const blob = dataURLtoBlob(f.data);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = f.name || name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+async function previewFile(id, type, name) {
+  const f = await dbGet(id);
+  if (!f) { alert('Файл не найден'); return; }
+  const ft = f.type || type;
+  const blob = dataURLtoBlob(f.data);
+  const url = URL.createObjectURL(blob);
+  const fn = f.name || name;
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px 20px';
+  overlay.onclick = e => { if (e.target === overlay) { overlay.remove(); URL.revokeObjectURL(url); } };
+
+  let mediaHtml;
+  if (ft.startsWith('image/')) {
+    mediaHtml = `<img src="${url}" style="max-width:90vw;max-height:85vh;object-fit:contain;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.4)">`;
+  } else if (ft.startsWith('video/')) {
+    mediaHtml = `<video src="${url}" controls autoplay style="max-width:90vw;max-height:85vh;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.4)"></video>`;
+  } else if (ft === 'application/pdf') {
+    mediaHtml = `<iframe src="${url}" style="width:90vw;height:85vh;border:none;border-radius:8px;background:white;box-shadow:0 8px 40px rgba(0,0,0,.4)"></iframe>`;
+  } else {
+    mediaHtml = `<div style="background:white;border-radius:14px;padding:36px 48px;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.4)">
+      <div style="font-size:56px;margin-bottom:14px">${fileEmoji(ft)}</div>
+      <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:6px">${fn}</div>
+      <div style="font-size:12px;color:#6b7280;margin-bottom:22px">Предпросмотр этого типа файла недоступен в браузере</div>
+      <a href="${url}" download="${fn}" style="background:#2563eb;color:white;padding:10px 28px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;display:inline-block">⬇ Скачать файл</a>
+    </div>`;
+  }
+
+  overlay.innerHTML = `
+    <div style="position:absolute;top:0;left:0;right:0;padding:12px 18px;display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,.6)">
+      <span style="color:white;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%">${fn}</span>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <a href="${url}" download="${fn}" style="color:white;background:rgba(255,255,255,.18);padding:5px 12px;border-radius:6px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:4px">⬇ Скачать</a>
+        <button onclick="document.getElementById('file-preview-overlay').remove()" style="color:white;background:rgba(255,255,255,.18);border:none;padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer">✕ Закрыть</button>
+      </div>
+    </div>
+    ${mediaHtml}`;
+
+  overlay.id = 'file-preview-overlay';
+  document.getElementById('file-preview-overlay')?.remove();
+  document.body.appendChild(overlay);
+}
+
+async function delVisitFile(pid, yr, mo, vi, fi) {
+  if (currentUser !== 'owner' && currentUser !== pid) { alert('Удалить файл может только поставщик или владелец (yosef).'); return; }
+  if (!confirm('Удалить этот файл?')) return;
+  const r = getRecord(pid, yr, mo);
+  const visits = r.visits ? r.visits.map(v => ({...v,
+    fileIds: [...(v.fileIds||[])],
+    fileNames: [...(v.fileNames||[])],
+    fileTypes: [...(v.fileTypes||[])]
+  })) : [];
+  if (!visits[vi]) return;
+  const fid = visits[vi].fileIds[fi];
+  if (fid) await dbDel(fid);
+  visits[vi].fileIds.splice(fi, 1);
+  visits[vi].fileNames.splice(fi, 1);
+  visits[vi].fileTypes.splice(fi, 1);
+  saveRecord(pid, yr, mo, {visits});
+  openRecordModal(pid, yr, mo);
+}
+
+async function saveRecord2(pid, yr, mo, visitCount) {
+  visitCount = visitCount || DISPLAY_VISITS;
+  const visits = [];
+  for (let vi = 0; vi < visitCount; vi++) {
+    const completed = document.getElementById(`v-done-${vi}`)?.checked || false;
+    const completedDate = document.getElementById(`v-date-${vi}`)?.value || '';
+    const notes = document.getElementById(`v-notes-${vi}`)?.value || '';
+
+    const existing = currentVisits[vi] || {};
+    const fileIds = [...(existing.fileIds || [])];
+    const fileNames = [...(existing.fileNames || [])];
+    const fileTypes = [...(existing.fileTypes || [])];
+
+    for (const f of (pendingVisitFiles[vi] || [])) {
+      const id = await dbSave({name:f.name, type:f.type, size:f.size, data:f.data});
+      fileIds.push(id); fileNames.push(f.name); fileTypes.push(f.type);
+    }
+    visits.push({completed, completedDate, notes, fileIds, fileNames, fileTypes});
+  }
+  saveRecord(pid, yr, mo, {visits});
+  closeModal(); render();
+}
+
+async function delRecordFile(pid, yr, mo, idx) {
+  if (currentUser !== 'owner' && currentUser !== pid) { alert('Удалить файл может только поставщик или владелец (yosef).'); return; }
+  const r = getRecord(pid, yr, mo);
+  await dbDel(r.fileIds[idx]);
+  r.fileIds.splice(idx,1); r.fileNames.splice(idx,1); r.fileTypes.splice(idx,1);
+  const all = getRecords();
+  all[`${pid}_${yr}_${mo}`] = r;
+  setLS('svc_records', all);
+  openRecordModal(pid, yr, mo);
+}
+
+// ==============================
+// ДОБАВИТЬ УСЛУГУ В РАСПИСАНИЕ
+// ==============================
+function openAddSchedule(pid) {
+  const p = PROVIDERS.find(x => x.id === pid);
+  document.getElementById('modal-title').textContent = `Добавить услугу — ${p.name}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group">
+      <label>Описание услуги</label>
+      <input type="text" class="form-control" id="new-desc" placeholder="Опишите услугу...">
+    </div>
+    <div class="form-group">
+      <label>Запланированные месяцы (можно выбрать несколько)</label>
+      <div class="months-check-grid">
+        ${MONTHS.map((m,i) => `
+          <label class="month-check-item">
+            <input type="checkbox" value="${i+1}" id="mo-${i+1}"> ${m}
+          </label>`).join('')}
+      </div>
+    </div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveSchedule('${pid}')">💾 Добавить</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function saveSchedule(pid) {
+  const desc = document.getElementById('new-desc').value.trim();
+  if (!desc) { alert('Введите описание услуги'); return; }
+  const months = Array.from(document.querySelectorAll('[id^="mo-"]:checked')).map(el => Number(el.value));
+  const p = PROVIDERS.find(x => x.id === pid);
+  p.schedules.push({ desc, months });
+  closeModal(); render();
+}
+
+// ==============================
+// ЗАЯВКИ НА ЗАКУПКУ
+// ==============================
+const getRequests = () => getLS('purchase_requests') || [];
+const saveRequests = list => setLS('purchase_requests', list);
+
+const REQ_STATUS = {
+  pending:        { label:'⏳ Ожидает рассмотрения', color:'#d97706', bg:'#fef3c7' },
+  approved:       { label:'✅ Одобрено администратором', color:'#16a34a', bg:'#dcfce7' },
+  partial:        { label:'⚠️ Частичное одобрение', color:'#2563eb', bg:'#dbeafe' },
+  rejected:       { label:'❌ Отклонено администратором', color:'#dc2626', bg:'#fee2e2' },
+  owner_approved: { label:'🏛️ Финально одобрено владельцем', color:'#7c3aed', bg:'#f5f3ff' },
+  owner_rejected: { label:'🏛️ Отклонено владельцем', color:'#b91c1c', bg:'#fef2f2' }
+};
+
+function renderRequests() {
+  const allReqs = getRequests();
+
+  // Determine which requests to show based on role
+  let reqs, emptyMsg;
+  if (currentUser === 'owner' || currentUser === 'admin') {
+    reqs = [...allReqs].sort((a,b) => new Date(b.date)-new Date(a.date));
+    emptyMsg = 'Заявок пока нет';
+  } else {
+    reqs = allReqs.filter(r => r.providerId === currentUser).sort((a,b) => new Date(b.date)-new Date(a.date));
+    emptyMsg = 'У вас пока нет заявок. Нажмите «+ Новая заявка» чтобы создать.';
+  }
+
+  const pendingCount = reqs.filter(r => r.status === 'pending').length;
+  const needOwnerCount = reqs.filter(r => r.status === 'approved' || r.status === 'partial').length;
+
+  const statsHtml = (currentUser === 'owner' || currentUser === 'admin') ? `
+    <div style="display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap">
+      <div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:10px 18px;text-align:center">
+        <div style="font-size:20px;font-weight:700;color:#1e293b">${reqs.length}</div>
+        <div style="font-size:10px;color:#6b7280">Всего заявок</div>
+      </div>
+      <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:10px 18px;text-align:center">
+        <div style="font-size:20px;font-weight:700;color:#d97706">${pendingCount}</div>
+        <div style="font-size:10px;color:#92400e">Ожидают рассмотрения</div>
+      </div>
+      ${currentUser === 'owner' ? `
+      <div style="background:#f5f3ff;border:1px solid #c4b5fd;border-radius:10px;padding:10px 18px;text-align:center">
+        <div style="font-size:20px;font-weight:700;color:#7c3aed">${needOwnerCount}</div>
+        <div style="font-size:10px;color:#5b21b6">Ожидают решения владельца</div>
+      </div>` : ''}
+    </div>` : '';
+
+  if (!reqs.length) return statsHtml + `
+    <div style="text-align:center;padding:60px;color:#94a3b8">
+      <div style="font-size:48px;margin-bottom:12px">📦</div>
+      <div style="font-size:14px">${emptyMsg}</div>
+    </div>`;
+
+  const cards = reqs.map(r => {
+    const prov = PROVIDERS.find(x => x.id === r.providerId);
+    const st = REQ_STATUS[r.status] || REQ_STATUS.pending;
+    const total = (r.items||[]).reduce((s,i) => s + (Number(i.qty)||0)*(Number(i.price)||0), 0);
+
+    const itemsTable = (r.items||[]).length ? `
+      <table class="req-items-table">
+        <thead><tr><th>Наименование</th><th>Кол-во</th><th>Ед.</th><th style="text-align:right">Цена</th><th style="text-align:right">Сумма</th></tr></thead>
+        <tbody>${(r.items||[]).map(it => `
+          <tr>
+            <td>${it.name||''}</td>
+            <td>${it.qty||''}</td>
+            <td>${it.unit||''}</td>
+            <td style="text-align:right">${it.price ? Number(it.price).toLocaleString('ru-RU')+' ₽' : '—'}</td>
+            <td style="text-align:right;font-weight:600">${(it.qty&&it.price) ? ((Number(it.qty)*Number(it.price)).toLocaleString('ru-RU')+' ₽') : '—'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : '';
+
+    const adminResponseHtml = r.adminComment ? `
+      <div style="margin-top:10px;padding:8px 12px;background:#f8fafc;border-radius:8px;border-left:3px solid #2563eb">
+        <div style="font-size:10px;font-weight:700;color:#2563eb;margin-bottom:3px">👑 Ответ администратора ${r.adminDate ? '('+r.adminDate+')' : ''}</div>
+        <div style="font-size:12px;color:#374151">${r.adminComment}</div>
+      </div>` : '';
+
+    const ownerResponseHtml = r.ownerComment ? `
+      <div style="margin-top:8px;padding:8px 12px;background:#faf5ff;border-radius:8px;border-left:3px solid #7c3aed">
+        <div style="font-size:10px;font-weight:700;color:#7c3aed;margin-bottom:3px">🏛️ Решение владельца ${r.ownerDate ? '('+r.ownerDate+')' : ''}</div>
+        <div style="font-size:12px;color:#374151">${r.ownerComment}</div>
+      </div>` : '';
+
+    // Action buttons based on role
+    let actionBtns = '';
+    if (currentUser === 'admin' && r.status === 'pending') {
+      actionBtns = `<button class="btn btn-primary" style="font-size:12px;padding:5px 12px" onclick="openAdminResponseModal('${r.id}')">✏️ Ответить</button>`;
+    } else if (currentUser === 'admin' && (r.status === 'approved'||r.status==='partial'||r.status==='rejected')) {
+      actionBtns = `<button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="openAdminResponseModal('${r.id}')">✏️ Изменить ответ</button>`;
+    } else if (currentUser === 'owner' && (r.status === 'approved'||r.status==='partial')) {
+      actionBtns = `
+        <button class="btn btn-primary" style="font-size:12px;padding:5px 12px;background:#16a34a;border-color:#16a34a" onclick="openOwnerDecisionModal('${r.id}','approved')">✅ Одобрить</button>
+        <button class="btn btn-danger" style="font-size:12px;padding:5px 12px" onclick="openOwnerDecisionModal('${r.id}','rejected')">❌ Отклонить</button>
+        <button style="font-size:12px;padding:5px 12px;background:#fee2e2;color:#dc2626;border:none;cursor:pointer;border-radius:6px;font-family:inherit" onclick="deleteRequest('${r.id}')">🗑️ Удалить</button>`;
+    } else if (currentUser === 'owner' && r.status === 'pending') {
+      actionBtns = `
+        <button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="openAdminResponseModal('${r.id}')">✏️ Ответить (за администратора)</button>
+        <button style="font-size:12px;padding:5px 12px;background:#fee2e2;color:#dc2626;border:none;cursor:pointer;border-radius:6px;font-family:inherit" onclick="deleteRequest('${r.id}')">🗑️ Удалить</button>`;
+    } else if (currentUser === 'owner' && (r.status === 'owner_approved'||r.status==='owner_rejected'||r.status==='rejected')) {
+      actionBtns = `<button style="font-size:12px;padding:5px 12px;background:#fee2e2;color:#dc2626;border:none;cursor:pointer;border-radius:6px;font-family:inherit" onclick="deleteRequest('${r.id}')">🗑️ Удалить</button>`;
+    } else if (currentUser === r.providerId && r.status === 'pending') {
+      actionBtns = `
+        <button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="openRequestModal('${r.id}')">✏️ Редактировать</button>
+        <button style="font-size:12px;padding:5px 12px;background:#fee2e2;color:#dc2626;border:none;cursor:pointer;border-radius:6px;font-family:inherit" onclick="deleteRequest('${r.id}')">🗑️ Удалить</button>`;
+    }
+
+    return `
+      <div class="req-card status-${r.status}">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:10px">
+            ${prov ? `<span style="font-size:20px">${prov.emoji}</span>` : ''}
+            <div>
+              <div style="font-weight:700;font-size:14px;color:#1e293b">${r.title}</div>
+              <div style="font-size:11px;color:#6b7280">${prov ? prov.name : r.providerId} · 📅 ${r.date}</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="padding:4px 10px;border-radius:12px;font-size:11px;font-weight:700;background:${st.bg};color:${st.color}">${st.label}</span>
+            ${total > 0 ? `<span style="font-size:12px;font-weight:700;color:#1e293b">${total.toLocaleString('ru-RU')} ₽</span>` : ''}
+          </div>
+        </div>
+        ${r.notes ? `<div style="font-size:12px;color:#374151;margin-bottom:8px;padding:6px 10px;background:#f8fafc;border-radius:6px">${r.notes}</div>` : ''}
+        ${itemsTable}
+        ${(r.fileIds||[]).length ? '<div style="margin-top:10px;padding-top:8px;border-top:1px solid #f1f5f9"><div style="font-size:11px;font-weight:600;color:#6b7280;margin-bottom:6px">📎 Приложенные файлы (' + r.fileIds.length + ')</div><div style="display:flex;flex-wrap:wrap;gap:6px">' + (r.fileIds||[]).map((fid,fi) => { const fn2=((r.fileNames||[])[fi]||'Файл'); const ft2=(r.fileTypes||[])[fi]||''; const fn2esc=fn2.replace(/'/g,"\\'"); return '<div class="file-item"><span>'+fileEmoji(ft2)+'</span><span class="fn">'+fn2+'</span><button onclick="previewFile('+fid+',\''+ft2+'\',\''+fn2esc+'\')" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 3px" title="Просмотр">👁</button>'+(currentUser==='owner'?'<button onclick="delReqFile(\''+r.id+'\','+fi+')" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 3px" title="Удалить">✕</button>':'')+'</div>'; }).join('') + '</div></div>' : ''}
+        ${adminResponseHtml}
+        ${ownerResponseHtml}
+        ${actionBtns ? `<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">${actionBtns}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  return statsHtml + cards;
+}
+
+function openRequestModal(editId) {
+  const ex = editId ? getRequests().find(r => r.id === editId) : null;
+  const items = ex ? ex.items : [{ name:'', qty:'', unit:'шт', price:'' }];
+  document.getElementById('modal-title').textContent = ex ? '✏️ Редактировать заявку' : '📦 Новая заявка на закупку';
+
+  const existingReqFilesHtml = (ex?.fileIds||[]).length
+    ? '<div style="margin-bottom:8px">' + (ex.fileIds||[]).map((fid,fi) => {
+        const fn2 = ((ex.fileNames||[])[fi]||'Файл');
+        const ft2 = (ex.fileTypes||[])[fi]||'';
+        const fn2esc = fn2.replace(/'/g,"\\'");
+        return '<div class="file-item"><span>' + fileEmoji(ft2) + '</span><span class="fn">' + fn2 + '</span>'
+          + '<button onclick="previewFile(' + fid + ',\'' + ft2 + '\',\'' + fn2esc + '\')" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 3px" title="Просмотр">👁</button>'
+          + '</div>';
+      }).join('') + '</div>'
+    : '';
+
+  const renderItemRows = () => items.map((it,i) => `
+    <div style="display:grid;grid-template-columns:1fr 70px 60px 100px 36px;gap:6px;align-items:center;margin-bottom:6px" id="req-item-row-${i}">
+      <input class="form-control" style="font-size:12px" placeholder="Наименование" value="${it.name||''}" id="ri-name-${i}">
+      <input class="form-control" style="font-size:12px" type="number" placeholder="Кол-во" value="${it.qty||''}" id="ri-qty-${i}">
+      <input class="form-control" style="font-size:12px" placeholder="Ед." value="${it.unit||'шт'}" id="ri-unit-${i}">
+      <input class="form-control" style="font-size:12px" type="number" placeholder="Цена ₽" value="${it.price||''}" id="ri-price-${i}">
+      <button onclick="removeReqItem(${i})" style="background:#fee2e2;border:none;border-radius:6px;padding:0 8px;height:34px;cursor:pointer;color:#dc2626;font-size:16px">✕</button>
+    </div>`).join('');
+
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group">
+      <label>Заголовок заявки</label>
+      <input class="form-control" id="req-title" value="${ex?.title||''}" placeholder="Например: Закупка расходных материалов">
+    </div>
+    <div class="form-group">
+      <label>Дата</label>
+      <input type="date" class="form-control" id="req-date" value="${ex?.date||new Date().toISOString().slice(0,10)}">
+    </div>
+    <div class="form-group">
+      <label style="display:flex;align-items:center;justify-content:space-between">
+        <span>Перечень товаров / услуг</span>
+        <button class="btn btn-outline" style="font-size:11px;padding:3px 10px" onclick="addReqItem()">+ Добавить позицию</button>
+      </label>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px">
+        <div style="display:grid;grid-template-columns:1fr 70px 60px 100px 36px;gap:6px;margin-bottom:6px">
+          <div style="font-size:10px;font-weight:600;color:#6b7280">Наименование</div>
+          <div style="font-size:10px;font-weight:600;color:#6b7280">Кол-во</div>
+          <div style="font-size:10px;font-weight:600;color:#6b7280">Ед.</div>
+          <div style="font-size:10px;font-weight:600;color:#6b7280">Цена ₽</div>
+          <div></div>
+        </div>
+        <div id="req-items-container">${renderItemRows()}</div>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Примечания / обоснование</label>
+      <textarea class="form-control" id="req-notes" style="min-height:60px" placeholder="Объясните необходимость закупки...">${ex?.notes||''}</textarea>
+    </div>
+    <div class="form-group">
+      <label>📎 Документы / Фото / Видео</label>
+      ${existingReqFilesHtml}
+      <div class="upload-zone" id="req-drop-zone"
+           onclick="document.getElementById('req-fi').click()"
+           style="padding:12px;font-size:12px;cursor:pointer">
+        📷 Фото / 🎬 Видео / 📄 Документ — перетащите или нажмите
+        <input type="file" id="req-fi" multiple
+               accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx"
+               style="display:none" onchange="onReqFilePick(this)">
+      </div>
+      <div id="req-pending-files" style="margin-top:6px"></div>
+    </div>`;
+
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveRequest('${editId||''}')">📤 Отправить заявку</button>`;
+
+  window._reqItems = items;
+  window._reqRenderItems = renderItemRows;
+  window._reqPendingFiles = [];
+  setupReqDrop();
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function addReqItem() {
+  window._reqItems.push({ name:'', qty:'', unit:'шт', price:'' });
+  document.getElementById('req-items-container').innerHTML = window._reqItems.map((it,i) => `
+    <div style="display:grid;grid-template-columns:1fr 70px 60px 100px 36px;gap:6px;align-items:center;margin-bottom:6px" id="req-item-row-${i}">
+      <input class="form-control" style="font-size:12px" placeholder="Наименование" value="${it.name||''}" id="ri-name-${i}">
+      <input class="form-control" style="font-size:12px" type="number" placeholder="Кол-во" value="${it.qty||''}" id="ri-qty-${i}">
+      <input class="form-control" style="font-size:12px" placeholder="Ед." value="${it.unit||'шт'}" id="ri-unit-${i}">
+      <input class="form-control" style="font-size:12px" type="number" placeholder="Цена ₽" value="${it.price||''}" id="ri-price-${i}">
+      <button onclick="removeReqItem(${i})" style="background:#fee2e2;border:none;border-radius:6px;padding:0 8px;height:34px;cursor:pointer;color:#dc2626;font-size:16px">✕</button>
+    </div>`).join('');
+}
+
+function setupReqDrop() {
+  const z = document.getElementById('req-drop-zone');
+  if (!z) return;
+  z.addEventListener('dragover', e => { e.preventDefault(); z.classList.add('drag'); });
+  z.addEventListener('dragleave', () => z.classList.remove('drag'));
+  z.addEventListener('drop', e => { e.preventDefault(); z.classList.remove('drag'); readReqFiles(e.dataTransfer.files); });
+}
+
+function onReqFilePick(input) { readReqFiles(input.files); }
+
+function readReqFiles(files) {
+  Array.from(files).forEach(f => {
+    const fr = new FileReader();
+    fr.onload = e => {
+      window._reqPendingFiles.push({name:f.name, type:f.type, size:f.size, data:e.target.result});
+      renderReqPendingFiles();
+    };
+    fr.readAsDataURL(f);
+  });
+}
+
+function renderReqPendingFiles() {
+  const el = document.getElementById('req-pending-files');
+  if (!el) return;
+  el.innerHTML = (window._reqPendingFiles||[]).map((f,i) => `
+    <div class="file-item">
+      <span>${fileEmoji(f.type)}</span>
+      <span class="fn">${f.name}</span>
+      <span class="fs">${fmtSize(f.size)}</span>
+      <button onclick="removeReqPendingFile(${i})" style="color:#dc2626;background:none;border:none;cursor:pointer">✕</button>
+    </div>`).join('');
+}
+
+function removeReqPendingFile(idx) {
+  (window._reqPendingFiles||[]).splice(idx, 1);
+  renderReqPendingFiles();
+}
+
+async function delReqFile(reqId, fi) {
+  if (currentUser !== 'owner') { alert('Удалить файл может только владелец (yosef).'); return; }
+  if (!confirm('Удалить этот файл из заявки?')) return;
+  const list = getRequests();
+  const idx = list.findIndex(r => r.id === reqId);
+  if (idx < 0) return;
+  const r = list[idx];
+  const fid = (r.fileIds||[])[fi];
+  if (fid) await dbDel(fid);
+  (r.fileIds||[]).splice(fi,1);
+  (r.fileNames||[]).splice(fi,1);
+  (r.fileTypes||[]).splice(fi,1);
+  saveRequests(list);
+  render();
+}
+
+function removeReqItem(idx) {
+  window._reqItems.splice(idx, 1);
+  if (!window._reqItems.length) window._reqItems.push({ name:'', qty:'', unit:'שт', price:'' });
+  document.getElementById('req-items-container').innerHTML = window._reqItems.map((it,i) => `
+    <div style="display:grid;grid-template-columns:1fr 70px 60px 100px 36px;gap:6px;align-items:center;margin-bottom:6px">
+      <input class="form-control" style="font-size:12px" placeholder="Наименование" value="${it.name||''}" id="ri-name-${i}">
+      <input class="form-control" style="font-size:12px" type="number" placeholder="Кол-во" value="${it.qty||''}" id="ri-qty-${i}">
+      <input class="form-control" style="font-size:12px" placeholder="Ед." value="${it.unit||'шт'}" id="ri-unit-${i}">
+      <input class="form-control" style="font-size:12px" type="number" placeholder="Цена ₽" value="${it.price||''}" id="ri-price-${i}">
+      <button onclick="removeReqItem(${i})" style="background:#fee2e2;border:none;border-radius:6px;padding:0 8px;height:34px;cursor:pointer;color:#dc2626;font-size:16px">✕</button>
+    </div>`).join('');
+}
+
+async function saveRequest(editId) {
+  const title = (document.getElementById('req-title').value||'').trim();
+  if (!title) { alert('Введите заголовок заявки'); return; }
+  const date = document.getElementById('req-date').value;
+  const notes = document.getElementById('req-notes').value;
+
+  const items = (window._reqItems||[]).map((_,i) => ({
+    name: document.getElementById(`ri-name-${i}`)?.value||'',
+    qty:  document.getElementById(`ri-qty-${i}`)?.value||'',
+    unit: document.getElementById(`ri-unit-${i}`)?.value||'шт',
+    price:document.getElementById(`ri-price-${i}`)?.value||''
+  })).filter(it => it.name);
+
+  const prov = PROVIDERS.find(x => x.id === currentUser);
+  const list = getRequests();
+
+  // Upload pending files to IndexedDB
+  const newFileIds = [], newFileNames = [], newFileTypes = [];
+  for (const f of (window._reqPendingFiles || [])) {
+    const id = await dbSave({name:f.name, type:f.type, size:f.size, data:f.data});
+    newFileIds.push(id); newFileNames.push(f.name); newFileTypes.push(f.type);
+  }
+
+  if (editId) {
+    const idx = list.findIndex(r => r.id === editId);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], title, date, notes, items,
+        fileIds:   [...(list[idx].fileIds||[]),   ...newFileIds],
+        fileNames: [...(list[idx].fileNames||[]), ...newFileNames],
+        fileTypes: [...(list[idx].fileTypes||[]), ...newFileTypes]
+      };
+    }
+  } else {
+    list.push({
+      id: Date.now().toString(),
+      providerId: currentUser,
+      providerName: prov ? prov.name : currentUser,
+      date, title, notes, items,
+      fileIds: newFileIds, fileNames: newFileNames, fileTypes: newFileTypes,
+      status: 'pending',
+      adminComment: '', adminDate: '',
+      ownerComment: '', ownerDate: ''
+    });
+  }
+  saveRequests(list);
+  closeModal();
+  render();
+}
+
+function openAdminResponseModal(reqId) {
+  const req = getRequests().find(r => r.id === reqId);
+  if (!req) return;
+  document.getElementById('modal-title').textContent = `✏️ Ответ на заявку: ${req.title}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div style="background:#f8fafc;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#374151">
+      <strong>${req.providerName}</strong> · ${req.date}
+    </div>
+    <div class="form-group">
+      <label>Решение</label>
+      <select class="form-control" id="adm-status">
+        <option value="approved" ${req.status==='approved'?'selected':''}>✅ Одобрить</option>
+        <option value="partial" ${req.status==='partial'?'selected':''}>⚠️ Частичное одобрение</option>
+        <option value="rejected" ${req.status==='rejected'?'selected':''}>❌ Отклонить</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Комментарий / обоснование</label>
+      <textarea class="form-control" id="adm-comment" style="min-height:80px" placeholder="Объясните решение поставщику...">${req.adminComment||''}</textarea>
+    </div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveAdminResponse('${reqId}')">💾 Сохранить ответ</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function saveAdminResponse(reqId) {
+  const status = document.getElementById('adm-status').value;
+  const comment = (document.getElementById('adm-comment').value||'').trim();
+  const list = getRequests();
+  const idx = list.findIndex(r => r.id === reqId);
+  if (idx >= 0) {
+    list[idx].status = status;
+    list[idx].adminComment = comment;
+    list[idx].adminDate = new Date().toISOString().slice(0,10);
+    // Reset owner decision when admin changes their answer
+    if (list[idx].ownerApproval) { list[idx].ownerComment = ''; list[idx].ownerDate = ''; delete list[idx].ownerApproval; }
+  }
+  saveRequests(list);
+  closeModal();
+  render();
+}
+
+function openOwnerDecisionModal(reqId, preStatus) {
+  const req = getRequests().find(r => r.id === reqId);
+  if (!req) return;
+  const isApprove = preStatus === 'approved';
+  document.getElementById('modal-title').textContent = isApprove ? '✅ Финальное одобрение' : '❌ Отклонение заявки';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="background:#f8fafc;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px">
+      <strong>${req.title}</strong><br>${req.providerName} · ${req.date}
+    </div>
+    <div class="form-group">
+      <label>Комментарий владельца (необязательно)</label>
+      <textarea class="form-control" id="owner-comment" style="min-height:70px" placeholder="Добавьте пояснение к решению...">${req.ownerComment||''}</textarea>
+    </div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn ${isApprove?'btn-primary':'btn-danger'}" style="${isApprove?'background:#16a34a;border-color:#16a34a':''}"
+            onclick="saveOwnerDecision('${reqId}','${isApprove?'owner_approved':'owner_rejected'}')">
+      ${isApprove ? '✅ Подтвердить одобрение' : '❌ Подтвердить отклонение'}
+    </button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function saveOwnerDecision(reqId, decision) {
+  const comment = (document.getElementById('owner-comment').value||'').trim();
+  const list = getRequests();
+  const idx = list.findIndex(r => r.id === reqId);
+  if (idx >= 0) {
+    list[idx].status = decision;
+    list[idx].ownerComment = comment;
+    list[idx].ownerDate = new Date().toISOString().slice(0,10);
+  }
+  saveRequests(list);
+  closeModal();
+  render();
+}
+
+async function deleteRequest(id) {
+  const list = getRequests();
+  const req = list.find(r => r.id === id);
+  if (!req) return;
+  if (currentUser !== 'owner' && !(currentUser === req.providerId && req.status === 'pending')) {
+    alert('Нет прав на удаление этой заявки.'); return;
+  }
+  if (!confirm('Удалить заявку полностью?')) return;
+  for (const fid of (req.fileIds || [])) { try { await dbDel(fid); } catch(e) {} }
+  saveRequests(list.filter(r => r.id !== id));
+  render();
+}
+
+function exportCSV() {
+  const recs = getRecords();
+  let csv = 'Поставщик,Год,Месяц,Посещение,Дата выполнения,Примечания\n';
+  Object.keys(recs).forEach(key => {
+    const parts = key.split('_');
+    if (parts.length < 3) return;
+    const pid = parts.slice(0,-2).join('_');
+    const yr = parts[parts.length-2];
+    const mo = parts[parts.length-1];
+    const prov = PROVIDERS.find(x => x.id === pid);
+    const provName = prov ? prov.name : pid;
+    const r = recs[key];
+    (r.visits||[]).forEach((v,vi) => {
+      if (v.completed || v.notes) {
+        csv += `"${provName}",${yr},${mo},${vi+1},"${v.completedDate||''}","${(v.notes||'').replace(/"/g,'""')}"\n`;
+      }
+    });
+  });
+  const blob = new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `export_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+
+// ==============================
+// SOS
+// ==============================
+function renderSOS() {
+  const list = getSOS();
+  if (!list.length) return `
+    <div style="text-align:center;padding:60px;color:#6b7280">
+      <div style="font-size:48px;margin-bottom:12px">🚨</div>
+      <div style="font-size:16px;font-weight:600;margin-bottom:6px">Нет событий</div>
+      <div>Нажмите «Добавить событие» для записи экстренных работ</div>
+    </div>`;
+
+  return [...list].sort((a,b) => new Date(b.date)-new Date(a.date)).map(s => `
+    <div class="sos-item">
+      <div class="sos-bar pri-${s.priority}"></div>
+      <div style="flex:1">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <div style="font-weight:700;font-size:14px">${s.title}</div>
+          <span class="badge ${s.status==='resolved'?'badge-success':s.status==='in_progress'?'badge-warning':'badge-danger'}">
+            ${s.status==='resolved'?'✅ Выполнено':s.status==='in_progress'?'🔄 В работе':'⚠️ Ожидает'}
+          </span>
+        </div>
+        <div style="font-size:11px;color:#6b7280">📅 ${s.date} · Приоритет: ${s.priority==='high'?'Высокий':s.priority==='medium'?'Средний':'Низкий'}</div>
+        ${s.description ? `<div style="font-size:12px;color:#374151;margin-top:6px">${s.description}</div>` : ''}
+        ${(s.fileNames||[]).length ? `<div style="font-size:11px;color:#6b7280;margin-top:4px">📎 ${s.fileNames.length} файл(ов)</div>` : ''}
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="btn btn-outline" style="font-size:11px;padding:4px 10px" onclick="openSosModal('${s.id}')">✏️ Редактировать</button>
+          <button style="font-size:11px;padding:4px 10px;background:#fee2e2;color:#dc2626;border:none;cursor:pointer;border-radius:6px;font-family:inherit" onclick="delSOS('${s.id}')">🗑️ Удалить</button>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+// ==============================
+// ЖУРНАЛ ВИЗИТОВ
+// ==============================
+function renderJournal() {
+  const now = new Date();
+  const realCm = now.getMonth() + 1;
+  const realCy = now.getFullYear();
+
+  // Gather all providers that have any activity or schedule in journalMonth/Year
+  const rows = [];
+  PROVIDERS.forEach(p => {
+    const sched = p.schedules.find(s => s.months.includes(journalMonth));
+    const r = getRecord(p.id, journalYear, journalMonth);
+    const required = sched ? (sched.visits || 1) : 0;
+    const visits = r.visits
+      ? [...r.visits]
+      : (r.completed !== undefined ? [{...r}] : []);
+    const completedVisits = visits.filter(v => v.completed);
+    if (completedVisits.length === 0) return; // show only providers with at least one completed visit
+    rows.push({ p, sched, required, visits: completedVisits });
+  });
+
+  const completedCount = rows.reduce((s, {visits}) => s + visits.filter(v => v.completed).length, 0);
+  const totalRequired = rows.reduce((s, {required}) => s + required, 0);
+  const providersWithFiles = rows.filter(({visits}) => visits.some(v => (v.fileIds||[]).length > 0)).length;
+
+  const isCurrent = journalMonth === realCm && journalYear === realCy;
+
+  const providerCards = rows.length ? rows.map(({p, sched, required, visits}) => {
+    const doneCnt = visits.filter(v => v.completed).length;
+    const allDone = required > 0 && doneCnt >= required;
+    const hasOverdue = required > 0 && !allDone && (journalYear < realCy || (journalYear === realCy && journalMonth < realCm));
+
+    const visitRows = visits.map((v, vi) => {
+      const isReq = vi < required;
+      const hasFiles = (v.fileIds || []).length > 0;
+      if (!v.completed && !hasFiles && !v.notes && !isReq) return ''; // hide empty reserve slots
+
+      const fileThumbsHtml = (v.fileIds || []).map((fid, fi) => {
+        const fname = (v.fileNames || [])[fi] || 'Файл';
+        const ftype = (v.fileTypes || [])[fi] || '';
+        const isImg = ftype.startsWith('image/');
+        return isImg
+          ? `<img class="jthumb" data-fid="${fid}" data-ftype="${ftype}" data-fname="${fname}"
+               title="${fname}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;background:#e2e8f0;flex-shrink:0"
+               onclick="previewFile(${fid},'${ftype}','${fname.replace(/'/g,"\\'")}')">`
+          : `<div onclick="previewFile(${fid},'${ftype}','${fname.replace(/'/g,"\\'")}')"
+               title="${fname}" style="width:64px;height:64px;border-radius:8px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:3px;flex-shrink:0">
+               <span style="font-size:22px">${fileEmoji(ftype)}</span>
+               <span style="font-size:9px;color:#6b7280;text-align:center;padding:0 4px;overflow:hidden;max-width:60px;text-overflow:ellipsis;white-space:nowrap">${fname}</span>
+             </div>`;
+      }).join('');
+
+      const statusColor = v.completed ? 'var(--success)' : (hasOverdue ? 'var(--danger)' : '#94a3b8');
+      const statusIcon = v.completed ? '✅' : (isReq ? (hasOverdue ? '❌' : '⏳') : '○');
+
+      return `
+        <div style="display:flex;gap:12px;padding:10px 0;border-top:1px solid #f1f5f9;align-items:flex-start">
+          <div style="width:28px;text-align:center;font-size:16px;flex-shrink:0;padding-top:2px">${statusIcon}</div>
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span style="font-size:12px;font-weight:600;color:${statusColor}">
+                Посещение ${vi+1}${isReq ? '' : ' <span style="font-weight:400;color:#94a3b8">(резерв)</span>'}
+              </span>
+              ${v.completedDate ? `<span style="font-size:11px;color:#6b7280">📅 ${v.completedDate}</span>` : ''}
+              ${hasFiles ? `<span style="font-size:11px;color:#2563eb">📎 ${(v.fileIds||[]).length} файл(а)</span>` : ''}
+            </div>
+            ${fileThumbsHtml ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">${fileThumbsHtml}</div>` : ''}
+            ${v.notes ? `<div style="font-size:12px;color:#374151;background:#f8fafc;border-radius:6px;padding:6px 10px;border-left:3px solid ${p.color}">${v.notes}</div>` : ''}
+            ${!v.completed && !hasFiles && isReq ? `<div style="font-size:12px;color:#94a3b8;font-style:italic">Нет данных о посещении</div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+
+    const badgeHtml = allDone
+      ? `<span class="badge badge-success">✓ Выполнено ${doneCnt}/${required}</span>`
+      : hasOverdue
+        ? `<span class="badge badge-danger">❌ Просрочено ${doneCnt}/${required}</span>`
+        : `<span class="badge badge-warning">⏳ ${doneCnt}/${required > 0 ? required : '?'}</span>`;
+
+    return `
+      <div style="background:white;border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;margin-bottom:14px;border-left:4px solid ${p.color}">
+        <div style="padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;background:${p.bg}"
+             onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'':'none'">
+          <div style="width:36px;height:36px;background:white;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">${p.emoji}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:13px;color:#1e293b">${p.name}</div>
+            <div style="font-size:11px;color:${p.color}">${p.cat}${sched ? ' — ' + sched.desc : ''}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+            ${badgeHtml}
+            <span style="color:#94a3b8;font-size:12px">▼</span>
+          </div>
+        </div>
+        <div style="padding:0 16px 4px">
+          ${visitRows || '<div style="padding:12px 0;color:#94a3b8;font-size:12px;font-style:italic">Нет данных за этот месяц</div>'}
+        </div>
+      </div>`;
+  }).join('') : `<div style="text-align:center;padding:48px;color:#94a3b8">
+    <div style="font-size:48px;margin-bottom:12px">📭</div>
+    <div style="font-size:14px">Нет данных за ${MONTHS[journalMonth-1]} ${journalYear}</div>
+  </div>`;
+
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="year-btn" onclick="journalMonth--;if(journalMonth<1){journalMonth=12;journalYear--}render()">◄</button>
+        <div style="font-size:16px;font-weight:700;color:#1e293b;min-width:140px;text-align:center">${MONTHS[journalMonth-1]} ${journalYear}</div>
+        <button class="year-btn" onclick="journalMonth++;if(journalMonth>12){journalMonth=1;journalYear++}render()">►</button>
+        ${isCurrent ? '<span class="badge badge-blue" style="margin-left:4px">Текущий месяц</span>' : ''}
+      </div>
+      <div style="display:flex;gap:10px">
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:8px 16px;text-align:center">
+          <div style="font-size:18px;font-weight:700;color:#16a34a">${completedCount}</div>
+          <div style="font-size:10px;color:#6b7280">Выполнено</div>
+        </div>
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:8px 16px;text-align:center">
+          <div style="font-size:18px;font-weight:700;color:#2563eb">${totalRequired}</div>
+          <div style="font-size:10px;color:#6b7280">Запланировано</div>
+        </div>
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:8px 16px;text-align:center">
+          <div style="font-size:18px;font-weight:700;color:#7c3aed">${providersWithFiles}</div>
+          <div style="font-size:10px;color:#6b7280">С файлами</div>
+        </div>
+      </div>
+    </div>
+    ${providerCards}`;
+}
+
+async function loadJournalImages() {
+  const imgs = document.querySelectorAll('img.jthumb[data-fid]');
+  for (const img of imgs) {
+    const fid = parseInt(img.dataset.fid);
+    const ftype = img.dataset.ftype || '';
+    if (!ftype.startsWith('image/')) continue;
+    try {
+      const f = await dbGet(fid);
+      if (f && f.data) {
+        const blob = dataURLtoBlob(f.data);
+        img.src = URL.createObjectURL(blob);
+      }
+    } catch(e) {}
+  }
+}
+
+// ==============================
+// ФИНАНСОВАЯ СВОДКА
+// ==============================
+function renderFinance() {
+  const locked = getPriceLock();
+
+  let monthlyTotal = 0;
+  let knownCount = 0;
+  const varIds = ['ruskhem','ekoregion','ruzoperator','licard'];
+
+  const rows = PROVIDERS.map(p => {
+    const price = getProviderMonthlyPrice(p.id);
+    if (price !== null && price > 0) { monthlyTotal += price; knownCount++; }
+    const isVariable = varIds.includes(p.id);
+    const priceDisplay = price !== null && price > 0 ? price : '';
+
+    const inputHtml = isVariable
+      ? `<span class="badge badge-gray" style="font-size:10px">По расходу</span>`
+      : locked
+        ? `<div style="display:flex;align-items:center;gap:6px">
+             <div style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;font-size:13px;font-weight:600;color:${price ? '#16a34a' : '#94a3b8'};min-width:100px;text-align:right">
+               ${price ? price.toLocaleString('ru-RU') : '—'}
+             </div>
+             <span style="font-size:12px;color:#6b7280">₽/мес</span>
+           </div>`
+        : `<div style="display:flex;align-items:center;gap:6px">
+             <input type="number" class="price-input" id="price-${p.id}"
+               value="${priceDisplay}" placeholder="0"
+               oninput="saveProviderPrice('${p.id}',this.value);renderFinanceTotals()">
+             <span style="font-size:12px;color:#6b7280">₽/мес</span>
+           </div>`;
+
+    return `
+      <tr>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:32px;height:32px;background:${p.bg};border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">${p.emoji}</div>
+            <div>
+              <div style="font-weight:600;color:#1e293b">${p.name}</div>
+              <div style="font-size:11px;color:#6b7280">${p.cat}</div>
+            </div>
+          </div>
+        </td>
+        <td>${inputHtml}</td>
+        <td id="annual-${p.id}" style="color:${price && !isVariable ? '#16a34a' : '#94a3b8'};font-weight:600;text-align:right">
+          ${isVariable ? '—' : (price ? (price*12).toLocaleString('ru-RU')+' ₽' : '—')}
+        </td>
+        <td style="text-align:center">
+          ${DEFAULT_PRICES[p.id] !== undefined ? '<span class="badge badge-success" style="font-size:10px">Из договора</span>' : ''}
+          ${isVariable ? '<span class="badge badge-gray" style="font-size:10px">Переменная</span>' : ''}
+        </td>
+      </tr>`;
+  }).join('');
+
+  const annualTotal = monthlyTotal * 12;
+  const fmt = n => n.toLocaleString('ru-RU');
+
+  return `
+    <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat-card" style="border-left:4px solid #2563eb">
+        <div class="stat-value" style="font-size:20px" id="fin-monthly">${fmt(monthlyTotal)} ₽</div>
+        <div class="stat-label">Известных затрат в месяц</div>
+      </div>
+      <div class="stat-card" style="border-left:4px solid #16a34a">
+        <div class="stat-value" style="font-size:20px" id="fin-annual">${fmt(annualTotal)} ₽</div>
+        <div class="stat-label">Прогноз затрат в год</div>
+      </div>
+      <div class="stat-card" style="border-left:4px solid #d97706">
+        <div class="stat-value">${knownCount} / ${PROVIDERS.length}</div>
+        <div class="stat-label">Договоров с известной ценой</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>Стоимость договоров по поставщикам</h3>
+        <div style="display:flex;align-items:center;gap:10px">
+          ${locked
+            ? `<span class="badge badge-success">🔒 Цены заблокированы</span>
+               <button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="unlockPrices()">🔓 Разблокировать</button>`
+            : `<span style="font-size:11px;color:#6b7280">Введите суммы из договоров</span>
+               <button class="btn btn-primary" style="font-size:12px;padding:5px 12px" onclick="lockPrices()">🔒 Сохранить и заблокировать</button>`}
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="finance-table">
+          <thead>
+            <tr>
+              <th>Поставщик</th>
+              <th>Ежемесячная стоимость</th>
+              <th style="text-align:right">В год</th>
+              <th style="text-align:center">Статус</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr style="background:#f0fdf4">
+              <td colspan="1" style="font-weight:700;color:#1e293b;font-size:14px">ИТОГО (известные)</td>
+              <td style="font-weight:700;color:#16a34a;font-size:15px" id="fin-total-monthly">${monthlyTotal.toLocaleString('ru-RU')} ₽/мес</td>
+              <td style="text-align:right;font-weight:700;color:#16a34a" id="fin-total-annual">${annualTotal.toLocaleString('ru-RU')} ₽/год</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+
+    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:12px 16px;font-size:12px;color:#92400e;margin-top:4px">
+      ⚠️ <strong>4 поставщика с переменными затратами</strong> не включены в итог: РусХимХолдинг, Экорегионсервис (1 575 ₽/м³), Рузский РО (по нормативу), ЛИКАРД (по расходу). Введите средние ежемесячные суммы вручную для включения в расчёт.
+    </div>`;
+}
+
+function renderFinanceTotals() {
+  let total = 0;
+  const fmt = n => n.toLocaleString('ru-RU');
+  const varIds = ['ruskhem','ekoregion','ruzoperator','licard'];
+
+  PROVIDERS.forEach(p => {
+    const inp = document.getElementById(`price-${p.id}`);
+    if (!inp) return;
+    const v = parseFloat(inp.value) || 0;
+    saveProviderPrice(p.id, v > 0 ? String(v) : '');
+    if (v > 0) total += v;
+    // update the annual cell for this row
+    const annCell = document.getElementById(`annual-${p.id}`);
+    if (annCell && !varIds.includes(p.id)) {
+      annCell.textContent = v > 0 ? fmt(v * 12) + ' ₽' : '—';
+      annCell.style.color = v > 0 ? '#16a34a' : '#94a3b8';
+    }
+  });
+
+  const ann = total * 12;
+  const tm = document.getElementById('fin-total-monthly');
+  const ta = document.getElementById('fin-total-annual');
+  const fm = document.getElementById('fin-monthly');
+  const fa = document.getElementById('fin-annual');
+  if (tm) tm.textContent = fmt(total) + ' ₽/мес';
+  if (ta) ta.textContent = fmt(ann) + ' ₽/год';
+  if (fm) fm.textContent = fmt(total) + ' ₽';
+  if (fa) fa.textContent = fmt(ann) + ' ₽';
+}
+
+function openSosModal(editId) {
+  const ex = editId ? getSOS().find(s => s.id === editId) : null;
+  pendingFiles = [];
+  document.getElementById('modal-title').textContent = ex ? 'Редактировать событие SOS' : 'Добавить событие SOS';
+
+  const existFiles = (ex?.fileIds||[]).map((fid,i) => `
+    <div class="file-item">
+      <span>${fileEmoji((ex.fileTypes||[])[i]||'')}</span>
+      <span class="fn">${(ex.fileNames||[])[i]||'Файл'}</span>
+      <button onclick="openFile(${fid},'${(ex.fileTypes||[])[i]||''}','${(ex.fileNames||[])[i]||'file'}')" style="color:#2563eb">⬇</button>
+    </div>`).join('');
+
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group">
+      <label>Заголовок</label>
+      <input type="text" class="form-control" id="sos-title" value="${ex?.title||''}" placeholder="Опишите проблему...">
+    </div>
+    <div class="form-group">
+      <label>Дата</label>
+      <input type="date" class="form-control" id="sos-date" value="${ex?.date||new Date().toISOString().slice(0,10)}">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group">
+        <label>Приоритет</label>
+        <select class="form-control" id="sos-pri">
+          <option value="high" ${ex?.priority==='high'?'selected':''}>🔴 Высокий</option>
+          <option value="medium" ${ex?.priority==='medium'?'selected':''}>🟡 Средний</option>
+          <option value="low" ${ex?.priority==='low'?'selected':''}>🟢 Низкий</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Статус</label>
+        <select class="form-control" id="sos-status">
+          <option value="pending" ${ex?.status==='pending'?'selected':''}>⚠️ Ожидает</option>
+          <option value="in_progress" ${ex?.status==='in_progress'?'selected':''}>🔄 В работе</option>
+          <option value="resolved" ${ex?.status==='resolved'?'selected':''}>✅ Выполнено</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Описание</label>
+      <textarea class="form-control" id="sos-desc" placeholder="Подробно опишите проблему, что сделано, что требуется...">${ex?.description||''}</textarea>
+    </div>
+    <div class="form-group">
+      <label>Файлы</label>
+      ${existFiles ? `<div class="file-list" style="margin-bottom:8px">${existFiles}</div>` : ''}
+      <div class="upload-zone" onclick="document.getElementById('sos-fi').click()" id="sos-drop">
+        📂 Загрузить фото, видео, документы
+        <input type="file" id="sos-fi" multiple style="display:none" onchange="onFilePick(event)">
+      </div>
+      <div class="file-list" id="pending-list"></div>
+    </div>`;
+
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-danger" onclick="saveSOS('${editId||''}')">💾 Сохранить</button>`;
+
+  setupDrop('sos-drop');
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+async function saveSOS(editId) {
+  const title = document.getElementById('sos-title').value.trim();
+  if (!title) { alert('Введите заголовок'); return; }
+  const list = getSOS();
+  const date = document.getElementById('sos-date').value;
+  const priority = document.getElementById('sos-pri').value;
+  const status = document.getElementById('sos-status').value;
+  const description = document.getElementById('sos-desc').value;
+
+  const fileIds=[], fileNames=[], fileTypes=[];
+  for (const f of pendingFiles) {
+    const id = await dbSave({ name:f.name, type:f.type, size:f.size, data:f.data });
+    fileIds.push(id); fileNames.push(f.name); fileTypes.push(f.type);
+  }
+
+  if (editId) {
+    const idx = list.findIndex(s => s.id === editId);
+    if (idx >= 0) list[idx] = {
+      ...list[idx], title, date, priority, status, description,
+      fileIds: [...(list[idx].fileIds||[]), ...fileIds],
+      fileNames: [...(list[idx].fileNames||[]), ...fileNames],
+      fileTypes: [...(list[idx].fileTypes||[]), ...fileTypes]
+    };
+  } else {
+    list.push({ id: Date.now().toString(), title, date, priority, status, description, fileIds, fileNames, fileTypes });
+  }
+
+  setLS('sos_items', list);
+  closeModal(); render();
+}
+
+function delSOS(id) {
+  if (!confirm('Удалить это событие?')) return;
+  setLS('sos_items', getSOS().filter(s => s.id !== id));
+  render();
+}
+
+// ==============================
+// КАРТОЧКА ПОСТАВЩИКА (инфо)
+// ==============================
+function openProviderInfo(pid) {
+  const p = PROVIDERS.find(x => x.id === pid);
+  const d = p.details;
+
+  const scheduleRows = p.schedules.map(s => `
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;color:#374151;font-weight:500;margin-bottom:7px">${s.desc}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">
+        ${MONTHS_SHORT.map((m,i) => `
+          <span style="padding:3px 9px;border-radius:12px;font-size:11px;font-weight:600;
+            ${s.months.includes(i+1)
+              ? `background:${p.bg};color:${p.color};border:1px solid ${p.color}`
+              : 'background:#f1f5f9;color:#94a3b8;border:1px solid #e2e8f0'}">${m}</span>
+        `).join('')}
+        ${s.months.length === 0 ? '<span style="font-size:12px;color:#6b7280;font-style:italic;align-self:center">По заявкам</span>' : ''}
+      </div>
+    </div>`).join('');
+
+  const serviceItems = d.services.map(s => `
+    <div style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:#374151;padding:5px 0;border-bottom:1px solid #f1f5f9">
+      <span style="color:${p.color};flex-shrink:0;font-size:14px;margin-top:-1px">▸</span>
+      <span>${s}</span>
+    </div>`).join('');
+
+  document.getElementById('modal-title').innerHTML =
+    `<span style="font-size:20px;margin-right:6px">${p.emoji}</span>${p.name}`;
+
+  document.getElementById('modal-body').innerHTML = `
+    <div style="background:${p.bg};border:1px solid ${p.color}33;border-radius:10px;padding:12px 16px;margin-bottom:18px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${p.color};margin-bottom:4px">${p.cat}</div>
+      <div style="font-size:13px;color:#374151;line-height:1.65">${d.description}</div>
+    </div>
+
+    <div style="margin-bottom:18px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#64748b;margin-bottom:10px">Перечень работ и услуг по договору</div>
+      <div>${serviceItems}</div>
+    </div>
+
+    <div style="margin-bottom:18px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#64748b;margin-bottom:10px">График обслуживания</div>
+      ${scheduleRows}
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8;margin-bottom:4px">Стоимость</div>
+        <div style="font-size:14px;font-weight:700;color:${p.color}">${d.price}</div>
+      </div>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8;margin-bottom:4px">Периодичность</div>
+        <div style="font-size:12px;font-weight:600;color:#374151">${d.frequency}</div>
+      </div>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;grid-column:1/-1">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8;margin-bottom:4px">Тип договора</div>
+        <div style="font-size:12px;font-weight:500;color:#374151">${d.contractType}</div>
+      </div>
+    </div>`;
+
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
+    ${currentUser === 'admin' ? `<button class="btn btn-primary" onclick="closeModal();showView('provider','${pid}')">Открыть страницу →</button>` : ''}`;
+
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+// ==============================
+// МОДАЛЬНОЕ ОКНО
+// ==============================
+function closeModal() {
+  document.getElementById('modal-overlay').classList.add('hidden');
+  pendingFiles = [];
+}
+
+function overlayClick(e) {
+  if (e.target === document.getElementById('modal-overlay')) closeModal();
+}
+
+// ==============================
+// ИНИЦИАЛИЗАЦИЯ
+// ==============================
+async function init() {
+  await initDB();
+
+  // Build sidebar nav
+  const nav = document.getElementById('providers-nav');
+  nav.innerHTML = PROVIDERS.map(p => `
+    <div class="nav-item" id="nav-${p.id}" onclick="showView('provider','${p.id}')">
+      <span>${p.emoji}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</span>
+    </div>`).join('');
+
+  // Show login screen (app starts locked)
+  document.getElementById('login-screen').style.display = 'flex';
+}
+
+init();
+</script>
+</body>
+</html>
