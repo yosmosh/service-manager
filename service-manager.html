@@ -834,18 +834,14 @@ function saveAllPins() {
 // FIREBASE CONFIG
 // כאשר יש לך config מ-Firebase Console — הכנס אותו כאן
 // ==============================
-const FIREBASE_CONFIG = null;
-/*
-  כדי להפעיל סנכרון בין כל המכשירים, החלף את null בconfig שלך:
-  const FIREBASE_CONFIG = {
-    apiKey: "...",
-    authDomain: "....firebaseapp.com",
-    projectId: "...",
-    storageBucket: "....appspot.com",
-    messagingSenderId: "...",
-    appId: "..."
-  };
-*/
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAol7Oz5JSdqweqz1y1qVKkyXuj8Kq8alw",
+  authDomain: "sad-budushego.firebaseapp.com",
+  projectId: "sad-budushego",
+  storageBucket: "sad-budushego.firebasestorage.app",
+  messagingSenderId: "1018143876011",
+  appId: "1:1018143876011:web:f7b2ac72c51f40fbab28ee"
+};
 
 let _firestoreDB = null, _storageRoot = null, _useFirebase = false;
 if (FIREBASE_CONFIG) {
@@ -1534,7 +1530,7 @@ async function previewFile(id, type, name) {
   if (!f) { alert('Файл не найден'); return; }
   const ft = f.type || type;
   const fn = f.name || name;
-  const isFirebaseUrl = _useFirebase && f.url;
+  const isFirebaseUrl = _useFirebase && !!f.url;
   const url = isFirebaseUrl ? f.url : URL.createObjectURL(dataURLtoBlob(f.data));
 
   const overlay = document.createElement('div');
