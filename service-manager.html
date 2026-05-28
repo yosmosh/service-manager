@@ -164,7 +164,9 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 .sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:98}
 .sidebar-overlay.active{display:block}
 @media(max-width:768px){
-  body{overflow:auto;height:auto;min-height:100vh}
+  body{overflow-x:hidden;overflow-y:auto;height:auto;min-height:100vh}
+  html{overflow-x:hidden}
+  .main{overflow-x:hidden;max-width:100vw}
   #mobile-menu-btn{display:block}
   .sidebar{position:fixed;left:0;top:0;bottom:0;height:100vh;z-index:99;transform:translateX(-280px);transition:transform .25s ease}
   .sidebar.mobile-open{transform:translateX(0)}
@@ -980,14 +982,14 @@ function renderDashboard() {
   });
 
   const monthRows = thisMonth.length ? thisMonth.map(({p,desc,doneCnt,required}) => `
-    <div style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;cursor:pointer"
+    <div style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;cursor:pointer;min-width:0"
          onclick="showView('provider','${p.id}')">
-      <div style="width:34px;height:34px;background:${p.bg};border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:17px">${p.emoji}</div>
-      <div style="flex:1">
-        <div style="font-weight:600;font-size:13px">${p.name}</div>
-        <div style="font-size:11px;color:#6b7280">${desc}</div>
+      <div style="width:34px;height:34px;background:${p.bg};border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">${p.emoji}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</div>
+        <div style="font-size:11px;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${desc}</div>
       </div>
-      <span class="badge ${doneCnt>=required?'badge-success':'badge-warning'}">${doneCnt>=required?'✓ Выполнено':'Ожидает'}</span>
+      <span class="badge ${doneCnt>=required?'badge-success':'badge-warning'}" style="flex-shrink:0">${doneCnt>=required?'✓':'⏳'}</span>
     </div>`).join('') :
     `<p style="color:#6b7280;text-align:center;padding:24px">Нет запланированных услуг в этом месяце</p>`;
 
