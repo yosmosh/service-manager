@@ -164,16 +164,16 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 .sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:98}
 .sidebar-overlay.active{display:block}
 @media(max-width:768px){
-  body{overflow-x:hidden;overflow-y:auto;height:auto;min-height:100vh}
-  html{overflow-x:hidden}
-  .main{overflow-x:hidden;max-width:100vw}
+  html{overflow-x:hidden;width:100%}
+  body{display:block;overflow-x:hidden;overflow-y:auto;height:auto;min-height:100vh;width:100%}
+  .main{width:100%;min-width:0;overflow-x:hidden}
   #mobile-menu-btn{display:block}
   .sidebar{position:fixed;left:0;top:0;bottom:0;height:100vh;z-index:99;transform:translateX(-280px);transition:transform .25s ease}
   .sidebar.mobile-open{transform:translateX(0)}
-  .main{width:100vw}
-  .topbar{padding:10px 12px;gap:8px}
-  .topbar h2{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px}
-  .content{padding:10px}
+  .topbar{padding:10px 12px;gap:8px;overflow:hidden}
+  .topbar h2{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}
+  .content{padding:8px;overflow-x:hidden;box-sizing:border-box}
+  .card{overflow:hidden;min-width:0}
   .stats-grid{grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}
   .months-grid{grid-template-columns:repeat(2,1fr);gap:8px;padding:10px}
   .stat-value{font-size:20px}
@@ -186,17 +186,24 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
   .dashboard-header .btn{font-size:10px !important;padding:3px 7px !important}
   /* Finance */
   .finance-stats-grid{grid-template-columns:1fr !important}
+  .finance-table{font-size:11px}
   .finance-table th:nth-child(3),.finance-table td:nth-child(3),
   .finance-table th:nth-child(4),.finance-table td:nth-child(4){display:none}
-  .price-input{width:80px !important;font-size:12px !important}
+  .price-input{width:70px !important;font-size:11px !important}
   /* Providers grid */
-  .prov-grid{grid-template-columns:repeat(2,1fr) !important;padding:8px;gap:6px}
-  .prov-tile{padding:8px}
+  .prov-grid{grid-template-columns:repeat(2,1fr) !important;padding:6px;gap:4px}
+  .prov-tile{padding:6px 8px;gap:6px;overflow:hidden;min-width:0}
+  .prov-tile span:first-child{font-size:15px !important;flex-shrink:0}
+  /* Login */
+  .login-box{width:92%;max-width:360px;padding:24px 18px}
   /* Year nav */
   .year-nav{margin-left:0}
   /* General */
   .card-header{flex-wrap:wrap;gap:6px}
   .card-header h3{font-size:13px}
+  /* Provider page header */
+  .prov-header{padding:12px 14px;gap:10px}
+  .prov-name{font-size:15px}
 }
 </style>
 </head>
@@ -982,14 +989,14 @@ function renderDashboard() {
   });
 
   const monthRows = thisMonth.length ? thisMonth.map(({p,desc,doneCnt,required}) => `
-    <div style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;cursor:pointer;min-width:0"
+    <div style="display:flex;align-items:center;gap:8px;padding:9px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;cursor:pointer;min-width:0;overflow:hidden"
          onclick="showView('provider','${p.id}')">
-      <div style="width:34px;height:34px;background:${p.bg};border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">${p.emoji}</div>
-      <div style="flex:1;min-width:0">
+      <div style="width:32px;height:32px;background:${p.bg};border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">${p.emoji}</div>
+      <div style="flex:1;min-width:0;overflow:hidden">
         <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</div>
         <div style="font-size:11px;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${desc}</div>
       </div>
-      <span class="badge ${doneCnt>=required?'badge-success':'badge-warning'}" style="flex-shrink:0">${doneCnt>=required?'✓':'⏳'}</span>
+      <span class="badge ${doneCnt>=required?'badge-success':'badge-warning'}" style="flex-shrink:0;margin-left:4px">${doneCnt>=required?'✓':'⏳'}</span>
     </div>`).join('') :
     `<p style="color:#6b7280;text-align:center;padding:24px">Нет запланированных услуг в этом месяце</p>`;
 
@@ -1054,13 +1061,13 @@ function renderDashboard() {
           <div class="prov-grid">
             ${PROVIDERS.map(p => `
               <div class="prov-tile" onclick="showView('provider','${p.id}')">
-                <span style="font-size:18px">${p.emoji}</span>
-                <div style="flex:1;min-width:0">
+                <span style="font-size:16px;flex-shrink:0">${p.emoji}</span>
+                <div style="flex:1;min-width:0;overflow:hidden">
                   <div style="font-weight:600;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</div>
-                  <div style="font-size:10px;color:#6b7280">${p.cat}</div>
+                  <div style="font-size:10px;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.cat}</div>
                 </div>
                 <button onclick="event.stopPropagation();openProviderInfo('${p.id}')"
-                  style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px 3px;border-radius:4px;flex-shrink:0;line-height:1;opacity:.6"
+                  style="background:none;border:none;cursor:pointer;font-size:13px;padding:2px;border-radius:4px;flex-shrink:0;line-height:1;opacity:.6;min-width:18px"
                   title="Подробнее о поставщике">ℹ️</button>
               </div>`).join('')}
           </div>
