@@ -1947,6 +1947,8 @@ function openRequestModal(editId) {
   window._reqPendingFiles = [];
   setupReqDrop();
   document.getElementById('modal-overlay').classList.remove('hidden');
+  // Scroll modal to top so the title field is visible
+  setTimeout(() => { const m = document.getElementById('modal'); if (m) m.scrollTop = 0; }, 30);
 }
 
 function addReqItem() {
@@ -2029,12 +2031,22 @@ function removeReqItem(idx) {
 }
 
 async function saveRequest(editId) {
+  const titleEl = document.getElementById('req-title');
+  const title = (titleEl?.value||'').trim();
+  if (!title) {
+    titleEl.style.borderColor = '#dc2626';
+    titleEl.placeholder = '⚠️ Обязательное поле! Введите заголовок';
+    titleEl.focus();
+    document.getElementById('modal').scrollTop = 0;
+    _showToast('⚠️ Заполните заголовок заявки', false);
+    return;
+  }
+  titleEl.style.borderColor = '';
+
+  _showToast('💾 Сохраняем...', true);
   try {
-    const title = (document.getElementById('req-title').value||'').trim();
-    if (!title) { alert('Введите заголовок заявки'); return; }
     const date = document.getElementById('req-date').value;
     const notes = document.getElementById('req-notes').value;
-
     const items = (window._reqItems||[]).map((_,i) => ({
       name: document.getElementById(`ri-name-${i}`)?.value||'',
       qty:  document.getElementById(`ri-qty-${i}`)?.value||'',
@@ -2044,40 +2056,46 @@ async function saveRequest(editId) {
 
     const prov = PROVIDERS.find(x => x.id === currentUser);
     const list = getRequests();
-
-    const newFileIds = [], newFileNames = [], newFileTypes = [];
-    for (const f of (window._reqPendingFiles || [])) {
-      const id = await dbSave({name:f.name, type:f.type, size:f.size, data:f.data});
-      newFileIds.push(id); newFileNames.push(f.name); newFileTypes.push(f.type);
-    }
+    const reqId = editId || Date.now().toString();
 
     if (editId) {
       const idx = list.findIndex(r => r.id === editId);
-      if (idx >= 0) {
-        list[idx] = { ...list[idx], title, date, notes, items,
-          fileIds:   [...(list[idx].fileIds||[]),   ...newFileIds],
-          fileNames: [...(list[idx].fileNames||[]), ...newFileNames],
-          fileTypes: [...(list[idx].fileTypes||[]), ...newFileTypes]
-        };
-      }
+      if (idx >= 0) list[idx] = { ...list[idx], title, date, notes, items };
     } else {
-      list.push({
-        id: Date.now().toString(),
-        providerId: currentUser,
-        providerName: prov ? prov.name : currentUser,
-        date, title, notes, items,
-        fileIds: newFileIds, fileNames: newFileNames, fileTypes: newFileTypes,
-        status: 'pending',
-        adminComment: '', adminDate: '',
-        ownerComment: '', ownerDate: ''
-      });
+      list.push({ id: reqId, providerId: currentUser, providerName: prov ? prov.name : currentUser,
+        date, title, notes, items, fileIds: [], fileNames: [], fileTypes: [],
+        status: 'pending', adminComment: '', adminDate: '', ownerComment: '', ownerDate: '' });
     }
     saveRequests(list);
+    const savedFiles = [...(window._reqPendingFiles || [])];
     closeModal();
     render();
+
+    // Upload files in background
+    for (const f of savedFiles) {
+      try {
+        _showToast('📤 Загружаем: ' + f.name, true);
+        const id = await dbSave({name:f.name, type:f.type, size:f.size, data:f.data});
+        const lst = getRequests();
+        const idx2 = lst.findIndex(r => r.id === reqId);
+        if (idx2 >= 0) {
+          lst[idx2].fileIds  = [...(lst[idx2].fileIds||[]),   id];
+          lst[idx2].fileNames= [...(lst[idx2].fileNames||[]), f.name];
+          lst[idx2].fileTypes= [...(lst[idx2].fileTypes||[]), f.type];
+          saveRequests(lst);
+        }
+      } catch(fe) {
+        console.error('File upload error:', fe);
+        _showToast('⚠️ Файл не загружен: ' + fe.message, false);
+      }
+    }
+    if (savedFiles.length === 0 && _useFirebase) {
+      clearTimeout(_saveTimer);
+      await _flushState();
+    }
   } catch(e) {
     console.error('saveRequest error:', e);
-    _showToast('❌ Ошибка отправки: ' + e.message, false);
+    alert('Ошибка: ' + e.message);
   }
 }
 
