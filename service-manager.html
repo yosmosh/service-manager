@@ -206,6 +206,11 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
   .prov-name{font-size:15px}
 }
 </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<style>
+/* flatpickr Russian overrides */
+.flatpickr-calendar { font-family: 'Segoe UI', Arial, sans-serif; direction: ltr; }
+</style>
 </head>
 <body>
 
@@ -306,6 +311,8 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ru.js"></script>
 <script>
 const APP_VERSION = 'v2026-05-31c';
 
@@ -2752,6 +2759,23 @@ async function init() {
       <span>${p.emoji}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</span>
     </div>`).join('');
 }
+
+// Auto-init flatpickr with Russian locale on every date input added to DOM
+(function() {
+  function _initFP() {
+    if (typeof flatpickr === 'undefined') return;
+    document.querySelectorAll('input[type="date"]:not(.flatpickr-input)').forEach(function(el) {
+      flatpickr(el, {
+        locale: 'ru',
+        dateFormat: 'Y-m-d',
+        allowInput: true,
+        disableMobile: true
+      });
+    });
+  }
+  var _fpObs = new MutationObserver(_initFP);
+  _fpObs.observe(document.body, { childList: true, subtree: true });
+})();
 
 init();
 </script>
