@@ -870,12 +870,33 @@ const setLS = (k, v) => {
 let _saveTimer = null;
 function _scheduleSave() {
   clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(_flushState, 800);
+  _saveTimer = setTimeout(_flushState, 300);
 }
+function _showToast(msg, ok) {
+  let t = document.getElementById('_fb-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = '_fb-toast';
+    t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:8px 20px;border-radius:8px;font-size:13px;font-weight:600;z-index:99999;transition:opacity .4s;white-space:nowrap';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.background = ok ? '#dcfce7' : '#fee2e2';
+  t.style.color = ok ? '#16a34a' : '#dc2626';
+  t.style.opacity = '1';
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.style.opacity = '0', ok ? 1500 : 4000);
+}
+
 async function _flushState() {
   if (!_firestoreDB) return;
-  try { await _firestoreDB.collection('appdata').doc('state').set(_state); }
-  catch(e) { console.error('Ошибка сохранения:', e); }
+  try {
+    await _firestoreDB.collection('appdata').doc('state').set(_state);
+    _showToast('✅ Сохранено', true);
+  } catch(e) {
+    console.error('Ошибка сохранения:', e);
+    _showToast('❌ Ошибка: ' + e.message, false);
+  }
 }
 async function _loadState() {
   if (!_firestoreDB) return;
