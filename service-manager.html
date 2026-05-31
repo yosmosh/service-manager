@@ -848,10 +848,11 @@ if (FIREBASE_CONFIG) {
   try {
     firebase.initializeApp(FIREBASE_CONFIG);
     _firestoreDB = firebase.firestore();
-    _storageRoot = firebase.storage().ref();
     _useFirebase = true;
-  } catch(e) { console.error('Firebase init error:', e); }
+    try { _storageRoot = firebase.storage().ref(); } catch(se) { console.warn('Storage init failed:', se); }
+  } catch(e) { console.error('Firebase init error:', e); _firestoreDB = null; _useFirebase = false; }
 }
+console.log('[FB] useFirebase=', _useFirebase, 'db=', !!_firestoreDB, 'storage=', !!_storageRoot);
 
 // ==============================
 // ХРАНИЛИЩЕ (Firebase или localStorage)
@@ -877,25 +878,32 @@ function _showToast(msg, ok) {
   if (!t) {
     t = document.createElement('div');
     t.id = '_fb-toast';
-    t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:8px 20px;border-radius:8px;font-size:13px;font-weight:600;z-index:99999;transition:opacity .4s;white-space:nowrap';
+    t.style.cssText = 'position:fixed;top:18px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:10px;font-size:14px;font-weight:700;z-index:999999;transition:opacity .4s;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,.18)';
     document.body.appendChild(t);
   }
   t.textContent = msg;
   t.style.background = ok ? '#dcfce7' : '#fee2e2';
   t.style.color = ok ? '#16a34a' : '#dc2626';
+  t.style.border = ok ? '1px solid #86efac' : '1px solid #fca5a5';
   t.style.opacity = '1';
   clearTimeout(t._t);
-  t._t = setTimeout(() => t.style.opacity = '0', ok ? 1500 : 4000);
+  t._t = setTimeout(() => t.style.opacity = '0', ok ? 3000 : 8000);
 }
 
 async function _flushState() {
-  if (!_firestoreDB) return;
+  if (!_firestoreDB) {
+    console.warn('[FB] _flushState skipped: no Firestore');
+    return;
+  }
+  console.log('[FB] Flushing state to Firestore...');
   try {
     await _firestoreDB.collection('appdata').doc('state').set(_state);
+    console.log('[FB] Flush success');
     _showToast('✅ Сохранено', true);
   } catch(e) {
-    console.error('Ошибка сохранения:', e);
-    _showToast('❌ Ошибка: ' + e.message, false);
+    console.error('[FB] Flush error:', e);
+    _showToast('❌ Ошибка сохранения: ' + e.message, false);
+    alert('Ошибка Firestore:\n' + e.message + '\n\nОткройте консоль браузера (F12) для деталей.');
   }
 }
 async function _loadState() {
@@ -1609,6 +1617,8 @@ async function delVisitFile(pid, yr, mo, vi, fi) {
 }
 
 async function saveRecord2(pid, yr, mo, visitCount) {
+  console.log('[SAVE] saveRecord2 called', pid, yr, mo);
+  _showToast('💾 Сохраняем...', true);
   try {
     visitCount = visitCount || DISPLAY_VISITS;
     const visits = [];
@@ -1616,23 +1626,54 @@ async function saveRecord2(pid, yr, mo, visitCount) {
       const completed = document.getElementById(`v-done-${vi}`)?.checked || false;
       const completedDate = document.getElementById(`v-date-${vi}`)?.value || '';
       const notes = document.getElementById(`v-notes-${vi}`)?.value || '';
-
       const existing = currentVisits[vi] || {};
-      const fileIds = [...(existing.fileIds || [])];
-      const fileNames = [...(existing.fileNames || [])];
-      const fileTypes = [...(existing.fileTypes || [])];
-
-      for (const f of (pendingVisitFiles[vi] || [])) {
-        const id = await dbSave({name:f.name, type:f.type, size:f.size, data:f.data});
-        fileIds.push(id); fileNames.push(f.name); fileTypes.push(f.type);
-      }
-      visits.push({completed, completedDate, notes, fileIds, fileNames, fileTypes});
+      visits.push({
+        completed, completedDate, notes,
+        fileIds:   [...(existing.fileIds   || [])],
+        fileNames: [...(existing.fileNames || [])],
+        fileTypes: [...(existing.fileTypes || [])]
+      });
     }
+
+    // Save data immediately (without waiting for file uploads)
     saveRecord(pid, yr, mo, {visits});
-    closeModal(); render();
+    const savedPending = JSON.parse(JSON.stringify(pendingVisitFiles)); // snapshot before close
+    closeModal();
+    render();
+    console.log('[SAVE] Data saved and modal closed');
+
+    // Upload files in background
+    let anyFile = false;
+    for (let vi = 0; vi < visitCount; vi++) {
+      const files = savedPending[vi] || [];
+      for (const f of files) {
+        anyFile = true;
+        try {
+          console.log('[SAVE] Uploading file', f.name);
+          _showToast('📤 Загружаем: ' + f.name, true);
+          const id = await dbSave({name:f.name, type:f.type, size:f.size, data:f.data});
+          const all = getRecords();
+          const key = `${pid}_${yr}_${mo}`;
+          if (all[key]?.visits?.[vi]) {
+            all[key].visits[vi].fileIds.push(id);
+            all[key].visits[vi].fileNames.push(f.name);
+            all[key].visits[vi].fileTypes.push(f.type);
+            setLS('svc_records', all);
+          }
+          console.log('[SAVE] File uploaded:', f.name, id);
+        } catch(fe) {
+          console.error('[SAVE] File upload error:', fe);
+          _showToast('⚠️ Файл не загружен: ' + fe.message, false);
+        }
+      }
+    }
+    if (!anyFile) {
+      // trigger flush manually if no files (setLS already schedules it, but let's be sure)
+      if (_useFirebase) clearTimeout(_saveTimer), await _flushState();
+    }
   } catch(e) {
-    console.error('saveRecord2 error:', e);
-    _showToast('❌ Ошибка сохранения: ' + e.message, false);
+    console.error('[SAVE] saveRecord2 error:', e);
+    alert('Ошибка сохранения:\n' + e.message);
   }
 }
 
@@ -2655,8 +2696,18 @@ async function init() {
   if (_useFirebase) {
     await _loadState();
     _setupSync();
+    // Verify Firestore is writable
+    try {
+      await _firestoreDB.collection('appdata').doc('_ping').set({t: Date.now()});
+      console.log('[FB] Firestore write test OK');
+    } catch(e) {
+      console.error('[FB] Firestore write test FAILED:', e);
+      alert('⚠️ Firebase не работает!\nОшибка: ' + e.message + '\n\nПроверьте правила безопасности в Firebase Console.');
+    }
   } else {
     await initDB();
+    console.warn('[FB] Firebase not available, using localStorage');
+    _showToast('⚠️ Работаем без Firebase (только локально)', false);
   }
 
   document.getElementById('login-loading').style.display = 'none';
