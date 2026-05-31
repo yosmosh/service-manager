@@ -1347,7 +1347,7 @@ function openRecordModal(pid, yr, mo) {
       <div class="file-item">
         <span>${fileEmoji(ftype)}</span>
         <span class="fn">${(v.fileNames||[])[fi]||'Файл'}</span>
-        <button onclick="previewFile(${fid},'${ftype}','${fname}')" style="color:#2563eb" title="Просмотр">👁</button>
+        <button onclick="previewFile('${fid}','${ftype}','${fname}')" style="color:#2563eb" title="Просмотр">👁</button>
         ${(currentUser === 'owner' || currentUser === pid) ? `<button onclick="delVisitFile('${pid}',${yr},${mo},${vi},${fi})" style="color:#dc2626" title="Удалить файл">✕</button>` : ''}
       </div>`;
     }).join('');
@@ -1881,7 +1881,7 @@ function openRequestModal(editId) {
         const ft2 = (ex.fileTypes||[])[fi]||'';
         const fn2esc = fn2.replace(/'/g,"\\'");
         return '<div class="file-item"><span>' + fileEmoji(ft2) + '</span><span class="fn">' + fn2 + '</span>'
-          + '<button onclick="previewFile(' + fid + ',\'' + ft2 + '\',\'' + fn2esc + '\')" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 3px" title="Просмотр">👁</button>'
+          + '<button onclick="previewFile(\'' + fid + '\',\'' + ft2 + '\',\'' + fn2esc + '\')" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 3px" title="Просмотр">👁</button>'
           + '</div>';
       }).join('') + '</div>'
     : '';
@@ -2295,8 +2295,8 @@ function renderJournal() {
         return isImg
           ? `<img class="jthumb" data-fid="${fid}" data-ftype="${ftype}" data-fname="${fname}"
                title="${fname}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;background:#e2e8f0;flex-shrink:0"
-               onclick="previewFile(${fid},'${ftype}','${fname.replace(/'/g,"\\'")}')">`
-          : `<div onclick="previewFile(${fid},'${ftype}','${fname.replace(/'/g,"\\'")}')"
+               onclick="previewFile('${fid}','${ftype}','${fname.replace(/'/g,"\\'")}')">`
+          : `<div onclick="previewFile('${fid}','${ftype}','${fname.replace(/'/g,"\\'")}')"
                title="${fname}" style="width:64px;height:64px;border-radius:8px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:3px;flex-shrink:0">
                <span style="font-size:22px">${fileEmoji(ftype)}</span>
                <span style="font-size:9px;color:#6b7280;text-align:center;padding:0 4px;overflow:hidden;max-width:60px;text-overflow:ellipsis;white-space:nowrap">${fname}</span>
@@ -2545,7 +2545,7 @@ function openSosModal(editId) {
     <div class="file-item">
       <span>${fileEmoji((ex.fileTypes||[])[i]||'')}</span>
       <span class="fn">${(ex.fileNames||[])[i]||'Файл'}</span>
-      <button onclick="openFile(${fid},'${(ex.fileTypes||[])[i]||''}','${(ex.fileNames||[])[i]||'file'}')" style="color:#2563eb">⬇</button>
+      <button onclick="openFile('${fid}','${(ex.fileTypes||[])[i]||''}','${(ex.fileNames||[])[i]||'file'}')" style="color:#2563eb">⬇</button>
     </div>`).join('');
 
   document.getElementById('modal-body').innerHTML = `
