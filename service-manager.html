@@ -1458,7 +1458,7 @@ function readVisitFiles(vi, files) {
       const zone = document.getElementById(`visit-drop-${vi}`);
       if (zone) { zone.style.borderColor = ''; zone.style.background = ''; }
     };
-    fr.readAsArrayBuffer(f);
+    fr.readAsDataURL(f);
   });
 }
 
@@ -1504,7 +1504,7 @@ function readFiles(files) {
       pendingFiles.push({ name:f.name, type:f.type, size:f.size, data:e.target.result });
       renderPending();
     };
-    fr.readAsArrayBuffer(f);
+    fr.readAsDataURL(f);
   });
 }
 
@@ -1609,26 +1609,31 @@ async function delVisitFile(pid, yr, mo, vi, fi) {
 }
 
 async function saveRecord2(pid, yr, mo, visitCount) {
-  visitCount = visitCount || DISPLAY_VISITS;
-  const visits = [];
-  for (let vi = 0; vi < visitCount; vi++) {
-    const completed = document.getElementById(`v-done-${vi}`)?.checked || false;
-    const completedDate = document.getElementById(`v-date-${vi}`)?.value || '';
-    const notes = document.getElementById(`v-notes-${vi}`)?.value || '';
+  try {
+    visitCount = visitCount || DISPLAY_VISITS;
+    const visits = [];
+    for (let vi = 0; vi < visitCount; vi++) {
+      const completed = document.getElementById(`v-done-${vi}`)?.checked || false;
+      const completedDate = document.getElementById(`v-date-${vi}`)?.value || '';
+      const notes = document.getElementById(`v-notes-${vi}`)?.value || '';
 
-    const existing = currentVisits[vi] || {};
-    const fileIds = [...(existing.fileIds || [])];
-    const fileNames = [...(existing.fileNames || [])];
-    const fileTypes = [...(existing.fileTypes || [])];
+      const existing = currentVisits[vi] || {};
+      const fileIds = [...(existing.fileIds || [])];
+      const fileNames = [...(existing.fileNames || [])];
+      const fileTypes = [...(existing.fileTypes || [])];
 
-    for (const f of (pendingVisitFiles[vi] || [])) {
-      const id = await dbSave({name:f.name, type:f.type, size:f.size, data:f.data});
-      fileIds.push(id); fileNames.push(f.name); fileTypes.push(f.type);
+      for (const f of (pendingVisitFiles[vi] || [])) {
+        const id = await dbSave({name:f.name, type:f.type, size:f.size, data:f.data});
+        fileIds.push(id); fileNames.push(f.name); fileTypes.push(f.type);
+      }
+      visits.push({completed, completedDate, notes, fileIds, fileNames, fileTypes});
     }
-    visits.push({completed, completedDate, notes, fileIds, fileNames, fileTypes});
+    saveRecord(pid, yr, mo, {visits});
+    closeModal(); render();
+  } catch(e) {
+    console.error('saveRecord2 error:', e);
+    _showToast('❌ Ошибка сохранения: ' + e.message, false);
   }
-  saveRecord(pid, yr, mo, {visits});
-  closeModal(); render();
 }
 
 async function delRecordFile(pid, yr, mo, idx) {
@@ -1971,52 +1976,56 @@ function removeReqItem(idx) {
 }
 
 async function saveRequest(editId) {
-  const title = (document.getElementById('req-title').value||'').trim();
-  if (!title) { alert('Введите заголовок заявки'); return; }
-  const date = document.getElementById('req-date').value;
-  const notes = document.getElementById('req-notes').value;
+  try {
+    const title = (document.getElementById('req-title').value||'').trim();
+    if (!title) { alert('Введите заголовок заявки'); return; }
+    const date = document.getElementById('req-date').value;
+    const notes = document.getElementById('req-notes').value;
 
-  const items = (window._reqItems||[]).map((_,i) => ({
-    name: document.getElementById(`ri-name-${i}`)?.value||'',
-    qty:  document.getElementById(`ri-qty-${i}`)?.value||'',
-    unit: document.getElementById(`ri-unit-${i}`)?.value||'шт',
-    price:document.getElementById(`ri-price-${i}`)?.value||''
-  })).filter(it => it.name);
+    const items = (window._reqItems||[]).map((_,i) => ({
+      name: document.getElementById(`ri-name-${i}`)?.value||'',
+      qty:  document.getElementById(`ri-qty-${i}`)?.value||'',
+      unit: document.getElementById(`ri-unit-${i}`)?.value||'шт',
+      price:document.getElementById(`ri-price-${i}`)?.value||''
+    })).filter(it => it.name);
 
-  const prov = PROVIDERS.find(x => x.id === currentUser);
-  const list = getRequests();
+    const prov = PROVIDERS.find(x => x.id === currentUser);
+    const list = getRequests();
 
-  // Upload pending files to IndexedDB
-  const newFileIds = [], newFileNames = [], newFileTypes = [];
-  for (const f of (window._reqPendingFiles || [])) {
-    const id = await dbSave({name:f.name, type:f.type, size:f.size, data:f.data});
-    newFileIds.push(id); newFileNames.push(f.name); newFileTypes.push(f.type);
-  }
-
-  if (editId) {
-    const idx = list.findIndex(r => r.id === editId);
-    if (idx >= 0) {
-      list[idx] = { ...list[idx], title, date, notes, items,
-        fileIds:   [...(list[idx].fileIds||[]),   ...newFileIds],
-        fileNames: [...(list[idx].fileNames||[]), ...newFileNames],
-        fileTypes: [...(list[idx].fileTypes||[]), ...newFileTypes]
-      };
+    const newFileIds = [], newFileNames = [], newFileTypes = [];
+    for (const f of (window._reqPendingFiles || [])) {
+      const id = await dbSave({name:f.name, type:f.type, size:f.size, data:f.data});
+      newFileIds.push(id); newFileNames.push(f.name); newFileTypes.push(f.type);
     }
-  } else {
-    list.push({
-      id: Date.now().toString(),
-      providerId: currentUser,
-      providerName: prov ? prov.name : currentUser,
-      date, title, notes, items,
-      fileIds: newFileIds, fileNames: newFileNames, fileTypes: newFileTypes,
-      status: 'pending',
-      adminComment: '', adminDate: '',
-      ownerComment: '', ownerDate: ''
-    });
+
+    if (editId) {
+      const idx = list.findIndex(r => r.id === editId);
+      if (idx >= 0) {
+        list[idx] = { ...list[idx], title, date, notes, items,
+          fileIds:   [...(list[idx].fileIds||[]),   ...newFileIds],
+          fileNames: [...(list[idx].fileNames||[]), ...newFileNames],
+          fileTypes: [...(list[idx].fileTypes||[]), ...newFileTypes]
+        };
+      }
+    } else {
+      list.push({
+        id: Date.now().toString(),
+        providerId: currentUser,
+        providerName: prov ? prov.name : currentUser,
+        date, title, notes, items,
+        fileIds: newFileIds, fileNames: newFileNames, fileTypes: newFileTypes,
+        status: 'pending',
+        adminComment: '', adminDate: '',
+        ownerComment: '', ownerDate: ''
+      });
+    }
+    saveRequests(list);
+    closeModal();
+    render();
+  } catch(e) {
+    console.error('saveRequest error:', e);
+    _showToast('❌ Ошибка отправки: ' + e.message, false);
   }
-  saveRequests(list);
-  closeModal();
-  render();
 }
 
 function openAdminResponseModal(reqId) {
@@ -2518,34 +2527,39 @@ function openSosModal(editId) {
 }
 
 async function saveSOS(editId) {
-  const title = document.getElementById('sos-title').value.trim();
-  if (!title) { alert('Введите заголовок'); return; }
-  const list = getSOS();
-  const date = document.getElementById('sos-date').value;
-  const priority = document.getElementById('sos-pri').value;
-  const status = document.getElementById('sos-status').value;
-  const description = document.getElementById('sos-desc').value;
+  try {
+    const title = document.getElementById('sos-title').value.trim();
+    if (!title) { alert('Введите заголовок'); return; }
+    const list = getSOS();
+    const date = document.getElementById('sos-date').value;
+    const priority = document.getElementById('sos-pri').value;
+    const status = document.getElementById('sos-status').value;
+    const description = document.getElementById('sos-desc').value;
 
-  const fileIds=[], fileNames=[], fileTypes=[];
-  for (const f of pendingFiles) {
-    const id = await dbSave({ name:f.name, type:f.type, size:f.size, data:f.data });
-    fileIds.push(id); fileNames.push(f.name); fileTypes.push(f.type);
+    const fileIds=[], fileNames=[], fileTypes=[];
+    for (const f of pendingFiles) {
+      const id = await dbSave({ name:f.name, type:f.type, size:f.size, data:f.data });
+      fileIds.push(id); fileNames.push(f.name); fileTypes.push(f.type);
+    }
+
+    if (editId) {
+      const idx = list.findIndex(s => s.id === editId);
+      if (idx >= 0) list[idx] = {
+        ...list[idx], title, date, priority, status, description,
+        fileIds: [...(list[idx].fileIds||[]), ...fileIds],
+        fileNames: [...(list[idx].fileNames||[]), ...fileNames],
+        fileTypes: [...(list[idx].fileTypes||[]), ...fileTypes]
+      };
+    } else {
+      list.push({ id: Date.now().toString(), title, date, priority, status, description, fileIds, fileNames, fileTypes });
+    }
+
+    setLS('sos_items', list);
+    closeModal(); render();
+  } catch(e) {
+    console.error('saveSOS error:', e);
+    _showToast('❌ Ошибка сохранения: ' + e.message, false);
   }
-
-  if (editId) {
-    const idx = list.findIndex(s => s.id === editId);
-    if (idx >= 0) list[idx] = {
-      ...list[idx], title, date, priority, status, description,
-      fileIds: [...(list[idx].fileIds||[]), ...fileIds],
-      fileNames: [...(list[idx].fileNames||[]), ...fileNames],
-      fileTypes: [...(list[idx].fileTypes||[]), ...fileTypes]
-    };
-  } else {
-    list.push({ id: Date.now().toString(), title, date, priority, status, description, fileIds, fileNames, fileTypes });
-  }
-
-  setLS('sos_items', list);
-  closeModal(); render();
 }
 
 function delSOS(id) {
