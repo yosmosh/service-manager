@@ -2323,6 +2323,7 @@ function renderJournal() {
               </span>
               ${v.completedDate ? `<span style="font-size:11px;color:#6b7280">📅 ${v.completedDate}</span>` : ''}
               ${hasFiles ? `<span style="font-size:11px;color:#2563eb">📎 ${(v.fileIds||[]).length} файл(а)</span>` : ''}
+              ${currentUser === 'owner' && (v.completed || hasFiles || v.notes) ? `<button onclick="deleteJournalVisit('${p.id}',${journalYear},${journalMonth},${vi})" style="margin-left:auto;background:none;border:1px solid #fca5a5;border-radius:5px;color:#dc2626;cursor:pointer;padding:2px 7px;font-size:11px" title="Удалить посещение">🗑 Удалить</button>` : ''}
             </div>
             ${fileThumbsHtml ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">${fileThumbsHtml}</div>` : ''}
             ${v.notes ? `<div style="font-size:12px;color:#374151;background:#f8fafc;border-radius:6px;padding:6px 10px;border-left:3px solid ${p.color}">${v.notes}</div>` : ''}
@@ -2384,6 +2385,20 @@ function renderJournal() {
       </div>
     </div>
     ${providerCards}`;
+}
+
+async function deleteJournalVisit(pid, yr, mo, vi) {
+  if (!confirm('Удалить данные этого посещения?')) return;
+  const all = getRecords();
+  const key = `${pid}_${yr}_${mo}`;
+  if (!all[key]) return;
+  const visits = all[key].visits || [];
+  visits[vi] = { completed: false, completedDate: '', notes: '', fileIds: [], fileNames: [], fileTypes: [] };
+  all[key].visits = visits;
+  setLS('svc_records', all);
+  if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
+  render();
+  _showToast('🗑 Посещение удалено', false);
 }
 
 async function loadJournalImages() {
