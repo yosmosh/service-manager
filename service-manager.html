@@ -245,6 +245,7 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
     <div class="login-error" id="login-error">Неверное имя пользователя или пароль.</div>
     <button class="btn btn-primary" style="width:100%;justify-content:center;padding:10px"
             onclick="doLogin()">Войти →</button>
+    <div id="app-version" style="text-align:center;margin-top:12px;font-size:11px;color:#94a3b8"></div>
   </div>
 </div>
 
@@ -306,6 +307,17 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 <script>
+const APP_VERSION = 'v2026-05-31c';
+
+// Global error catching - shows ALL JS errors visibly
+window.onerror = function(msg, src, line, col, err) {
+  alert('⚠️ JavaScript Error:\n' + msg + '\nLine: ' + line + '\n' + (err&&err.stack||''));
+  return false;
+};
+window.onunhandledrejection = function(e) {
+  alert('⚠️ Async Error:\n' + (e.reason && (e.reason.message || e.reason)));
+};
+
 // ==============================
 // ДАННЫЕ ПОСТАВЩИКОВ
 // ==============================
@@ -1667,9 +1679,9 @@ async function saveRecord2(pid, yr, mo, visitCount) {
         }
       }
     }
-    if (!anyFile) {
-      // trigger flush manually if no files (setLS already schedules it, but let's be sure)
-      if (_useFirebase) clearTimeout(_saveTimer), await _flushState();
+    if (!anyFile && _useFirebase) {
+      clearTimeout(_saveTimer);
+      await _flushState();
     }
   } catch(e) {
     console.error('[SAVE] saveRecord2 error:', e);
@@ -2712,6 +2724,8 @@ async function init() {
 
   document.getElementById('login-loading').style.display = 'none';
   document.getElementById('login-box').style.display = 'block';
+  const verEl = document.getElementById('app-version');
+  if (verEl) verEl.textContent = APP_VERSION + (_useFirebase ? ' · Firebase ✅' : ' · Offline ⚠️');
 
   // Build sidebar nav
   const nav = document.getElementById('providers-nav');
