@@ -264,6 +264,7 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
     <div class="nav-item" id="nav-dashboard" onclick="showView('dashboard')">📊 Панель управления</div>
     <div class="nav-item" id="nav-journal" onclick="showView('journal')">📋 Журнал визитов</div>
     <div class="nav-item" id="nav-sos" onclick="showView('sos')">🚨 Экстренное ТО (SOS)</div>
+    <div class="nav-item admin-or-owner" id="nav-maint" onclick="showView('maint')">🏗️ Обслуживание территории</div>
     <div class="nav-item" id="nav-finance" onclick="showView('finance')">💰 Финансовая сводка</div>
     <div class="nav-item admin-or-owner" id="nav-requests" onclick="showView('requests')" style="justify-content:space-between">
       <span>🔔 Заявки на закупку</span>
@@ -935,7 +936,7 @@ async function _loadState() {
       // первый запуск — мигрируем из localStorage
       const keys = ['admin_pwd','admin_username','owner_pwd','owner_username',
         'provider_pins','provider_usernames','provider_prices','prices_locked',
-        'sos_items','purchase_requests','svc_records'];
+        'sos_items','purchase_requests','svc_records','maint_works'];
       for (const k of keys) {
         try { const v = JSON.parse(localStorage.getItem(k)||'null'); if (v !== null) _state[k] = v; } catch(e) {}
       }
@@ -1079,6 +1080,13 @@ function render() {
     title.textContent = '🚨 Экстренное ТО (SOS)';
     actions.innerHTML = `<button class="btn btn-danger" onclick="openSosModal()">+ Добавить событие</button>`;
     content.innerHTML = renderSOS();
+  } else if (view === 'maint') {
+    title.textContent = '🏗️ Обслуживание территории';
+    if (currentUser === 'admin' || currentUser === 'owner') {
+      actions.innerHTML = `<button class="btn btn-primary" onclick="openMaintModal()">+ Добавить работу</button>`;
+    }
+    content.innerHTML = renderMaintenance();
+    loadMaintImages();
   } else if (view === 'finance') {
     title.textContent = '💰 Финансовая сводка';
     content.innerHTML = renderFinance();
@@ -2225,6 +2233,222 @@ function exportCSV() {
 }
 
 // ==============================
+// ОБСЛУЖИВАНИЕ ТЕРРИТОРИИ
+// ==============================
+const getMaintWorks = () => getLS('maint_works') || [];
+
+const MAINT_CATS = [
+  { id:'landscaping', label:'🌿 Благоустройство' },
+  { id:'cleaning',    label:'🧹 Уборка' },
+  { id:'repair',      label:'🎨 Ремонт / покраска' },
+  { id:'electrical',  label:'⚡ Электрика' },
+  { id:'plumbing',    label:'💧 Водоснабжение' },
+  { id:'security',    label:'🔒 Безопасность' },
+  { id:'other',       label:'🔧 Прочее' }
+];
+
+function maintCatLabel(id) {
+  return (MAINT_CATS.find(c => c.id === id) || MAINT_CATS[6]).label;
+}
+
+function renderMaintenance() {
+  const list = getMaintWorks();
+  if (!list.length) return `
+    <div style="text-align:center;padding:60px;color:#6b7280">
+      <div style="font-size:48px;margin-bottom:12px">🏗️</div>
+      <div style="font-size:16px;font-weight:600;margin-bottom:6px">Нет работ</div>
+      <div>Нажмите «Добавить работу» для записи работ по обслуживанию территории</div>
+    </div>`;
+
+  // Group by category for filter tabs
+  const sorted = [...list].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const statusBadge = s =>
+    s === 'done'        ? '<span class="badge badge-success">✅ Выполнено</span>'  :
+    s === 'in_progress' ? '<span class="badge badge-warning">🔄 В работе</span>'  :
+                          '<span class="badge" style="background:#e2e8f0;color:#374151">📋 Запланировано</span>';
+
+  const canEdit = currentUser === 'admin' || currentUser === 'owner';
+
+  return sorted.map(w => {
+    const existFiles = (w.fileIds||[]).map((fid, i) => {
+      const ft = (w.fileTypes||[])[i]||'';
+      const fn = (w.fileNames||[])[i]||'Файл';
+      const isImg = ft.startsWith('image/');
+      return isImg
+        ? `<img class="mthumb" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}"
+               title="${fn}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;cursor:pointer;background:#e2e8f0;flex-shrink:0"
+               onclick="previewFile('${fid}','${ft}','${fn.replace(/'/g,"\\'")}'")`
+        + `>`
+        : `<div onclick="previewFile('${fid}','${ft}','${fn.replace(/'/g,"\\'")}'")"
+               title="${fn}" style="width:56px;height:56px;border-radius:8px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:2px;flex-shrink:0">
+               <span style="font-size:20px">${fileEmoji(ft)}</span>
+               <span style="font-size:8px;color:#6b7280;text-align:center;padding:0 3px;overflow:hidden;max-width:52px;text-overflow:ellipsis;white-space:nowrap">${fn}</span>
+             </div>`;
+    }).join('');
+
+    return `
+    <div class="sos-item">
+      <div class="sos-bar" style="background:${w.status==='done'?'var(--success)':w.status==='in_progress'?'var(--warning)':'#94a3b8'}"></div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px;flex-wrap:wrap">
+          <div>
+            <div style="font-weight:700;font-size:14px">${w.title}</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:2px">${maintCatLabel(w.category)} · 📅 ${w.date}${w.cost ? ' · 💰 ' + Number(w.cost).toLocaleString('ru') + ' ₽' : ''}</div>
+          </div>
+          ${statusBadge(w.status)}
+        </div>
+        ${w.description ? `<div style="font-size:12px;color:#374151;margin-top:6px;background:#f8fafc;border-radius:6px;padding:6px 10px;border-left:3px solid #2563eb">${w.description}</div>` : ''}
+        ${existFiles ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${existFiles}</div>` : ''}
+        ${canEdit ? `
+        <div style="display:flex;gap:6px;margin-top:10px">
+          <button class="btn btn-outline" style="font-size:11px;padding:4px 10px" onclick="openMaintModal('${w.id}')">✏️ Редактировать</button>
+          <button style="font-size:11px;padding:4px 10px;background:#fee2e2;color:#dc2626;border:none;cursor:pointer;border-radius:6px;font-family:inherit" onclick="delMaint('${w.id}')">🗑️ Удалить</button>
+        </div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function loadMaintImages() {
+  const imgs = document.querySelectorAll('img.mthumb[data-fid]');
+  for (const img of imgs) {
+    const fid = img.dataset.fid;
+    try {
+      const f = await dbGet(fid);
+      if (!f) continue;
+      if (_useFirebase && f.url) img.src = f.url;
+      else if (f.data) img.src = URL.createObjectURL(dataURLtoBlob(f.data));
+    } catch(e) {}
+  }
+}
+
+function openMaintModal(editId) {
+  const ex = editId ? getMaintWorks().find(w => w.id === editId) : null;
+  pendingFiles = [];
+  document.getElementById('modal-title').textContent = ex ? '✏️ Редактировать работу' : '➕ Добавить работу';
+
+  const existFiles = (ex?.fileIds||[]).map((fid,i) => `
+    <div class="file-item">
+      <span>${fileEmoji((ex.fileTypes||[])[i]||'')}</span>
+      <span class="fn">${(ex.fileNames||[])[i]||'Файл'}</span>
+      <button onclick="previewFile('${fid}','${(ex.fileTypes||[])[i]||''}','${((ex.fileNames||[])[i]||'file').replace(/'/g,"\\'")}'")" style="color:#2563eb;background:none;border:none;cursor:pointer">👁</button>
+    </div>`).join('');
+
+  const catOptions = MAINT_CATS.map(c =>
+    `<option value="${c.id}" ${(ex?.category||'other')===c.id?'selected':''}>${c.label}</option>`
+  ).join('');
+
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group">
+      <label>Название работы *</label>
+      <input type="text" class="form-control" id="maint-title" value="${ex?.title||''}" placeholder="Например: Покос травы на территории">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group">
+        <label>Дата</label>
+        <input type="date" class="form-control" id="maint-date" value="${ex?.date||new Date().toISOString().slice(0,10)}">
+      </div>
+      <div class="form-group">
+        <label>Стоимость (₽)</label>
+        <input type="number" class="form-control" id="maint-cost" value="${ex?.cost||''}" placeholder="0">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group">
+        <label>Категория</label>
+        <select class="form-control" id="maint-cat">${catOptions}</select>
+      </div>
+      <div class="form-group">
+        <label>Статус</label>
+        <select class="form-control" id="maint-status">
+          <option value="planned"     ${(ex?.status||'done')==='planned'    ?'selected':''}>📋 Запланировано</option>
+          <option value="in_progress" ${ex?.status==='in_progress'?'selected':''}>🔄 В работе</option>
+          <option value="done"        ${(ex?.status||'done')==='done'       ?'selected':''}>✅ Выполнено</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Описание / примечания</label>
+      <textarea class="form-control" id="maint-desc" placeholder="Что сделано, кем, какие материалы использованы...">${ex?.description||''}</textarea>
+    </div>
+    <div class="form-group">
+      <label>Фото / документы</label>
+      ${existFiles ? `<div class="file-list" style="margin-bottom:8px">${existFiles}</div>` : ''}
+      <div class="upload-zone" onclick="document.getElementById('maint-fi').click()" id="maint-drop">
+        📂 Загрузить фото, видео, документы
+        <input type="file" id="maint-fi" multiple style="display:none" onchange="onFilePick(event)">
+      </div>
+      <div class="file-list" id="pending-list"></div>
+    </div>`;
+
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveMaint('${editId||''}')">💾 Сохранить</button>`;
+
+  setupDrop('maint-drop');
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+async function saveMaint(editId) {
+  try {
+    const title = document.getElementById('maint-title').value.trim();
+    if (!title) {
+      document.getElementById('maint-title').style.borderColor = '#dc2626';
+      document.getElementById('maint-title').focus();
+      _showToast('⚠️ Введите название работы', false);
+      return;
+    }
+    _showToast('💾 Сохраняем...', true);
+    const list = getMaintWorks();
+    const date     = document.getElementById('maint-date').value;
+    const cost     = document.getElementById('maint-cost').value;
+    const category = document.getElementById('maint-cat').value;
+    const status   = document.getElementById('maint-status').value;
+    const description = document.getElementById('maint-desc').value.trim();
+
+    const obj = editId
+      ? { ...(list.find(w => w.id === editId)||{}), title, date, cost, category, status, description }
+      : { id: Date.now().toString(), title, date, cost, category, status, description, fileIds:[], fileNames:[], fileTypes:[] };
+
+    if (editId) {
+      const idx = list.findIndex(w => w.id === editId);
+      if (idx >= 0) list[idx] = obj; else list.push(obj);
+    } else {
+      list.push(obj);
+    }
+    setLS('maint_works', list);
+    closeModal(); render();
+
+    // Background file upload
+    const saved = JSON.parse(JSON.stringify(pendingFiles));
+    for (const f of saved) {
+      try {
+        _showToast('📤 Загружаем: ' + f.name, true);
+        const fid = await dbSave({ name:f.name, type:f.type, size:f.size, data:f.data });
+        const all = getMaintWorks();
+        const idx = all.findIndex(w => w.id === obj.id);
+        if (idx >= 0) {
+          all[idx].fileIds   = [...(all[idx].fileIds||[]),   fid];
+          all[idx].fileNames = [...(all[idx].fileNames||[]), f.name];
+          all[idx].fileTypes = [...(all[idx].fileTypes||[]), f.type];
+          setLS('maint_works', all);
+        }
+      } catch(fe) { _showToast('⚠️ Файл не загружен: ' + fe.message, false); }
+    }
+    if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
+    _showToast('✅ Сохранено', false);
+  } catch(e) {
+    alert('Ошибка сохранения:\n' + e.message);
+  }
+}
+
+function delMaint(id) {
+  if (!confirm('Удалить эту запись?')) return;
+  setLS('maint_works', getMaintWorks().filter(w => w.id !== id));
+  render();
+}
+
 // SOS
 // ==============================
 function renderSOS() {
