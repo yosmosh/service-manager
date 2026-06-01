@@ -2247,21 +2247,24 @@ const MAINT_CATS = [
   { id:'other',       label:'🔧 Прочее' }
 ];
 
+const now0 = new Date();
+let maintYear  = now0.getFullYear();
+let maintMonth = now0.getMonth() + 1;
+
 function maintCatLabel(id) {
   return (MAINT_CATS.find(c => c.id === id) || MAINT_CATS[6]).label;
 }
 
 function renderMaintenance() {
-  const list = getMaintWorks();
-  if (!list.length) return `
-    <div style="text-align:center;padding:60px;color:#6b7280">
-      <div style="font-size:48px;margin-bottom:12px">🏗️</div>
-      <div style="font-size:16px;font-weight:600;margin-bottom:6px">Нет работ</div>
-      <div>Нажмите «Добавить работу» для записи работ по обслуживанию территории</div>
-    </div>`;
+  const all = getMaintWorks();
+  const items = all.filter(w => {
+    if (!w.date) return false;
+    const d = new Date(w.date);
+    return d.getFullYear() === maintYear && (d.getMonth() + 1) === maintMonth;
+  }).sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  // Group by category for filter tabs
-  const sorted = [...list].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const realNow = new Date();
+  const isCurrent = maintMonth === (realNow.getMonth()+1) && maintYear === realNow.getFullYear();
 
   const statusBadge = s =>
     s === 'done'        ? '<span class="badge badge-success">✅ Выполнено</span>'  :
@@ -2270,38 +2273,58 @@ function renderMaintenance() {
 
   const canEdit = currentUser === 'admin' || currentUser === 'owner';
 
-  return sorted.map(w => {
-    const existFiles = (w.fileIds||[]).map((fid, i) => {
-      const ft = (w.fileTypes||[])[i]||'';
-      const fn = (w.fileNames||[])[i]||'Файл';
-      const isImg = ft.startsWith('image/');
-      const fnEsc = fn.replace(/'/g, "\\'");
-      return isImg
-        ? `<img class="mthumb" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}" title="${fn}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;cursor:pointer;background:#e2e8f0;flex-shrink:0" onclick="previewFile('${fid}','${ft}','${fnEsc}')">`
-        : `<div onclick="previewFile('${fid}','${ft}','${fnEsc}')" title="${fn}" style="width:56px;height:56px;border-radius:8px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:2px;flex-shrink:0"><span style="font-size:20px">${fileEmoji(ft)}</span><span style="font-size:8px;color:#6b7280;text-align:center;padding:0 3px;overflow:hidden;max-width:52px;text-overflow:ellipsis;white-space:nowrap">${fn}</span></div>`;
+  const cards = items.length ? items.map(w => {
+    const filesHtml = (w.fileIds||[]).map((fid, i) => {
+      const ft  = (w.fileTypes||[])[i] || '';
+      const fn  = (w.fileNames||[])[i] || 'Файл';
+      const fnE = fn.replace(/'/g, "\\'");
+      if (ft.startsWith('image/')) {
+        return `<img class="mthumb" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}" title="${fn}"
+          style="width:72px;height:72px;object-fit:cover;border-radius:10px;cursor:pointer;background:#e2e8f0;flex-shrink:0;border:2px solid #e2e8f0"
+          onclick="previewFile('${fid}','${ft}','${fnE}')">`;
+      }
+      return `<div onclick="previewFile('${fid}','${ft}','${fnE}')" title="${fn}"
+        style="width:72px;height:72px;border-radius:10px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:3px;flex-shrink:0;border:2px solid #e2e8f0">
+        <span style="font-size:24px">${fileEmoji(ft)}</span>
+        <span style="font-size:9px;color:#6b7280;text-align:center;padding:0 4px;overflow:hidden;max-width:68px;text-overflow:ellipsis;white-space:nowrap">${fn}</span>
+      </div>`;
     }).join('');
 
     return `
     <div class="sos-item">
       <div class="sos-bar" style="background:${w.status==='done'?'var(--success)':w.status==='in_progress'?'var(--warning)':'#94a3b8'}"></div>
       <div style="flex:1;min-width:0">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px;flex-wrap:wrap">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">
           <div>
             <div style="font-weight:700;font-size:14px">${w.title}</div>
-            <div style="font-size:11px;color:#6b7280;margin-top:2px">${maintCatLabel(w.category)} · 📅 ${w.date}${w.cost ? ' · 💰 ' + Number(w.cost).toLocaleString('ru') + ' ₽' : ''}</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:3px">${maintCatLabel(w.category)} · 📅 ${w.date}${w.cost ? ' · 💰 ' + Number(w.cost).toLocaleString('ru') + ' ₽' : ''}</div>
           </div>
           ${statusBadge(w.status)}
         </div>
-        ${w.description ? `<div style="font-size:12px;color:#374151;margin-top:6px;background:#f8fafc;border-radius:6px;padding:6px 10px;border-left:3px solid #2563eb">${w.description}</div>` : ''}
-        ${existFiles ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${existFiles}</div>` : ''}
+        ${w.description ? `<div style="font-size:12px;color:#374151;margin-bottom:8px;background:#f8fafc;border-radius:6px;padding:7px 10px;border-left:3px solid #2563eb">${w.description}</div>` : ''}
+        ${filesHtml ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">${filesHtml}</div>` : ''}
         ${canEdit ? `
-        <div style="display:flex;gap:6px;margin-top:10px">
+        <div style="display:flex;gap:6px;margin-top:6px">
           <button class="btn btn-outline" style="font-size:11px;padding:4px 10px" onclick="openMaintModal('${w.id}')">✏️ Редактировать</button>
           <button style="font-size:11px;padding:4px 10px;background:#fee2e2;color:#dc2626;border:none;cursor:pointer;border-radius:6px;font-family:inherit" onclick="delMaint('${w.id}')">🗑️ Удалить</button>
         </div>` : ''}
       </div>
     </div>`;
-  }).join('');
+  }).join('') : `
+    <div style="text-align:center;padding:60px;color:#6b7280">
+      <div style="font-size:48px;margin-bottom:12px">🏗️</div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:6px">Нет работ за ${MONTHS[maintMonth-1]} ${maintYear}</div>
+      ${canEdit ? '<div style="font-size:13px">Нажмите «Добавить работу» для записи</div>' : ''}
+    </div>`;
+
+  return `
+    <div style="display:flex;align-items:center;gap:12px;padding:16px 0 12px;border-bottom:1px solid #e2e8f0;margin-bottom:16px">
+      <button class="year-btn" onclick="maintMonth--;if(maintMonth<1){maintMonth=12;maintYear--}render()">◄</button>
+      <div style="font-size:16px;font-weight:700;color:#1e293b;min-width:160px;text-align:center">${MONTHS[maintMonth-1]} ${maintYear}</div>
+      <button class="year-btn" onclick="maintMonth++;if(maintMonth>12){maintMonth=1;maintYear++}render()">►</button>
+      ${isCurrent ? '<span class="badge badge-blue" style="margin-left:4px">Текущий месяц</span>' : ''}
+    </div>
+    ${cards}`;
 }
 
 async function loadMaintImages() {
@@ -2322,13 +2345,17 @@ function openMaintModal(editId) {
   pendingFiles = [];
   document.getElementById('modal-title').textContent = ex ? '✏️ Редактировать работу' : '➕ Добавить работу';
 
-  const existFiles = (ex?.fileIds||[]).map((fid,i) => `
-    <div class="file-item">
-      <span>${fileEmoji((ex.fileTypes||[])[i]||'')}</span>
-      <span class="fn">${(ex.fileNames||[])[i]||'Файл'}</span>
-      <button onclick="previewFile('${fid}','${(ex.fileTypes||[])[i]||''}','${((ex.fileNames||[])[i]||'file').replace(/'/g,"\\'")}'")" style="color:#2563eb;background:none;border:none;cursor:pointer">👁</button>
-    </div>`).join('');
+  const existFiles = (ex?.fileIds||[]).map((fid,i) => {
+    const ft = (ex.fileTypes||[])[i]||'';
+    const fn = (ex.fileNames||[])[i]||'Файл';
+    return `<div class="file-item">
+      <span>${fileEmoji(ft)}</span><span class="fn">${fn}</span>
+      <button onclick="previewFile('${fid}','${ft}','${fn.replace(/'/g,"\\'")}')"`
+      + ` style="color:#2563eb;background:none;border:none;cursor:pointer">👁</button>
+    </div>`;
+  }).join('');
 
+  const defaultDate = ex?.date || `${maintYear}-${String(maintMonth).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
   const catOptions = MAINT_CATS.map(c =>
     `<option value="${c.id}" ${(ex?.category||'other')===c.id?'selected':''}>${c.label}</option>`
   ).join('');
@@ -2341,7 +2368,7 @@ function openMaintModal(editId) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div class="form-group">
         <label>Дата</label>
-        <input type="date" class="form-control" id="maint-date" value="${ex?.date||new Date().toISOString().slice(0,10)}">
+        <input type="date" class="form-control" id="maint-date" value="${defaultDate}">
       </div>
       <div class="form-group">
         <label>Стоимость (₽)</label>
@@ -2356,9 +2383,9 @@ function openMaintModal(editId) {
       <div class="form-group">
         <label>Статус</label>
         <select class="form-control" id="maint-status">
-          <option value="planned"     ${(ex?.status||'done')==='planned'    ?'selected':''}>📋 Запланировано</option>
-          <option value="in_progress" ${ex?.status==='in_progress'?'selected':''}>🔄 В работе</option>
-          <option value="done"        ${(ex?.status||'done')==='done'       ?'selected':''}>✅ Выполнено</option>
+          <option value="done"        ${!ex || ex.status==='done'       ?'selected':''}>✅ Выполнено</option>
+          <option value="in_progress" ${ex?.status==='in_progress'      ?'selected':''}>🔄 В работе</option>
+          <option value="planned"     ${ex?.status==='planned'          ?'selected':''}>📋 Запланировано</option>
         </select>
       </div>
     </div>
@@ -2378,7 +2405,7 @@ function openMaintModal(editId) {
 
   document.getElementById('modal-footer').innerHTML = `
     <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
-    <button class="btn btn-primary" onclick="saveMaint('${editId||''}')">💾 Сохранить</button>`;
+    <button class="btn btn-primary" id="maint-save-btn" onclick="saveMaint('${editId||''}')">💾 Сохранить</button>`;
 
   setupDrop('maint-drop');
   document.getElementById('modal-overlay').classList.remove('hidden');
@@ -2393,45 +2420,38 @@ async function saveMaint(editId) {
       _showToast('⚠️ Введите название работы', false);
       return;
     }
-    _showToast('💾 Сохраняем...', true);
-    const list = getMaintWorks();
-    const date     = document.getElementById('maint-date').value;
-    const cost     = document.getElementById('maint-cost').value;
-    const category = document.getElementById('maint-cat').value;
-    const status   = document.getElementById('maint-status').value;
+    const btn = document.getElementById('maint-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Сохраняем...'; }
+
+    const date        = document.getElementById('maint-date').value;
+    const cost        = document.getElementById('maint-cost').value;
+    const category    = document.getElementById('maint-cat').value;
+    const status      = document.getElementById('maint-status').value;
     const description = document.getElementById('maint-desc').value.trim();
 
-    const obj = editId
-      ? { ...(list.find(w => w.id === editId)||{}), title, date, cost, category, status, description }
-      : { id: Date.now().toString(), title, date, cost, category, status, description, fileIds:[], fileNames:[], fileTypes:[] };
+    // Upload files first (synchronous, like SOS)
+    const fileIds=[], fileNames=[], fileTypes=[];
+    for (const f of pendingFiles) {
+      _showToast('📤 Загружаем: ' + f.name, true);
+      const fid = await dbSave({ name:f.name, type:f.type, size:f.size, data:f.data });
+      fileIds.push(fid); fileNames.push(f.name); fileTypes.push(f.type);
+    }
 
+    const list = getMaintWorks();
     if (editId) {
       const idx = list.findIndex(w => w.id === editId);
-      if (idx >= 0) list[idx] = obj; else list.push(obj);
+      if (idx >= 0) list[idx] = {
+        ...list[idx], title, date, cost, category, status, description,
+        fileIds:   [...(list[idx].fileIds||[]),   ...fileIds],
+        fileNames: [...(list[idx].fileNames||[]), ...fileNames],
+        fileTypes: [...(list[idx].fileTypes||[]), ...fileTypes]
+      };
     } else {
-      list.push(obj);
+      list.push({ id: Date.now().toString(), title, date, cost, category, status, description, fileIds, fileNames, fileTypes });
     }
     setLS('maint_works', list);
-    closeModal(); render();
-
-    // Background file upload
-    const saved = JSON.parse(JSON.stringify(pendingFiles));
-    for (const f of saved) {
-      try {
-        _showToast('📤 Загружаем: ' + f.name, true);
-        const fid = await dbSave({ name:f.name, type:f.type, size:f.size, data:f.data });
-        const all = getMaintWorks();
-        const idx = all.findIndex(w => w.id === obj.id);
-        if (idx >= 0) {
-          all[idx].fileIds   = [...(all[idx].fileIds||[]),   fid];
-          all[idx].fileNames = [...(all[idx].fileNames||[]), f.name];
-          all[idx].fileTypes = [...(all[idx].fileTypes||[]), f.type];
-          setLS('maint_works', all);
-        }
-      } catch(fe) { _showToast('⚠️ Файл не загружен: ' + fe.message, false); }
-    }
-    if (saved.length) { render(); loadMaintImages(); }
     if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
+    closeModal(); render(); loadMaintImages();
     _showToast('✅ Сохранено', false);
   } catch(e) {
     alert('Ошибка сохранения:\n' + e.message);
