@@ -2275,16 +2275,10 @@ function renderMaintenance() {
       const ft = (w.fileTypes||[])[i]||'';
       const fn = (w.fileNames||[])[i]||'Файл';
       const isImg = ft.startsWith('image/');
+      const fnEsc = fn.replace(/'/g, "\\'");
       return isImg
-        ? `<img class="mthumb" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}"
-               title="${fn}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;cursor:pointer;background:#e2e8f0;flex-shrink:0"
-               onclick="previewFile('${fid}','${ft}','${fn.replace(/'/g,"\\'")}'")`
-        + `>`
-        : `<div onclick="previewFile('${fid}','${ft}','${fn.replace(/'/g,"\\'")}'")"
-               title="${fn}" style="width:56px;height:56px;border-radius:8px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:2px;flex-shrink:0">
-               <span style="font-size:20px">${fileEmoji(ft)}</span>
-               <span style="font-size:8px;color:#6b7280;text-align:center;padding:0 3px;overflow:hidden;max-width:52px;text-overflow:ellipsis;white-space:nowrap">${fn}</span>
-             </div>`;
+        ? `<img class="mthumb" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}" title="${fn}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;cursor:pointer;background:#e2e8f0;flex-shrink:0" onclick="previewFile('${fid}','${ft}','${fnEsc}')">`
+        : `<div onclick="previewFile('${fid}','${ft}','${fnEsc}')" title="${fn}" style="width:56px;height:56px;border-radius:8px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:2px;flex-shrink:0"><span style="font-size:20px">${fileEmoji(ft)}</span><span style="font-size:8px;color:#6b7280;text-align:center;padding:0 3px;overflow:hidden;max-width:52px;text-overflow:ellipsis;white-space:nowrap">${fn}</span></div>`;
     }).join('');
 
     return `
@@ -2436,6 +2430,7 @@ async function saveMaint(editId) {
         }
       } catch(fe) { _showToast('⚠️ Файл не загружен: ' + fe.message, false); }
     }
+    if (saved.length) { render(); loadMaintImages(); }
     if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
     _showToast('✅ Сохранено', false);
   } catch(e) {
