@@ -2513,9 +2513,9 @@ function renderJournal() {
     const visits = r.visits
       ? [...r.visits]
       : (r.completed !== undefined ? [{...r}] : []);
-    const completedVisits = visits.filter(v => v.completed);
-    if (completedVisits.length === 0) return; // show only providers with at least one completed visit
-    rows.push({ p, sched, required, visits: completedVisits });
+    const completedVisits = visits.map((v, idx) => ({v, idx})).filter(({v}) => v.completed);
+    if (completedVisits.length === 0) return;
+    rows.push({ p, sched, required, visits: completedVisits.map(x => x.v), origIndices: completedVisits.map(x => x.idx) });
   });
 
   const completedCount = rows.reduce((s, {visits}) => s + visits.filter(v => v.completed).length, 0);
@@ -2524,12 +2524,13 @@ function renderJournal() {
 
   const isCurrent = journalMonth === realCm && journalYear === realCy;
 
-  const providerCards = rows.length ? rows.map(({p, sched, required, visits}) => {
+  const providerCards = rows.length ? rows.map(({p, sched, required, visits, origIndices}) => {
     const doneCnt = visits.filter(v => v.completed).length;
     const allDone = required > 0 && doneCnt >= required;
     const hasOverdue = required > 0 && !allDone && (journalYear < realCy || (journalYear === realCy && journalMonth < realCm));
 
     const visitRows = visits.map((v, vi) => {
+      const origIdx = origIndices ? origIndices[vi] : vi;
       const isReq = vi < required;
       const hasFiles = (v.fileIds || []).length > 0;
       if (!v.completed && !hasFiles && !v.notes && !isReq) return ''; // hide empty reserve slots
@@ -2562,7 +2563,7 @@ function renderJournal() {
               </span>
               ${v.completedDate ? `<span style="font-size:11px;color:#6b7280">📅 ${v.completedDate}</span>` : ''}
               ${hasFiles ? `<span style="font-size:11px;color:#2563eb">📎 ${(v.fileIds||[]).length} файл(а)</span>` : ''}
-              ${currentUser === 'owner' && (v.completed || hasFiles || v.notes) ? `<button onclick="deleteJournalVisit('${p.id}',${journalYear},${journalMonth},${vi})" style="margin-left:auto;background:none;border:1px solid #fca5a5;border-radius:5px;color:#dc2626;cursor:pointer;padding:2px 7px;font-size:11px" title="Удалить посещение">🗑 Удалить</button>` : ''}
+              ${currentUser === 'owner' && (v.completed || hasFiles || v.notes) ? `<button onclick="deleteJournalVisit('${p.id}',${journalYear},${journalMonth},${origIdx})" style="margin-left:auto;background:none;border:1px solid #fca5a5;border-radius:5px;color:#dc2626;cursor:pointer;padding:2px 7px;font-size:11px" title="Удалить посещение">🗑 Удалить</button>` : ''}
             </div>
             ${fileThumbsHtml ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">${fileThumbsHtml}</div>` : ''}
             ${v.notes ? `<div style="font-size:12px;color:#374151;background:#f8fafc;border-radius:6px;padding:6px 10px;border-left:3px solid ${p.color}">${v.notes}</div>` : ''}
@@ -2630,14 +2631,14 @@ async function deleteJournalVisit(pid, yr, mo, vi) {
   if (!confirm('Удалить данные этого посещения?')) return;
   const all = getRecords();
   const key = `${pid}_${yr}_${mo}`;
-  if (!all[key]) return;
-  const visits = all[key].visits || [];
-  visits[vi] = { completed: false, completedDate: '', notes: '', fileIds: [], fileNames: [], fileTypes: [] };
-  all[key].visits = visits;
+  if (!all[key]?.visits?.[vi]) return;
+  // splice removes the visit from the array entirely
+  all[key].visits.splice(vi, 1);
   setLS('svc_records', all);
-  if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
-  render();
+  render(); // immediate visual update
   _showToast('🗑 Посещение удалено', false);
+  // sync to Firebase in background
+  if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
 }
 
 async function loadJournalImages() {
