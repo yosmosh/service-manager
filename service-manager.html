@@ -314,6 +314,8 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ru.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
 const APP_VERSION = 'v2026-05-31e';
 
@@ -743,9 +745,58 @@ function openSettingsModal() {
       <button class="btn btn-danger" onclick="clearAllData()">🗑️ Сбросить все данные о визитах</button>
     </div>` : '';
 
+  const nc = getNotifyCfg();
+  const notifyHtml = isOwner ? `
+    <div style="margin-top:20px;padding:14px 16px;background:#f0fdf4;border:1px solid #86efac;border-radius:10px">
+      <div style="font-size:13px;font-weight:700;color:#166534;margin-bottom:10px">🔔 Уведомления владельца</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <span style="font-size:12px;color:#374151">Включить уведомления по email</span>
+        <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer">
+          <input type="checkbox" id="notif-enabled" ${nc.enabled?'checked':''} style="display:none"
+            onchange="(function(){const c=getNotifyCfg();c.enabled=this.checked;setLS('notify_config',c);document.getElementById('notif-fields').style.display=this.checked?'':'none'}).call(this)">
+          <span style="position:absolute;inset:0;background:${nc.enabled?'#16a34a':'#d1d5db'};border-radius:11px;transition:.2s"></span>
+          <span style="position:absolute;top:3px;left:${nc.enabled?'21px':'3px'};width:16px;height:16px;background:white;border-radius:50%;transition:.2s"></span>
+        </label>
+      </div>
+      <div id="notif-fields" style="${nc.enabled?'':'display:none'}">
+        <div style="font-size:11px;color:#166534;background:#dcfce7;border-radius:6px;padding:7px 10px;margin-bottom:10px;line-height:1.5">
+          📋 <strong>Инструкция EmailJS:</strong><br>
+          1. Зарегистрируйтесь на <strong>emailjs.com</strong> (бесплатно — 200 писем/мес)<br>
+          2. Добавьте Email Service (Gmail) → скопируйте <strong>Service ID</strong><br>
+          3. Создайте шаблон с переменными: <code>{{subject}}</code> <code>{{from_name}}</code> <code>{{details}}</code> <code>{{time}}</code> → скопируйте <strong>Template ID</strong><br>
+          4. Account → General → скопируйте <strong>Public Key</strong>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Public Key</div>
+            <input class="form-control" id="notif-key" value="${nc.emailjs_key||''}" placeholder="abc123..." style="font-size:12px">
+          </div>
+          <div>
+            <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Service ID</div>
+            <input class="form-control" id="notif-svc" value="${nc.emailjs_service||''}" placeholder="service_..." style="font-size:12px">
+          </div>
+          <div>
+            <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Template ID</div>
+            <input class="form-control" id="notif-tpl" value="${nc.emailjs_template||''}" placeholder="template_..." style="font-size:12px">
+          </div>
+          <div>
+            <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Email владельца</div>
+            <input class="form-control" id="notif-email" value="${nc.owner_email||''}" placeholder="your@email.com" style="font-size:12px">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary" style="flex:1;justify-content:center;font-size:12px" onclick="saveNotifyConfig()">💾 Сохранить</button>
+          <button class="btn btn-outline" style="flex:1;justify-content:center;font-size:12px" onclick="testNotifyEmail()">📧 Тест Email</button>
+          <button class="btn btn-outline" style="flex:1;justify-content:center;font-size:12px" onclick="enablePushNotif()">📲 Включить Push</button>
+        </div>
+      </div>
+      ${!nc.enabled ? `<div style="font-size:12px;color:#6b7280">Включите переключатель выше для настройки.</div>` : ''}
+    </div>` : '';
+
   document.getElementById('modal-body').innerHTML = `
     ${ownerCredsHtml}
     ${adminCredsHtml}
+    ${notifyHtml}
     <div style="font-size:13px;font-weight:600;margin-bottom:6px;color:#374151;border-top:1px solid #f1f5f9;padding-top:14px">
       Учётные записи поставщиков
     </div>
@@ -769,6 +820,50 @@ function openSettingsModal() {
     <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
     <button class="btn btn-primary" onclick="saveAllPins()">💾 Сохранить данные поставщиков</button>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function saveNotifyConfig() {
+  const c = getNotifyCfg();
+  c.emailjs_key      = (document.getElementById('notif-key')?.value||'').trim();
+  c.emailjs_service  = (document.getElementById('notif-svc')?.value||'').trim();
+  c.emailjs_template = (document.getElementById('notif-tpl')?.value||'').trim();
+  c.owner_email      = (document.getElementById('notif-email')?.value||'').trim();
+  setLS('notify_config', c);
+  if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
+  _showToast('✅ Настройки уведомлений сохранены', false);
+}
+
+async function testNotifyEmail() {
+  saveNotifyConfig();
+  const cfg = getNotifyCfg();
+  if (!cfg.emailjs_key || !cfg.emailjs_service || !cfg.emailjs_template) {
+    alert('Заполните все поля EmailJS перед тестом'); return;
+  }
+  try {
+    _showToast('📧 Отправляем тестовое письмо...', true);
+    await emailjs.send(cfg.emailjs_service, cfg.emailjs_template, {
+      to_email:   cfg.owner_email,
+      subject:    '[Управление услугами] Тестовое уведомление',
+      from_name:  'Система',
+      event_type: 'Тест',
+      details:    'Это тестовое письмо. Уведомления работают корректно.',
+      time:       new Date().toLocaleString('ru-RU')
+    }, cfg.emailjs_key);
+    _showToast('✅ Тестовое письмо отправлено на ' + cfg.owner_email, false);
+  } catch(e) {
+    alert('Ошибка отправки:\n' + (e.text || e.message || JSON.stringify(e)));
+  }
+}
+
+async function enablePushNotif() {
+  if (!('Notification' in window)) { alert('Ваш браузер не поддерживает уведомления'); return; }
+  const perm = await Notification.requestPermission();
+  if (perm === 'granted') {
+    _showToast('✅ Push-уведомления включены!', false);
+    await _initFCM();
+  } else {
+    alert('Разрешение на уведомления не получено. Проверьте настройки браузера.');
+  }
 }
 
 function saveOwnerCreds() {
@@ -936,7 +1031,7 @@ async function _loadState() {
       // первый запуск — мигрируем из localStorage
       const keys = ['admin_pwd','admin_username','owner_pwd','owner_username',
         'provider_pins','provider_usernames','provider_prices','prices_locked',
-        'sos_items','purchase_requests','svc_records','maint_works'];
+        'sos_items','purchase_requests','svc_records','maint_works','notify_config'];
       for (const k of keys) {
         try { const v = JSON.parse(localStorage.getItem(k)||'null'); if (v !== null) _state[k] = v; } catch(e) {}
       }
@@ -955,7 +1050,76 @@ function _setupSync() {
 }
 
 const getRecords = () => getLS('svc_records') || {};
-const getSOS = () => getLS('sos_items') || [];
+const getSOS     = () => getLS('sos_items')   || [];
+
+// ==============================
+// УВЕДОМЛЕНИЯ (EMAIL + PUSH)
+// ==============================
+const getNotifyCfg = () => getLS('notify_config') || {
+  enabled: false, owner_email: 'yosmosh10@gmail.com',
+  emailjs_key: '', emailjs_service: '', emailjs_template: '',
+  fcm_vapid: '', fcm_token: ''
+};
+
+let _fcmMessaging = null;
+
+async function _initFCM() {
+  try {
+    if (!_useFirebase || !firebase.messaging) return;
+    const cfg = getNotifyCfg();
+    if (!cfg.fcm_vapid) return;
+    if (!('serviceWorker' in navigator)) return;
+    const reg = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+    _fcmMessaging = firebase.messaging();
+    const token = await _fcmMessaging.getToken({ vapidKey: cfg.fcm_vapid, serviceWorkerRegistration: reg });
+    if (token && token !== cfg.fcm_token) {
+      const c = getNotifyCfg(); c.fcm_token = token;
+      setLS('notify_config', c);
+      if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
+    }
+    _fcmMessaging.onMessage(payload => {
+      const {title, body} = payload.notification || {};
+      _showToast('🔔 ' + (title||'') + (body ? ': ' + body : ''), false, 6000);
+    });
+  } catch(e) { console.warn('[FCM] init failed:', e.message); }
+}
+
+async function _notifyOwner(eventType, fromName, details) {
+  if (currentUser === 'owner') return; // owner doesn't notify himself
+  const cfg = getNotifyCfg();
+
+  // Browser notification (works when app is open or in background)
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    try {
+      new Notification('📋 ' + eventType, {
+        body: fromName + ': ' + details,
+        icon: 'https://service-manager-two.vercel.app/favicon.ico'
+      });
+    } catch(e) {}
+  }
+
+  // Email via EmailJS
+  if (!cfg.enabled || !cfg.emailjs_key || !cfg.emailjs_service || !cfg.emailjs_template) return;
+  try {
+    await emailjs.send(cfg.emailjs_service, cfg.emailjs_template, {
+      to_email:   cfg.owner_email,
+      subject:    '[Управление услугами] ' + eventType,
+      from_name:  fromName,
+      event_type: eventType,
+      details:    details,
+      time:       new Date().toLocaleString('ru-RU')
+    }, cfg.emailjs_key);
+    console.log('[NOTIFY] Email sent:', eventType);
+  } catch(e) {
+    console.warn('[NOTIFY] Email error:', e.text || e.message || e);
+  }
+}
+
+function _getFromName() {
+  if (currentUser === 'admin') return 'Администратор';
+  const p = PROVIDERS.find(x => x.id === currentUser);
+  return p ? p.name : currentUser;
+}
 
 function getRecord(pid, yr, mo) {
   return (getRecords())[`${pid}_${yr}_${mo}`] || {};
@@ -1667,6 +1831,18 @@ async function saveRecord2(pid, yr, mo, visitCount) {
     const savedPending = JSON.parse(JSON.stringify(pendingVisitFiles)); // snapshot before close
     closeModal();
     render();
+
+    // Notify owner
+    const _notifP = PROVIDERS.find(x => x.id === pid);
+    const _doneVisit = visits.find(v => v.completed);
+    if (_doneVisit) {
+      _notifyOwner(
+        'Визит записан — ' + (_notifP ? _notifP.name : pid),
+        _getFromName(),
+        MONTHS[mo-1] + ' ' + yr + (_doneVisit.completedDate ? ' · ' + _doneVisit.completedDate : '') +
+        (_doneVisit.notes ? ' · ' + _doneVisit.notes.slice(0, 120) : '')
+      );
+    }
     console.log('[SAVE] Data saved and modal closed');
 
     // Upload files in background
@@ -2080,6 +2256,8 @@ async function saveRequest(editId) {
       list.push({ id: reqId, providerId: currentUser, providerName: prov ? prov.name : currentUser,
         date, title, notes, items, fileIds: [], fileNames: [], fileTypes: [],
         status: 'pending', adminComment: '', adminDate: '', ownerComment: '', ownerDate: '' });
+      _notifyOwner('🔔 Новая заявка на закупку', _getFromName(),
+        title + (notes ? ' — ' + notes.slice(0,120) : '') + ' · ' + date);
     }
     saveRequests(list);
     const savedFiles = [...(window._reqPendingFiles || [])];
@@ -2451,6 +2629,8 @@ async function saveMaint(editId) {
     }
     setLS('maint_works', list);
     if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
+    _notifyOwner('🏗️ Обслуживание территории', _getFromName(),
+      title + (description ? ' — ' + description.slice(0,120) : '') + ' · ' + date);
     closeModal(); render(); loadMaintImages();
     _showToast('✅ Сохранено', false);
   } catch(e) {
@@ -2888,6 +3068,8 @@ async function saveSOS(editId) {
     }
 
     setLS('sos_items', list);
+    if (!editId) _notifyOwner('🚨 Экстренное ТО (SOS)', _getFromName(),
+      title + (description ? ' — ' + description.slice(0,120) : ''));
     closeModal(); render();
   } catch(e) {
     console.error('saveSOS error:', e);
@@ -3002,6 +3184,7 @@ async function init() {
     _showToast('⚠️ Работаем без Firebase (только локально)', false);
   }
 
+  _initFCM(); // init FCM if VAPID key is configured
   document.getElementById('login-loading').style.display = 'none';
   document.getElementById('login-box').style.display = 'block';
   const verEl = document.getElementById('app-version');
