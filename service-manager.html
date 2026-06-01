@@ -1343,7 +1343,7 @@ function renderDashboard() {
       <span style="font-size:14px">🚨</span>
       <div style="flex:1">
         <div style="font-weight:600;font-size:12px">${s.title}</div>
-        <div style="font-size:11px;color:#6b7280">${s.date}</div>
+        <div style="font-size:11px;color:#6b7280">${fmtDate(s.date)}</div>
       </div>
       <span class="badge badge-danger">${s.status==='in_progress'?'В работе':'Ожидает'}</span>
     </div>`).join('');
@@ -1719,6 +1719,13 @@ function renderPending() {
     </div>`).join('');
 }
 
+function fmtDate(d) {
+  if (!d) return '';
+  const parts = d.split('-');
+  if (parts.length === 3) return parts[2] + '.' + parts[1] + '.' + parts[0];
+  return d;
+}
+
 function fileEmoji(t) {
   if (!t) return '📎';
   if (t.startsWith('image/')) return '🖼️';
@@ -2070,13 +2077,13 @@ function renderRequests() {
 
     const adminResponseHtml = r.adminComment ? `
       <div style="margin-top:10px;padding:8px 12px;background:#f8fafc;border-radius:8px;border-left:3px solid #2563eb">
-        <div style="font-size:10px;font-weight:700;color:#2563eb;margin-bottom:3px">👑 Ответ администратора ${r.adminDate ? '('+r.adminDate+')' : ''}</div>
+        <div style="font-size:10px;font-weight:700;color:#2563eb;margin-bottom:3px">👑 Ответ администратора ${r.adminDate ? '('+fmtDate(r.adminDate)+')' : ''}</div>
         <div style="font-size:12px;color:#374151">${r.adminComment}</div>
       </div>` : '';
 
     const ownerResponseHtml = r.ownerComment ? `
       <div style="margin-top:8px;padding:8px 12px;background:#faf5ff;border-radius:8px;border-left:3px solid #7c3aed">
-        <div style="font-size:10px;font-weight:700;color:#7c3aed;margin-bottom:3px">🏛️ Решение владельца ${r.ownerDate ? '('+r.ownerDate+')' : ''}</div>
+        <div style="font-size:10px;font-weight:700;color:#7c3aed;margin-bottom:3px">🏛️ Решение владельца ${r.ownerDate ? '('+fmtDate(r.ownerDate)+')' : ''}</div>
         <div style="font-size:12px;color:#374151">${r.ownerComment}</div>
       </div>` : '';
 
@@ -2110,7 +2117,7 @@ function renderRequests() {
             ${prov ? `<span style="font-size:20px">${prov.emoji}</span>` : ''}
             <div>
               <div style="font-weight:700;font-size:14px;color:#1e293b">${r.title}</div>
-              <div style="font-size:11px;color:#6b7280">${prov ? prov.name : r.providerId} · 📅 ${r.date}</div>
+              <div style="font-size:11px;color:#6b7280">${prov ? prov.name : r.providerId} · 📅 ${fmtDate(r.date)}</div>
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -2367,7 +2374,7 @@ function openAdminResponseModal(reqId) {
   document.getElementById('modal-title').textContent = `✏️ Ответ на заявку: ${req.title}`;
   document.getElementById('modal-body').innerHTML = `
     <div style="background:#f8fafc;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#374151">
-      <strong>${req.providerName}</strong> · ${req.date}
+      <strong>${req.providerName}</strong> · ${fmtDate(req.date)}
     </div>
     <div class="form-group">
       <label>Решение</label>
@@ -2411,7 +2418,7 @@ function openOwnerDecisionModal(reqId, preStatus) {
   document.getElementById('modal-title').textContent = isApprove ? '✅ Финальное одобрение' : '❌ Отклонение заявки';
   document.getElementById('modal-body').innerHTML = `
     <div style="background:#f8fafc;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px">
-      <strong>${req.title}</strong><br>${req.providerName} · ${req.date}
+      <strong>${req.title}</strong><br>${req.providerName} · ${fmtDate(req.date)}
     </div>
     <div class="form-group">
       <label>Комментарий владельца (необязательно)</label>
@@ -2551,7 +2558,7 @@ function renderMaintenance() {
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">
           <div>
             <div style="font-weight:700;font-size:14px">${w.title}</div>
-            <div style="font-size:11px;color:#6b7280;margin-top:3px">${maintCatLabel(w.category)} · 📅 ${w.date}${w.cost ? ' · 💰 ' + Number(w.cost).toLocaleString('ru') + ' ₽' : ''}</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:3px">${maintCatLabel(w.category)} · 📅 ${fmtDate(w.date)}${w.cost ? ' · 💰 ' + Number(w.cost).toLocaleString('ru') + ' ₽' : ''}</div>
           </div>
           ${statusBadge(w.status)}
         </div>
@@ -2741,7 +2748,7 @@ function renderSOS() {
             ${s.status==='resolved'?'✅ Выполнено':s.status==='in_progress'?'🔄 В работе':'⚠️ Ожидает'}
           </span>
         </div>
-        <div style="font-size:11px;color:#6b7280">📅 ${s.date} · Приоритет: ${s.priority==='high'?'Высокий':s.priority==='medium'?'Средний':'Низкий'}</div>
+        <div style="font-size:11px;color:#6b7280">📅 ${fmtDate(s.date)} · Приоритет: ${s.priority==='high'?'Высокий':s.priority==='medium'?'Средний':'Низкий'}</div>
         ${s.description ? `<div style="font-size:12px;color:#374151;margin-top:6px">${s.description}</div>` : ''}
         ${(s.fileNames||[]).length ? `<div style="font-size:11px;color:#6b7280;margin-top:4px">📎 ${s.fileNames.length} файл(ов)</div>` : ''}
         <div style="display:flex;gap:6px;margin-top:8px">
@@ -2825,7 +2832,7 @@ function renderJournal() {
               <span style="font-size:12px;font-weight:600;color:${statusColor}">
                 Посещение ${vi+1}${isReq ? '' : ' <span style="font-weight:400;color:#94a3b8">(резерв)</span>'}
               </span>
-              ${v.completedDate ? `<span style="font-size:11px;color:#6b7280">📅 ${v.completedDate}</span>` : ''}
+              ${v.completedDate ? `<span style="font-size:11px;color:#6b7280">📅 ${fmtDate(v.completedDate)}</span>` : ''}
               ${hasFiles ? `<span style="font-size:11px;color:#2563eb">📎 ${(v.fileIds||[]).length} файл(а)</span>` : ''}
               ${currentUser === 'owner' && (v.completed || hasFiles || v.notes) ? `<button onclick="deleteJournalVisit('${p.id}',${journalYear},${journalMonth},${origIdx})" style="margin-left:auto;background:none;border:1px solid #fca5a5;border-radius:5px;color:#dc2626;cursor:pointer;padding:2px 7px;font-size:11px" title="Удалить посещение">🗑 Удалить</button>` : ''}
             </div>
