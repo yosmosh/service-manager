@@ -1990,6 +1990,45 @@ async function delVisitFile(pid, yr, mo, vi, fi) {
   openRecordModal(pid, yr, mo);
 }
 
+async function delSosFile(sosId, fi) {
+  if (!confirm('Удалить этот файл?')) return;
+  const list = getSOS();
+  const idx = list.findIndex(s => s.id === sosId);
+  if (idx < 0) return;
+  const fid = (list[idx].fileIds||[])[fi];
+  if (fid) await dbDel(fid);
+  ['fileIds','fileNames','fileTypes'].forEach(k => { if (list[idx][k]) list[idx][k].splice(fi,1); });
+  setLS('sos_items', list);
+  if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
+  openSosModal(sosId);
+}
+
+async function delMaintFile(maintId, fi) {
+  if (!confirm('Удалить этот файл?')) return;
+  const list = getMaintWorks();
+  const idx = list.findIndex(w => w.id === maintId);
+  if (idx < 0) return;
+  const fid = (list[idx].fileIds||[])[fi];
+  if (fid) await dbDel(fid);
+  ['fileIds','fileNames','fileTypes'].forEach(k => { if (list[idx][k]) list[idx][k].splice(fi,1); });
+  setLS('maint_works', list);
+  if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
+  openMaintModal(maintId);
+}
+
+async function delReqFile(reqId, fi) {
+  if (!confirm('Удалить этот файл?')) return;
+  const list = getRequests();
+  const idx = list.findIndex(r => r.id === reqId);
+  if (idx < 0) return;
+  const fid = (list[idx].fileIds||[])[fi];
+  if (fid) await dbDel(fid);
+  ['fileIds','fileNames','fileTypes'].forEach(k => { if (list[idx][k]) list[idx][k].splice(fi,1); });
+  saveRequests(list);
+  if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
+  openRequestModal(reqId);
+}
+
 async function saveRecord2(pid, yr, mo, visitCount) {
   console.log('[SAVE] saveRecord2 called', pid, yr, mo);
   _showToast('💾 Сохраняем...', true);
@@ -2254,7 +2293,8 @@ function openRequestModal(editId) {
         const ft2 = (ex.fileTypes||[])[fi]||'';
         const fn2esc = fn2.replace(/'/g,"\\'");
         return '<div class="file-item"><span>' + fileEmoji(ft2) + '</span><span class="fn">' + fn2 + '</span>'
-          + '<button onclick="previewFile(\'' + fid + '\',\'' + ft2 + '\',\'' + fn2esc + '\')" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 3px" title="Просмотр">👁</button>'
+          + '<button onclick="previewFile(\'' + fid + '\',\'' + ft2 + '\',\'' + fn2esc + '\')" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button>'
+          + '<button onclick="delReqFile(\'' + ex.id + '\',' + fi + ')" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Удалить файл">✕</button>'
           + '</div>';
       }).join('') + '</div>'
     : '';
@@ -2717,9 +2757,10 @@ function openMaintModal(editId) {
     const ft = (ex.fileTypes||[])[i]||'';
     const fn = (ex.fileNames||[])[i]||'Файл';
     return `<div class="file-item">
-      <span>${fileEmoji(ft)}</span><span class="fn">${fn}</span>
-      <button onclick="previewFile('${fid}','${ft}','${fn.replace(/'/g,"\\'")}')"`
-      + ` style="color:#2563eb;background:none;border:none;cursor:pointer">👁</button>
+      <span>${fileEmoji(ft)}</span>
+      <span class="fn">${fn}</span>
+      <button onclick="previewFile('${fid}','${ft}','${fn.replace(/'/g,"\\'")}'")" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button>
+      <button onclick="delMaintFile('${ex.id}',${i})" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Удалить файл">✕</button>
     </div>`;
   }).join('');
 
@@ -3220,12 +3261,16 @@ function openSosModal(editId) {
   pendingFiles = [];
   document.getElementById('modal-title').textContent = ex ? 'Редактировать событие SOS' : 'Добавить событие SOS';
 
-  const existFiles = (ex?.fileIds||[]).map((fid,i) => `
-    <div class="file-item">
-      <span>${fileEmoji((ex.fileTypes||[])[i]||'')}</span>
-      <span class="fn">${(ex.fileNames||[])[i]||'Файл'}</span>
-      <button onclick="openFile('${fid}','${(ex.fileTypes||[])[i]||''}','${(ex.fileNames||[])[i]||'file'}')" style="color:#2563eb">⬇</button>
-    </div>`).join('');
+  const existFiles = (ex?.fileIds||[]).map((fid,i) => {
+    const ft = (ex.fileTypes||[])[i]||'';
+    const fn = (ex.fileNames||[])[i]||'Файл';
+    return `<div class="file-item">
+      <span>${fileEmoji(ft)}</span>
+      <span class="fn">${fn}</span>
+      <button onclick="previewFile('${fid}','${ft}','${fn.replace(/'/g,"\\'")}'")" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button>
+      <button onclick="delSosFile('${ex.id}',${i})" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Удалить файл">✕</button>
+    </div>`;
+  }).join('');
 
   document.getElementById('modal-body').innerHTML = `
     <div class="form-group">
