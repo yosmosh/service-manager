@@ -1303,6 +1303,7 @@ function render() {
     title.textContent = '🚨 Экстренное ТО (SOS)';
     actions.innerHTML = `<button class="btn btn-danger" onclick="openSosModal()">+ Добавить событие</button>`;
     content.innerHTML = renderSOS();
+    loadSosImages();
   } else if (view === 'maint') {
     title.textContent = '🏗️ Обслуживание территории';
     if (currentUser === 'admin' || currentUser === 'owner') {
@@ -2845,11 +2846,36 @@ function renderSOS() {
       <div>Нажмите «Добавить событие» для записи экстренных работ</div>
     </div>`;
 
-  return [...list].sort((a,b) => new Date(b.date)-new Date(a.date)).map(s => `
+  return [...list].sort((a,b) => new Date(b.date)-new Date(a.date)).map(s => {
+    const canEdit = currentUser === 'admin' || currentUser === 'owner';
+    const _sIds   = JSON.stringify(s.fileIds||[]).replace(/'/g,'&#39;');
+    const _sTypes = JSON.stringify(s.fileTypes||[]).replace(/'/g,'&#39;');
+    const _sNames = JSON.stringify(s.fileNames||[]).replace(/'/g,'&#39;');
+    const filesHtml = (s.fileIds||[]).length ? `
+      <div data-gids='${_sIds}' data-gtypes='${_sTypes}' data-gnames='${_sNames}'
+           style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        ${(s.fileIds||[]).map((fid, i) => {
+          const ft = (s.fileTypes||[])[i]||'';
+          const fn = (s.fileNames||[])[i]||'Файл';
+          return ft.startsWith('image/')
+            ? `<img class="sthumb" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}" title="${fn}"
+                 style="width:72px;height:72px;object-fit:cover;border-radius:10px;cursor:pointer;background:#e2e8f0;flex-shrink:0;border:2px solid transparent;transition:.15s"
+                 onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'"
+                 onclick="openGalleryEl(this,${i})">`
+            : `<div onclick="openGalleryEl(this,${i})" title="${fn}"
+                 style="width:72px;height:72px;border-radius:10px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:3px;flex-shrink:0;border:2px solid transparent;transition:.15s"
+                 onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'">
+                 <span style="font-size:24px">${fileEmoji(ft)}</span>
+                 <span style="font-size:9px;color:#6b7280;text-align:center;padding:0 4px;overflow:hidden;max-width:68px;text-overflow:ellipsis;white-space:nowrap">${fn}</span>
+               </div>`;
+        }).join('')}
+      </div>` : '';
+
+    return `
     <div class="sos-item">
       <div class="sos-bar pri-${s.priority}"></div>
-      <div style="flex:1">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px;flex-wrap:wrap">
           <div style="font-weight:700;font-size:14px">${s.title}</div>
           <span class="badge ${s.status==='resolved'?'badge-success':s.status==='in_progress'?'badge-warning':'badge-danger'}">
             ${s.status==='resolved'?'✅ Выполнено':s.status==='in_progress'?'🔄 В работе':'⚠️ Ожидает'}
@@ -2857,13 +2883,26 @@ function renderSOS() {
         </div>
         <div style="font-size:11px;color:#6b7280">📅 ${fmtDate(s.date)} · Приоритет: ${s.priority==='high'?'Высокий':s.priority==='medium'?'Средний':'Низкий'}</div>
         ${s.description ? `<div style="font-size:12px;color:#374151;margin-top:6px">${s.description}</div>` : ''}
-        ${(s.fileNames||[]).length ? `<div style="font-size:11px;color:#6b7280;margin-top:4px">📎 ${s.fileNames.length} файл(ов)</div>` : ''}
-        <div style="display:flex;gap:6px;margin-top:8px">
+        ${filesHtml}
+        ${canEdit ? `<div style="display:flex;gap:6px;margin-top:10px">
           <button class="btn btn-outline" style="font-size:11px;padding:4px 10px" onclick="openSosModal('${s.id}')">✏️ Редактировать</button>
           <button style="font-size:11px;padding:4px 10px;background:#fee2e2;color:#dc2626;border:none;cursor:pointer;border-radius:6px;font-family:inherit" onclick="delSOS('${s.id}')">🗑️ Удалить</button>
-        </div>
+        </div>` : ''}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
+}
+
+async function loadSosImages() {
+  const imgs = document.querySelectorAll('img.sthumb[data-fid]');
+  for (const img of imgs) {
+    try {
+      const f = await dbGet(img.dataset.fid);
+      if (!f) continue;
+      if (_useFirebase && f.url) img.src = f.url;
+      else if (f.data) img.src = URL.createObjectURL(dataURLtoBlob(f.data));
+    } catch(e) {}
+  }
 }
 
 // ==============================
