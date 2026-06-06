@@ -473,7 +473,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-07d';
+const APP_VERSION = 'v2026-06-07e';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -2960,17 +2960,22 @@ function renderMaintenance() {
           const ft = (w.fileTypes||[])[i]||'';
           const fn = (w.fileNames||[])[i]||'Файл';
           const _murl = (_FC[fid]||{}).url || '';
-          return ft.startsWith('image/')
+          const _mdel = currentUser === 'owner'
+            ? `<button onclick="event.stopPropagation();delMaintFile('${w.id}',${i})"
+                 style="position:absolute;top:-5px;right:-5px;width:18px;height:18px;border-radius:50%;background:#dc2626;color:white;border:none;cursor:pointer;font-size:12px;line-height:1;z-index:2;padding:0;display:flex;align-items:center;justify-content:center" title="Удалить файл">×</button>`
+            : '';
+          return `<div style="position:relative;flex-shrink:0">` + (ft.startsWith('image/')
             ? `<img class="mthumb" ${_murl ? `src="${_murl}"` : ''} loading="lazy" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}" title="${fn}"
-                 style="width:72px;height:72px;object-fit:cover;border-radius:10px;cursor:pointer;background:#e2e8f0;flex-shrink:0;border:2px solid transparent;transition:.15s"
+                 style="width:72px;height:72px;object-fit:cover;border-radius:10px;cursor:pointer;background:#e2e8f0;display:block;border:2px solid transparent;transition:.15s"
                  onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'"
                  onclick="openGalleryEl(this,${i})">`
             : `<div onclick="openGalleryEl(this,${i})" title="${fn}"
-                 style="width:72px;height:72px;border-radius:10px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:3px;flex-shrink:0;border:2px solid transparent;transition:.15s"
+                 style="width:72px;height:72px;border-radius:10px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:3px;border:2px solid transparent;transition:.15s"
                  onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'">
                  <span style="font-size:24px">${fileEmoji(ft)}</span>
                  <span style="font-size:9px;color:#6b7280;text-align:center;padding:0 4px;overflow:hidden;max-width:68px;text-overflow:ellipsis;white-space:nowrap">${fn}</span>
-               </div>`;
+               </div>`)
+            + _mdel + `</div>`;
         }).join('')}
       </div>` : '';
 
@@ -3200,17 +3205,22 @@ function renderSOS() {
           const ft = (s.fileTypes||[])[i]||'';
           const fn = (s.fileNames||[])[i]||'Файл';
           const _surl = (_FC[fid]||{}).url || '';
-          return ft.startsWith('image/')
+          const _sdel = currentUser === 'owner'
+            ? `<button onclick="event.stopPropagation();delSosFile('${s.id}',${i})"
+                 style="position:absolute;top:-5px;right:-5px;width:18px;height:18px;border-radius:50%;background:#dc2626;color:white;border:none;cursor:pointer;font-size:12px;line-height:1;z-index:2;padding:0;display:flex;align-items:center;justify-content:center" title="Удалить файл">×</button>`
+            : '';
+          return `<div style="position:relative;flex-shrink:0">` + (ft.startsWith('image/')
             ? `<img class="sthumb" ${_surl ? `src="${_surl}"` : ''} loading="lazy" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}" title="${fn}"
-                 style="width:72px;height:72px;object-fit:cover;border-radius:10px;cursor:pointer;background:#e2e8f0;flex-shrink:0;border:2px solid transparent;transition:.15s"
+                 style="width:72px;height:72px;object-fit:cover;border-radius:10px;cursor:pointer;background:#e2e8f0;display:block;border:2px solid transparent;transition:.15s"
                  onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'"
                  onclick="openGalleryEl(this,${i})">`
             : `<div onclick="openGalleryEl(this,${i})" title="${fn}"
-                 style="width:72px;height:72px;border-radius:10px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:3px;flex-shrink:0;border:2px solid transparent;transition:.15s"
+                 style="width:72px;height:72px;border-radius:10px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:3px;border:2px solid transparent;transition:.15s"
                  onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'">
                  <span style="font-size:24px">${fileEmoji(ft)}</span>
                  <span style="font-size:9px;color:#6b7280;text-align:center;padding:0 4px;overflow:hidden;max-width:68px;text-overflow:ellipsis;white-space:nowrap">${fn}</span>
-               </div>`;
+               </div>`)
+            + _sdel + `</div>`;
         }).join('')}
       </div>` : '';
 
@@ -3302,17 +3312,22 @@ function renderJournal() {
             const fname = (v.fileNames||[])[fi] || 'Файл';
             const ftype = (v.fileTypes||[])[fi] || '';
             const _jurl = (_FC[fid]||{}).url || '';
-            return ftype.startsWith('image/')
+            const _jdel = currentUser === 'owner'
+              ? `<button onclick="event.stopPropagation();delVisitFile('${p.id}',${journalYear},${journalMonth},${origIdx},${fi})"
+                   style="position:absolute;top:-5px;right:-5px;width:18px;height:18px;border-radius:50%;background:#dc2626;color:white;border:none;cursor:pointer;font-size:12px;line-height:1;z-index:2;padding:0;display:flex;align-items:center;justify-content:center" title="Удалить файл">×</button>`
+              : '';
+            return `<div style="position:relative;flex-shrink:0">` + (ftype.startsWith('image/')
               ? `<img class="jthumb" ${_jurl ? `src="${_jurl}"` : ''} loading="lazy" data-fid="${fid}" data-ftype="${ftype}" data-fname="${fname}"
-                   title="${fname}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;background:#e2e8f0;flex-shrink:0;border:2px solid transparent;transition:.15s"
+                   title="${fname}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;background:#e2e8f0;display:block;border:2px solid transparent;transition:.15s"
                    onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'"
                    onclick="openGalleryEl(this,${fi})">`
               : `<div onclick="openGalleryEl(this,${fi})"
-                   title="${fname}" style="width:64px;height:64px;border-radius:8px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:3px;flex-shrink:0;border:2px solid transparent;transition:.15s"
+                   title="${fname}" style="width:64px;height:64px;border-radius:8px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:3px;border:2px solid transparent;transition:.15s"
                    onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'">
                    <span style="font-size:22px">${fileEmoji(ftype)}</span>
                    <span style="font-size:9px;color:#6b7280;text-align:center;padding:0 4px;overflow:hidden;max-width:60px;text-overflow:ellipsis;white-space:nowrap">${fname}</span>
-                 </div>`;
+                 </div>`)
+              + _jdel + `</div>`;
           }).join('')}
         </div>` : '';
 
@@ -3329,7 +3344,10 @@ function renderJournal() {
               </span>
               ${v.completedDate ? `<span style="font-size:11px;color:#6b7280">📅 ${fmtDate(v.completedDate)}</span>` : ''}
               ${hasFiles ? `<span style="font-size:11px;color:#2563eb">📎 ${(v.fileIds||[]).length} файл(а)</span>` : ''}
-              ${currentUser === 'owner' && (v.completed || hasFiles || v.notes) ? `<button onclick="deleteJournalVisit('${p.id}',${journalYear},${journalMonth},${origIdx})" style="margin-left:auto;background:none;border:1px solid #fca5a5;border-radius:5px;color:#dc2626;cursor:pointer;padding:2px 7px;font-size:11px" title="Удалить посещение">🗑 Удалить</button>` : ''}
+              ${currentUser === 'owner' ? `<span style="margin-left:auto;display:inline-flex;gap:6px">
+                <button onclick="openRecordModal('${p.id}',${journalYear},${journalMonth})" style="background:none;border:1px solid #bfdbfe;border-radius:5px;color:#2563eb;cursor:pointer;padding:2px 8px;font-size:11px">✏️ ערוך</button>
+                ${(v.completed || hasFiles || v.notes) ? `<button onclick="deleteJournalVisit('${p.id}',${journalYear},${journalMonth},${origIdx})" style="background:none;border:1px solid #fca5a5;border-radius:5px;color:#dc2626;cursor:pointer;padding:2px 7px;font-size:11px">🗑</button>` : ''}
+              </span>` : ''}
             </div>
             ${fileThumbsHtml ? `<div style="margin-bottom:6px">${fileThumbsHtml}</div>` : ''}
             ${v.notes ? `<div style="font-size:12px;color:#374151;background:#f8fafc;border-radius:6px;padding:6px 10px;border-left:3px solid ${p.color}">${v.notes}</div>` : ''}
