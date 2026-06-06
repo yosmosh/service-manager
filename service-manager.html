@@ -1328,7 +1328,7 @@ async function dbSave(fileData) {
     await ref.put(blob, { contentType: fileData.type });
     const url = await ref.getDownloadURL();
     const files = getLS('files') || {};
-    files[id] = { id, name: fileData.name, type: fileData.type, size: fileData.size, url };
+    files[id] = { id, name: fileData.name, type: fileData.type, size: fileData.size, url, fp: _fileFP(fileData.data, fileData.size) };
     setLS('files', files);
     return id;
   }
@@ -1862,9 +1862,12 @@ function readVisitFiles(vi, files) {
   Array.from(files).forEach(f => {
     const fr = new FileReader();
     fr.onload = e => {
+      if (_isDupFile(e.target.result, f.size)) {
+        _showToast('⚠️ «' + f.name + '» уже загружен — дубликат пропущен', false);
+        return;
+      }
       pendingVisitFiles[vi].push({name:f.name, type:f.type, size:f.size, data:e.target.result});
       renderVisitPending(vi);
-      // hide error if it was shown
       const errEl = document.getElementById(`v-err-${vi}`);
       if (errEl) errEl.style.display = 'none';
       const zone = document.getElementById(`visit-drop-${vi}`);
@@ -1907,12 +1910,40 @@ function setupDrop(zoneId) {
   z.addEventListener('drop', e => { e.preventDefault(); z.classList.remove('drag'); readFiles(e.dataTransfer.files); });
 }
 
+// ==============================
+// ДЕДУПЛИКАЦИЯ ФАЙЛОВ
+// ==============================
+function _fileFP(data, size) {
+  // Fingerprint = size + first 240 chars + last 60 chars of base64 payload
+  const b64 = (data && data.includes(',')) ? data.split(',')[1] : (data || '');
+  return size + ':' + b64.slice(0, 240) + ':' + b64.slice(-60);
+}
+
+function _isDupFile(data, size) {
+  const fp = _fileFP(data, size);
+  // Check current pending lists
+  if (pendingFiles.some(f => _fileFP(f.data, f.size) === fp)) return true;
+  for (const vi in pendingVisitFiles) {
+    if ((pendingVisitFiles[vi] || []).some(f => _fileFP(f.data, f.size) === fp)) return true;
+  }
+  if ((window._reqPendingFiles || []).some(f => _fileFP(f.data, f.size) === fp)) return true;
+  // Check already-saved files in storage
+  const saved = getLS('files') || {};
+  return Object.values(saved).some(f => f.fp === fp);
+}
+
 function onFilePick(e) { readFiles(e.target.files); }
 
 function readFiles(files) {
+  let skipped = 0;
   Array.from(files).forEach(f => {
     const fr = new FileReader();
     fr.onload = e => {
+      if (_isDupFile(e.target.result, f.size)) {
+        skipped++;
+        _showToast('⚠️ «' + f.name + '» уже загружен — дубликат пропущен', false);
+        return;
+      }
       pendingFiles.push({ name:f.name, type:f.type, size:f.size, data:e.target.result });
       renderPending();
     };
@@ -2543,6 +2574,10 @@ function readReqFiles(files) {
   Array.from(files).forEach(f => {
     const fr = new FileReader();
     fr.onload = e => {
+      if (_isDupFile(e.target.result, f.size)) {
+        _showToast('⚠️ «' + f.name + '» уже загружен — дубликат пропущен', false);
+        return;
+      }
       window._reqPendingFiles.push({name:f.name, type:f.type, size:f.size, data:e.target.result});
       renderReqPendingFiles();
     };
