@@ -473,7 +473,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-07f';
+const APP_VERSION = 'v2026-06-07g';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3330,7 +3330,7 @@ function renderJournal() {
               ${v.completedDate ? `<span style="font-size:11px;color:#6b7280">📅 ${fmtDate(v.completedDate)}</span>` : ''}
               ${hasFiles ? `<span style="font-size:11px;color:#2563eb">📎 ${(v.fileIds||[]).length} файл(а)</span>` : ''}
               ${currentUser === 'owner' ? `<span style="margin-left:auto;display:inline-flex;gap:6px">
-                <button onclick="openRecordModal('${p.id}',${journalYear},${journalMonth})" style="background:none;border:1px solid #bfdbfe;border-radius:5px;color:#2563eb;cursor:pointer;padding:2px 8px;font-size:11px">✏️ ערוך</button>
+                <button onclick="openRecordModal('${p.id}',${journalYear},${journalMonth})" style="background:none;border:1px solid #bfdbfe;border-radius:5px;color:#2563eb;cursor:pointer;padding:2px 8px;font-size:11px">✏️ Редактировать</button>
                 ${(v.completed || hasFiles || v.notes) ? `<button onclick="deleteJournalVisit('${p.id}',${journalYear},${journalMonth},${origIdx})" style="background:none;border:1px solid #fca5a5;border-radius:5px;color:#dc2626;cursor:pointer;padding:2px 7px;font-size:11px">🗑</button>` : ''}
               </span>` : ''}
             </div>
