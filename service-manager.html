@@ -3784,23 +3784,13 @@ function renderCalendar() {
       if (!s.months.includes(calMonth)) return;
       var reqd = s.visits || 1;
       var vdata = getVisitData(p.id, calYear, calMonth, reqd);
+      // Only show visits that have an actual completedDate
       vdata.forEach(function(v) {
-        if (!v.completed) return;
-        if (v.completedDate) {
-          var d = new Date(v.completedDate);
-          if (d.getMonth()+1===calMonth && d.getFullYear()===calYear)
-            addEvt(d.getDate(), p.color, p.bg, p.emoji, p.name);
-        } else {
-          // no date — show on day 1 as approximation
-          addEvt(1, p.color, p.bg, p.emoji, p.name);
-        }
+        if (!v.completed || !v.completedDate) return;
+        var d = new Date(v.completedDate);
+        if (d.getMonth()+1===calMonth && d.getFullYear()===calYear)
+          addEvt(d.getDate(), p.color, p.bg, p.emoji, p.name);
       });
-      // Show pending/scheduled on schedule months with no date info
-      var done = vdata.filter(function(v){return v.completed;}).length;
-      if (done < reqd) {
-        // Mark entire month as scheduled — show on 1st
-        addEvt(1, '#94a3b8', '#f1f5f9', p.emoji, p.name + ' (план)');
-      }
     });
   });
 
@@ -3858,8 +3848,7 @@ function renderCalendar() {
     + '</div>'
     + '<div class="card" style="overflow:hidden"><div class="cal-grid" style="padding:10px 8px">'+hdrs+cells+'</div></div>'
     + '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:11px;color:#6b7280">'
-    + '<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#dcfce7;border:1px solid #16a34a;margin-right:4px"></span>Визиты выполнены</span>'
-    + '<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f1f5f9;border:1px solid #94a3b8;margin-right:4px"></span>Запланировано</span>'
+    + '<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#dcfce7;border:1px solid #16a34a;margin-right:4px"></span>Визиты (дата выполнения)</span>'
     + '<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#fee2e2;border:1px solid #dc2626;margin-right:4px"></span>SOS</span>'
     + '<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#dbeafe;border:1px solid #2563eb;margin-right:4px"></span>Тех. работы</span>'
     + '</div>';
