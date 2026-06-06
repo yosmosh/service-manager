@@ -427,6 +427,7 @@ img{max-width:100%;height:auto}
     <div class="nav-item" id="nav-contacts" onclick="showView('contacts')">📞 Контакты поставщиков</div>
     <div class="nav-item admin-or-owner" id="nav-settings" onclick="openSettingsModal()">⚙️ Настройки доступа</div>
     <div class="nav-item owner-only" id="nav-export" onclick="exportCSV()">📊 Экспорт данных (CSV)</div>
+    <div class="nav-item owner-only" id="recompress-btn" onclick="recompressExistingImages()" style="color:#f59e0b">🗜️ דחוס תמונות קיימות</div>
   </div>
   <div>
     <div class="sidebar-section-title">Поставщики услуг</div>
@@ -472,7 +473,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-07a';
+const APP_VERSION = 'v2026-06-07b';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -1368,6 +1369,70 @@ async function dbDel(id) {
   });
 }
 
+function _replaceFileId(oldId, newId) {
+  const providers = getLS('providers') || [];
+  providers.forEach(p => (p.visits||[]).forEach(v => {
+    if (v.files) v.files = v.files.map(id => id === oldId ? newId : id);
+  }));
+  setLS('providers', providers);
+  const sos = getLS('sos_events') || [];
+  sos.forEach(s => { if (s.files) s.files = s.files.map(id => id === oldId ? newId : id); });
+  setLS('sos_events', sos);
+  const maint = getLS('maintenance') || [];
+  maint.forEach(m => { if (m.files) m.files = m.files.map(id => id === oldId ? newId : id); });
+  setLS('maintenance', maint);
+  const reqs = getLS('purchase_requests') || [];
+  reqs.forEach(r => { if (r.files) r.files = r.files.map(id => id === oldId ? newId : id); });
+  setLS('purchase_requests', reqs);
+}
+
+async function recompressExistingImages() {
+  if (!_useFirebase) { _showToast('פועל רק עם Firebase', false); return; }
+  const allFiles = getLS('files') || {};
+  const imgs = Object.values(allFiles).filter(f => f.type && f.type.startsWith('image/') && f.url);
+  if (!imgs.length) { _showToast('לא נמצאו תמונות', false); return; }
+
+  const btn = document.getElementById('recompress-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ מדחיס...'; }
+
+  let done = 0, savedBytes = 0;
+  _showToast(`מדחיס ${imgs.length} תמונות...`, true);
+
+  for (const meta of imgs) {
+    try {
+      const resp = await fetch(meta.url);
+      if (!resp.ok) { done++; continue; }
+      const blob = await resp.blob();
+      const fakeFile = new File([blob], meta.name || 'img.jpg', {type: blob.type || 'image/jpeg'});
+      const res = await _compressImage(fakeFile);
+      const origSize = meta.size || blob.size;
+      if (res.size >= origSize * 0.92) { done++; continue; }
+
+      try { await _storageRoot.child(`files/${meta.id}`).delete(); } catch(e) {}
+
+      const newId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+      const newBlob = dataURLtoBlob(res.data);
+      const ref = _storageRoot.child(`files/${newId}`);
+      await ref.put(newBlob, {contentType: 'image/jpeg'});
+      const url = await ref.getDownloadURL();
+
+      const latest = getLS('files') || {};
+      delete latest[meta.id];
+      latest[newId] = {id: newId, name: meta.name, type: 'image/jpeg', size: res.size, url, fp: _fileFP(res.data, res.size)};
+      setLS('files', latest);
+
+      _replaceFileId(meta.id, newId);
+      savedBytes += (origSize - res.size);
+      done++;
+      _showToast(`${done}/${imgs.length} • חסכנו ${fmtSize(savedBytes)}`, true);
+    } catch(e) { done++; }
+  }
+
+  await _flushState();
+  if (btn) { btn.disabled = false; btn.textContent = '🗜️ דחוס תמונות קיימות'; }
+  _showToast(`✅ הסתיים! חסכנו ${fmtSize(savedBytes)} מ-${imgs.length} תמונות`, true);
+}
+
 // ==============================
 // НАВИГАЦИЯ
 // ==============================
@@ -1860,20 +1925,18 @@ function onVisitFilePick(vi, input) {
 function readVisitFiles(vi, files) {
   if (!pendingVisitFiles[vi]) pendingVisitFiles[vi] = [];
   Array.from(files).forEach(f => {
-    const fr = new FileReader();
-    fr.onload = e => {
-      if (_isDupFile(e.target.result, f.size)) {
+    _compressImage(f).then(function(res) {
+      if (_isDupFile(res.data, res.size)) {
         _showToast('⚠️ «' + f.name + '» уже загружен — дубликат пропущен', false);
         return;
       }
-      pendingVisitFiles[vi].push({name:f.name, type:f.type, size:f.size, data:e.target.result});
+      pendingVisitFiles[vi].push({name: f.name, type: res.type, size: res.size, data: res.data});
       renderVisitPending(vi);
       const errEl = document.getElementById(`v-err-${vi}`);
       if (errEl) errEl.style.display = 'none';
       const zone = document.getElementById(`visit-drop-${vi}`);
       if (zone) { zone.style.borderColor = ''; zone.style.background = ''; }
-    };
-    fr.readAsDataURL(f);
+    });
   });
 }
 
@@ -1919,6 +1982,37 @@ function _fileFP(data, size) {
   return size + ':' + b64.slice(0, 240) + ':' + b64.slice(-60);
 }
 
+function _compressImage(file) {
+  return new Promise(function(resolve) {
+    if (!file.type.startsWith('image/') || file.type === 'image/gif') {
+      var fr = new FileReader();
+      fr.onload = function(e) { resolve({data: e.target.result, size: file.size, type: file.type}); };
+      fr.readAsDataURL(file);
+      return;
+    }
+    var fr = new FileReader();
+    fr.onload = function(e) {
+      var img = new Image();
+      img.onload = function() {
+        var MAX = 1400;
+        var w = img.width, h = img.height;
+        if (w > MAX || h > MAX) {
+          if (w >= h) { h = Math.round(h * MAX / w); w = MAX; }
+          else { w = Math.round(w * MAX / h); h = MAX; }
+        }
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        var compressed = canvas.toDataURL('image/jpeg', 0.78);
+        resolve({data: compressed, size: Math.round(compressed.length * 0.75), type: 'image/jpeg'});
+      };
+      img.onerror = function() { resolve({data: e.target.result, size: file.size, type: file.type}); };
+      img.src = e.target.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
 function _isDupFile(data, size) {
   const fp = _fileFP(data, size);
   // Check current pending lists
@@ -1935,19 +2029,15 @@ function _isDupFile(data, size) {
 function onFilePick(e) { readFiles(e.target.files); }
 
 function readFiles(files) {
-  let skipped = 0;
   Array.from(files).forEach(f => {
-    const fr = new FileReader();
-    fr.onload = e => {
-      if (_isDupFile(e.target.result, f.size)) {
-        skipped++;
+    _compressImage(f).then(function(res) {
+      if (_isDupFile(res.data, res.size)) {
         _showToast('⚠️ «' + f.name + '» уже загружен — дубликат пропущен', false);
         return;
       }
-      pendingFiles.push({ name:f.name, type:f.type, size:f.size, data:e.target.result });
+      pendingFiles.push({name: f.name, type: res.type, size: res.size, data: res.data});
       renderPending();
-    };
-    fr.readAsDataURL(f);
+    });
   });
 }
 
@@ -2572,16 +2662,14 @@ function onReqFilePick(input) { readReqFiles(input.files); }
 
 function readReqFiles(files) {
   Array.from(files).forEach(f => {
-    const fr = new FileReader();
-    fr.onload = e => {
-      if (_isDupFile(e.target.result, f.size)) {
+    _compressImage(f).then(function(res) {
+      if (_isDupFile(res.data, res.size)) {
         _showToast('⚠️ «' + f.name + '» уже загружен — дубликат пропущен', false);
         return;
       }
-      window._reqPendingFiles.push({name:f.name, type:f.type, size:f.size, data:e.target.result});
+      window._reqPendingFiles.push({name: f.name, type: res.type, size: res.size, data: res.data});
       renderReqPendingFiles();
-    };
-    fr.readAsDataURL(f);
+    });
   });
 }
 
