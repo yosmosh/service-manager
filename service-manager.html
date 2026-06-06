@@ -473,7 +473,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-07b';
+const APP_VERSION = 'v2026-06-07c';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -1145,9 +1145,10 @@ const setLS = (k, v) => {
 };
 
 let _saveTimer = null;
+let _isOwnFlush = false;
 function _scheduleSave() {
   clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(_flushState, 300);
+  _saveTimer = setTimeout(_flushState, 2000);
 }
 function _showToast(msg, ok) {
   let t = document.getElementById('_fb-toast');
@@ -1167,19 +1168,14 @@ function _showToast(msg, ok) {
 }
 
 async function _flushState() {
-  if (!_firestoreDB) {
-    console.warn('[FB] _flushState skipped: no Firestore');
-    return;
-  }
-  console.log('[FB] Flushing state to Firestore...');
+  if (!_firestoreDB) return;
+  _isOwnFlush = true;
   try {
     await _firestoreDB.collection('appdata').doc('state').set(_state);
-    console.log('[FB] Flush success');
     _showToast('✅ Сохранено', true);
   } catch(e) {
-    console.error('[FB] Flush error:', e);
+    _isOwnFlush = false;
     _showToast('❌ Ошибка сохранения: ' + e.message, false);
-    alert('Ошибка Firestore:\n' + e.message + '\n\nОткройте консоль браузера (F12) для деталей.');
   }
 }
 async function _loadState() {
@@ -1206,6 +1202,8 @@ function _setupSync() {
   _firestoreDB.collection('appdata').doc('state').onSnapshot(doc => {
     if (!doc.metadata.hasPendingWrites && doc.exists) {
       _state = doc.data() || {};
+      if (_isOwnFlush) { _isOwnFlush = false; return; }
+      if (document.querySelector('.modal-overlay')) return;
       if (currentUser) render();
     }
   });
