@@ -473,7 +473,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-07c';
+const APP_VERSION = 'v2026-06-07d';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -2931,6 +2931,7 @@ function maintCatLabel(id) {
 }
 
 function renderMaintenance() {
+  const _FC = _useFirebase ? (getLS('files') || {}) : {};
   const all = getMaintWorks();
   const items = all.filter(w => {
     if (!w.date) return false;
@@ -2958,8 +2959,9 @@ function renderMaintenance() {
         ${(w.fileIds||[]).map((fid, i) => {
           const ft = (w.fileTypes||[])[i]||'';
           const fn = (w.fileNames||[])[i]||'Файл';
+          const _murl = (_FC[fid]||{}).url || '';
           return ft.startsWith('image/')
-            ? `<img class="mthumb" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}" title="${fn}"
+            ? `<img class="mthumb" ${_murl ? `src="${_murl}"` : ''} loading="lazy" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}" title="${fn}"
                  style="width:72px;height:72px;object-fit:cover;border-radius:10px;cursor:pointer;background:#e2e8f0;flex-shrink:0;border:2px solid transparent;transition:.15s"
                  onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'"
                  onclick="openGalleryEl(this,${i})">`
@@ -3010,14 +3012,17 @@ function renderMaintenance() {
 }
 
 async function loadMaintImages() {
-  const imgs = document.querySelectorAll('img.mthumb[data-fid]');
+  const imgs = document.querySelectorAll('img.mthumb[data-fid]:not([src])');
+  if (!imgs.length) return;
+  if (_useFirebase) {
+    const fc = getLS('files') || {};
+    imgs.forEach(img => { const u = (fc[img.dataset.fid]||{}).url; if (u) img.src = u; });
+    return;
+  }
   for (const img of imgs) {
-    const fid = img.dataset.fid;
     try {
-      const f = await dbGet(fid);
-      if (!f) continue;
-      if (_useFirebase && f.url) img.src = f.url;
-      else if (f.data) img.src = URL.createObjectURL(dataURLtoBlob(f.data));
+      const f = await dbGet(img.dataset.fid);
+      if (f && f.data) img.src = URL.createObjectURL(dataURLtoBlob(f.data));
     } catch(e) {}
   }
 }
@@ -3155,6 +3160,7 @@ function delMaint(id) {
 function setSosFilter(f) { sosFilter = f; render(); }
 
 function renderSOS() {
+  const _FC = _useFirebase ? (getLS('files') || {}) : {};
   const allList = getSOS();
   const counts = {
     all: allList.length,
@@ -3193,8 +3199,9 @@ function renderSOS() {
         ${(s.fileIds||[]).map((fid, i) => {
           const ft = (s.fileTypes||[])[i]||'';
           const fn = (s.fileNames||[])[i]||'Файл';
+          const _surl = (_FC[fid]||{}).url || '';
           return ft.startsWith('image/')
-            ? `<img class="sthumb" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}" title="${fn}"
+            ? `<img class="sthumb" ${_surl ? `src="${_surl}"` : ''} loading="lazy" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}" title="${fn}"
                  style="width:72px;height:72px;object-fit:cover;border-radius:10px;cursor:pointer;background:#e2e8f0;flex-shrink:0;border:2px solid transparent;transition:.15s"
                  onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'"
                  onclick="openGalleryEl(this,${i})">`
@@ -3230,13 +3237,17 @@ function renderSOS() {
 }
 
 async function loadSosImages() {
-  const imgs = document.querySelectorAll('img.sthumb[data-fid]');
+  const imgs = document.querySelectorAll('img.sthumb[data-fid]:not([src])');
+  if (!imgs.length) return;
+  if (_useFirebase) {
+    const fc = getLS('files') || {};
+    imgs.forEach(img => { const u = (fc[img.dataset.fid]||{}).url; if (u) img.src = u; });
+    return;
+  }
   for (const img of imgs) {
     try {
       const f = await dbGet(img.dataset.fid);
-      if (!f) continue;
-      if (_useFirebase && f.url) img.src = f.url;
-      else if (f.data) img.src = URL.createObjectURL(dataURLtoBlob(f.data));
+      if (f && f.data) img.src = URL.createObjectURL(dataURLtoBlob(f.data));
     } catch(e) {}
   }
 }
@@ -3248,6 +3259,7 @@ function renderJournal() {
   const now = new Date();
   const realCm = now.getMonth() + 1;
   const realCy = now.getFullYear();
+  const _FC = _useFirebase ? (getLS('files') || {}) : {};
 
   // Gather all providers that have any activity or schedule in journalMonth/Year
   const rows = [];
@@ -3289,8 +3301,9 @@ function renderJournal() {
           ${(v.fileIds||[]).map((fid, fi) => {
             const fname = (v.fileNames||[])[fi] || 'Файл';
             const ftype = (v.fileTypes||[])[fi] || '';
+            const _jurl = (_FC[fid]||{}).url || '';
             return ftype.startsWith('image/')
-              ? `<img class="jthumb" data-fid="${fid}" data-ftype="${ftype}" data-fname="${fname}"
+              ? `<img class="jthumb" ${_jurl ? `src="${_jurl}"` : ''} loading="lazy" data-fid="${fid}" data-ftype="${ftype}" data-fname="${fname}"
                    title="${fname}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;background:#e2e8f0;flex-shrink:0;border:2px solid transparent;transition:.15s"
                    onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'"
                    onclick="openGalleryEl(this,${fi})">`
@@ -3395,16 +3408,17 @@ async function deleteJournalVisit(pid, yr, mo, vi) {
 }
 
 async function loadJournalImages() {
-  const imgs = document.querySelectorAll('img.jthumb[data-fid]');
+  const imgs = document.querySelectorAll('img.jthumb[data-fid]:not([src])');
+  if (!imgs.length) return;
+  if (_useFirebase) {
+    const fc = getLS('files') || {};
+    imgs.forEach(img => { const u = (fc[img.dataset.fid]||{}).url; if (u) img.src = u; });
+    return;
+  }
   for (const img of imgs) {
-    const fid = img.dataset.fid;
-    const ftype = img.dataset.ftype || '';
-    if (!ftype.startsWith('image/')) continue;
     try {
-      const f = await dbGet(fid);
-      if (!f) continue;
-      if (_useFirebase && f.url) { img.src = f.url; }
-      else if (f.data) { img.src = URL.createObjectURL(dataURLtoBlob(f.data)); }
+      const f = await dbGet(img.dataset.fid);
+      if (f && f.data) img.src = URL.createObjectURL(dataURLtoBlob(f.data));
     } catch(e) {}
   }
 }
