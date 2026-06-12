@@ -473,7 +473,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-07g';
+const APP_VERSION = 'v2026-06-07h';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -726,6 +726,7 @@ let activeProvider = null;
 let displayYear = new Date().getFullYear();
 let journalMonth = new Date().getMonth() + 1;
 let journalYear = new Date().getFullYear();
+let journalPage = 0;
 let calYear = new Date().getFullYear();
 let calMonth = new Date().getMonth() + 1;
 let sosFilter = 'all';
@@ -1512,6 +1513,13 @@ function render() {
     }
     content.innerHTML = renderProvider(p);
   }
+}
+
+function renderPage() {
+  if (view !== 'journal') return;
+  const content = document.getElementById('content');
+  content.innerHTML = renderJournal();
+  loadJournalImages();
 }
 
 // ==============================
@@ -3281,7 +3289,11 @@ function renderJournal() {
 
   const isCurrent = journalMonth === realCm && journalYear === realCy;
 
-  const providerCards = rows.length ? rows.map(({p, sched, required, visits, origIndices}) => {
+  const PAGE_SIZE = 5;
+  const visibleRows = rows.slice(0, (journalPage + 1) * PAGE_SIZE);
+  const remainingCount = rows.length - visibleRows.length;
+
+  const providerCards = rows.length ? visibleRows.map(({p, sched, required, visits, origIndices}) => {
     const doneCnt = visits.filter(v => v.completed).length;
     const allDone = required > 0 && doneCnt >= required;
     const hasOverdue = required > 0 && !allDone && (journalYear < realCy || (journalYear === realCy && journalMonth < realCm));
@@ -3295,10 +3307,14 @@ function renderJournal() {
       const _jIds   = JSON.stringify(v.fileIds||[]).replace(/'/g,'&#39;');
       const _jTypes = JSON.stringify(v.fileTypes||[]).replace(/'/g,'&#39;');
       const _jNames = JSON.stringify(v.fileNames||[]).replace(/'/g,'&#39;');
-      const fileThumbsHtml = (v.fileIds||[]).length ? `
+      const MAX_THUMBS = 8;
+      const allFids = v.fileIds || [];
+      const shownFids = allFids.slice(0, MAX_THUMBS);
+      const hiddenCount = allFids.length - shownFids.length;
+      const fileThumbsHtml = allFids.length ? `
         <div class="jthumb-wrap" data-gids='${_jIds}' data-gtypes='${_jTypes}' data-gnames='${_jNames}'
-             style="display:flex;gap:8px;flex-wrap:wrap">
-          ${(v.fileIds||[]).map((fid, fi) => {
+             style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          ${shownFids.map((fid, fi) => {
             const fname = (v.fileNames||[])[fi] || 'Файл';
             const ftype = (v.fileTypes||[])[fi] || '';
             const _jurl = (_FC[fid]||{}).url || '';
@@ -3314,6 +3330,9 @@ function renderJournal() {
                    <span style="font-size:9px;color:#6b7280;text-align:center;padding:0 4px;overflow:hidden;max-width:60px;text-overflow:ellipsis;white-space:nowrap">${fname}</span>
                  </div>`;
           }).join('')}
+          ${hiddenCount > 0 ? `<div onclick="openGalleryEl(this.closest('.jthumb-wrap').querySelector('[data-fid]'),${MAX_THUMBS})"
+               style="width:64px;height:64px;border-radius:8px;background:#e2e8f0;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;font-weight:700;color:#2563eb;flex-shrink:0">
+               +${hiddenCount}</div>` : ''}
         </div>` : '';
 
       const statusColor = v.completed ? 'var(--success)' : (hasOverdue ? 'var(--danger)' : '#94a3b8');
@@ -3365,7 +3384,12 @@ function renderJournal() {
           ${visitRows || '<div style="padding:12px 0;color:#94a3b8;font-size:12px;font-style:italic">Нет данных за этот месяц</div>'}
         </div>
       </div>`;
-  }).join('') : `<div style="text-align:center;padding:48px;color:#94a3b8">
+  }).join('') + (remainingCount > 0 ? `
+    <div style="text-align:center;padding:12px 0 4px">
+      <button onclick="journalPage++;renderPage()" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:10px 24px;font-size:13px;color:#2563eb;cursor:pointer;font-weight:600">
+        Показать ещё ${remainingCount} из ${rows.length} ▼
+      </button>
+    </div>` : '') : `<div style="text-align:center;padding:48px;color:#94a3b8">
     <div style="font-size:48px;margin-bottom:12px">📭</div>
     <div style="font-size:14px">Нет данных за ${MONTHS[journalMonth-1]} ${journalYear}</div>
   </div>`;
@@ -3373,9 +3397,9 @@ function renderJournal() {
   return `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px">
       <div style="display:flex;align-items:center;gap:12px">
-        <button class="year-btn" onclick="journalMonth--;if(journalMonth<1){journalMonth=12;journalYear--}render()">◄</button>
+        <button class="year-btn" onclick="journalMonth--;if(journalMonth<1){journalMonth=12;journalYear--}journalPage=0;render()">◄</button>
         <div style="font-size:16px;font-weight:700;color:#1e293b;min-width:140px;text-align:center">${MONTHS[journalMonth-1]} ${journalYear}</div>
-        <button class="year-btn" onclick="journalMonth++;if(journalMonth>12){journalMonth=1;journalYear++}render()">►</button>
+        <button class="year-btn" onclick="journalMonth++;if(journalMonth>12){journalMonth=1;journalYear++}journalPage=0;render()">►</button>
         ${isCurrent ? '<span class="badge badge-blue" style="margin-left:4px">Текущий месяц</span>' : ''}
       </div>
       <div class="journal-stats-row" style="display:flex;gap:8px">
