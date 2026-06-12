@@ -473,7 +473,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-07h';
+const APP_VERSION = 'v2026-06-07i';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3019,21 +3019,7 @@ function renderMaintenance() {
     ${cards}`;
 }
 
-async function loadMaintImages() {
-  const imgs = document.querySelectorAll('img.mthumb[data-fid]:not([src])');
-  if (!imgs.length) return;
-  if (_useFirebase) {
-    const fc = getLS('files') || {};
-    imgs.forEach(img => { const u = (fc[img.dataset.fid]||{}).url; if (u) img.src = u; });
-    return;
-  }
-  for (const img of imgs) {
-    try {
-      const f = await dbGet(img.dataset.fid);
-      if (f && f.data) img.src = URL.createObjectURL(dataURLtoBlob(f.data));
-    } catch(e) {}
-  }
-}
+async function loadMaintImages() { await _loadImages('img.mthumb[data-fid]'); }
 
 function openMaintModal(editId) {
   const ex = editId ? getMaintWorks().find(w => w.id === editId) : null;
@@ -3244,21 +3230,7 @@ function renderSOS() {
   }).join('');
 }
 
-async function loadSosImages() {
-  const imgs = document.querySelectorAll('img.sthumb[data-fid]:not([src])');
-  if (!imgs.length) return;
-  if (_useFirebase) {
-    const fc = getLS('files') || {};
-    imgs.forEach(img => { const u = (fc[img.dataset.fid]||{}).url; if (u) img.src = u; });
-    return;
-  }
-  for (const img of imgs) {
-    try {
-      const f = await dbGet(img.dataset.fid);
-      if (f && f.data) img.src = URL.createObjectURL(dataURLtoBlob(f.data));
-    } catch(e) {}
-  }
-}
+async function loadSosImages() { await _loadImages('img.sthumb[data-fid]'); }
 
 // ==============================
 // ЖУРНАЛ ВИЗИТОВ
@@ -3434,20 +3406,32 @@ async function deleteJournalVisit(pid, yr, mo, vi) {
   if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
 }
 
-async function loadJournalImages() {
-  const imgs = document.querySelectorAll('img.jthumb[data-fid]:not([src])');
-  if (!imgs.length) return;
-  if (_useFirebase) {
-    const fc = getLS('files') || {};
-    imgs.forEach(img => { const u = (fc[img.dataset.fid]||{}).url; if (u) img.src = u; });
-    return;
+async function loadJournalImages() { await _loadImages('img.jthumb[data-fid]'); }
+
+async function _loadImages(selector) {
+  const trySet = () => {
+    const fc = _useFirebase ? (getLS('files') || {}) : {};
+    document.querySelectorAll(selector + ':not([src])').forEach(img => {
+      const entry = fc[img.dataset.fid] || {};
+      const u = entry.url || entry.data || '';
+      if (u) img.src = u;
+    });
+  };
+  trySet();
+  // Fallback: IndexedDB (for offline-uploaded files on same device)
+  const missing = document.querySelectorAll(selector + ':not([src])');
+  if (missing.length) {
+    for (const img of missing) {
+      try {
+        const f = await dbGet(img.dataset.fid);
+        if (f && f.data) img.src = URL.createObjectURL(dataURLtoBlob(f.data));
+      } catch(e) {}
+    }
   }
-  for (const img of imgs) {
-    try {
-      const f = await dbGet(img.dataset.fid);
-      if (f && f.data) img.src = URL.createObjectURL(dataURLtoBlob(f.data));
-    } catch(e) {}
-  }
+  // Retry after 1.5s — covers race where Firestore snapshot arrives after first render
+  setTimeout(() => {
+    if (document.querySelectorAll(selector + ':not([src])').length) trySet();
+  }, 1500);
 }
 
 // ==============================
