@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-17d';
+const APP_VERSION = 'v2026-06-17e';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3043,8 +3043,8 @@ function generateReport() {
 
   // ── EXTRA WORK PHOTOS ──
   const maintPhotos = [], sosPhotos = [];
-  maintWorks.forEach(w => { _scoredImages(w.fileIds, w.fileTypes, w.fileNames, fc, 2).forEach(img => { if (maintPhotos.length < 6) maintPhotos.push({...img, label:(w.title||'').slice(0,30), emoji:'🏗️'}); }); });
-  sosEvts.forEach(s => { _scoredImages(s.fileIds, s.fileTypes, s.fileNames, fc, 2).forEach(img => { if (sosPhotos.length < 6) sosPhotos.push({...img, label:(s.title||'').slice(0,30), emoji:'🚨'}); }); });
+  maintWorks.forEach(w => { _scoredImages(w.fileIds, w.fileTypes, w.fileNames, fc, 2).forEach(img => { if (maintPhotos.length < 18) maintPhotos.push({...img, label:(w.title||'').slice(0,30), emoji:'🏗️'}); }); });
+  sosEvts.forEach(s => { _scoredImages(s.fileIds, s.fileTypes, s.fileNames, fc, 2).forEach(img => { if (sosPhotos.length < 18) sosPhotos.push({...img, label:(s.title||'').slice(0,30), emoji:'🚨'}); }); });
 
   // ── GRID BUILDER — full-bleed editorial layout ──
   const buildGrid = (imgs, cols) => {
@@ -3086,6 +3086,55 @@ function generateReport() {
     : '';
   const conclusionIcon = pct>=100?'✅':pct>=75?'✔️':'⚠️';
   const gridCols = topImgs.length <= 4 ? 2 : 3;
+
+  // ── EXTRA WORKS SUMMARIES (styled like provider summaries) ──
+  const maintWorkCards = maintWorks.map(w => {
+    const dateStr = (w.date||'').slice(5).replace('-','.');
+    return `<div style="display:grid;grid-template-columns:5px 1fr;margin-bottom:3px;background:#f8f9fa">
+      <div style="background:#d97706"></div>
+      <div style="padding:14px 18px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0">
+            <span style="font-size:16px;flex-shrink:0">🏗️</span>
+            <div style="min-width:0">
+              <div style="font-size:12px;font-weight:700;color:#1a1a1a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${w.title||'ТО территории'}</div>
+              <div style="font-size:9px;color:#94a3b8;margin-top:1px">${maintCatLabel(w.category||'other')} · ${dateStr}${w.cost?' · '+Number(w.cost).toLocaleString('ru')+' ₽':''}</div>
+            </div>
+          </div>
+          <span style="background:#1a1a1a;color:#c8d600;font-size:8px;font-weight:800;padding:4px 10px;letter-spacing:.5px;white-space:nowrap;flex-shrink:0">✓ ВЫПОЛНЕНО</span>
+        </div>
+        ${w.description?`<div style="font-size:12px;color:#374151;line-height:1.6;border-left:2px solid #e2e8f0;padding-left:12px;margin-top:8px">${w.description.slice(0,220)}</div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+
+  const sosWorkCards = sosEvts.map(s => {
+    const dateStr = (s.date||'').slice(5).replace('-','.');
+    const resolved = s.status === 'resolved';
+    return `<div style="display:grid;grid-template-columns:5px 1fr;margin-bottom:3px;${resolved?'background:#f8f9fa':'background:#fff5f5;border:1px solid #fecaca'}">
+      <div style="background:${resolved?'#16a34a':'#dc2626'}"></div>
+      <div style="padding:14px 18px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0">
+            <span style="font-size:16px;flex-shrink:0">🚨</span>
+            <div style="min-width:0">
+              <div style="font-size:12px;font-weight:700;color:#1a1a1a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.title||'Экстренное ТО'}</div>
+              <div style="font-size:9px;color:#94a3b8;margin-top:1px">${dateStr} · ${s.priority==='high'?'Высокий приоритет':s.priority==='medium'?'Средний приоритет':'Низкий приоритет'}</div>
+            </div>
+          </div>
+          <span style="background:${resolved?'#16a34a':'#dc2626'};color:white;font-size:8px;font-weight:800;padding:4px 10px;letter-spacing:.5px;white-space:nowrap;flex-shrink:0">${resolved?'✓ УСТРАНЕНО':'⚠ В РАБОТЕ'}</span>
+        </div>
+        ${s.description?`<div style="font-size:12px;color:${resolved?'#374151':'#dc2626'};line-height:1.6;border-left:2px solid ${resolved?'#e2e8f0':'#fca5a5'};padding-left:12px;margin-top:8px${resolved?'':';font-style:italic'}">${s.description.slice(0,220)}</div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+
+  // ── PHOTO PAGINATION (6 per page) ──
+  const EW_PER_PAGE = 6;
+  const maintChunks = [];
+  for (let _i = 0; _i < maintPhotos.length; _i += EW_PER_PAGE) maintChunks.push(maintPhotos.slice(_i, _i+EW_PER_PAGE));
+  const sosChunks = [];
+  for (let _i = 0; _i < sosPhotos.length; _i += EW_PER_PAGE) sosChunks.push(sosPhotos.slice(_i, _i+EW_PER_PAGE));
 
   // ── VISIT SUMMARIES (built from provider notes) ──
   const visitSummaryCards = jRows.map(({p, req, done}) => {
@@ -3326,22 +3375,31 @@ ${topImgs.length>0?`<!-- ══ 3. PHOTOS ══ -->
   </div>
 </div>
 
-${maintPhotos.length>0||sosPhotos.length>0?`<!-- ══ 6. EXTRA WORKS ══ -->
+${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ══ -->
 <div class="page">
-  <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">Доп. работы</span><span class="band-sub">${moName} ${yr}</span></div>
+  <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">Доп. работы — итоги</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
-  <div style="padding:36px 52px 44px">
-    <div style="font-size:26px;font-weight:700;color:#1a1a1a;margin-bottom:20px">ТО территории и экстренные ситуации</div>
-    ${maintPhotos.length>0?`<div style="margin-bottom:20px">
-      <div style="font-size:9px;font-weight:700;color:#92400e;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">🏗️ Обслуживание территории</div>
-      ${buildGrid(maintPhotos,Math.min(maintPhotos.length,3))}
-    </div>`:''}
-    ${sosPhotos.length>0?`<div>
-      <div style="font-size:9px;font-weight:700;color:#b91c1c;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">🚨 Экстренное ТО</div>
-      ${buildGrid(sosPhotos,Math.min(sosPhotos.length,3))}
-    </div>`:''}
+  <div style="flex:1;padding:36px 52px 44px;overflow:hidden">
+    <div style="margin-bottom:24px">
+      <div style="font-size:26px;font-weight:700;color:#1a1a1a">ТО территории и экстренные ситуации</div>
+      <div style="font-size:12px;color:#94a3b8;margin-top:5px">Выполненные работы за ${moName} ${yr}</div>
+    </div>
+    ${maintWorkCards}
+    ${sosWorkCards}
   </div>
 </div>`:''}
+${maintChunks.map((chunk, ci) => `<!-- ══ MAINT PHOTOS PAGE ══ -->
+<div class="page">
+  <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🏗️ Обслуживание территории${maintChunks.length>1?' · '+(ci+1)+'/'+maintChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
+  <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
+  <div style="flex:1;overflow:hidden">${buildGrid(chunk, 3)}</div>
+</div>`).join('')}
+${sosChunks.map((chunk, ci) => `<!-- ══ SOS PHOTOS PAGE ══ -->
+<div class="page">
+  <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🚨 Экстренное ТО${sosChunks.length>1?' · '+(ci+1)+'/'+sosChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
+  <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
+  <div style="flex:1;overflow:hidden">${buildGrid(chunk, 3)}</div>
+</div>`).join('')}
 
 <!-- ══ 7. CONCLUSION ══ -->
 <div class="page dark">
