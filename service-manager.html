@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html dir="ltr" lang="ru">
 <head>
 <meta charset="UTF-8">
@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-17a';
+const APP_VERSION = 'v2026-06-17b';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -2937,6 +2937,16 @@ function _scoredImages(fileIds, fileTypes, fileNames, fc, maxCount) {
   return imgs.sort((a,b) => b.score - a.score).slice(0, maxCount).sort((a,b) => a.i - b.i);
 }
 
+function _bestProvImg(done, fc) {
+  let best = null;
+  done.forEach(v => {
+    _scoredImages(v.fileIds, v.fileTypes, v.fileNames, fc, 3).forEach(img => {
+      if (!best || img.score > best.score) best = img;
+    });
+  });
+  return best;
+}
+
 function generateReport() {
   const mo = journalMonth, yr = journalYear;
   const moName = MONTHS[mo-1];
@@ -2974,301 +2984,233 @@ function generateReport() {
   maintWorks.forEach(w => totalFiles += (w.fileIds||[]).length);
   sosEvts.forEach(s => totalFiles += (s.fileIds||[]).length);
 
-  // ── HELPERS ──
-  const thumbsHtml = (fileIds, fileTypes, fileNames, accentColor) => {
-    const scored = _scoredImages(fileIds, fileTypes, fileNames, fc, 6);
-    if (!scored.length) return '';
-    const totalImgCount = (fileIds||[]).filter((_,fi) => (fileTypes||[])[fi]?.startsWith('image/')).length;
-    const hidden = totalImgCount - scored.length;
-    return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-      ${scored.map(f => `<img src="${f.url}" alt="" style="width:88px;height:66px;object-fit:cover;border-radius:6px;border:1px solid ${accentColor}30;background:#f1f5f9">`).join('')}
-      ${hidden > 0 ? `<div style="width:88px;height:66px;background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#64748b">+${hidden}</div>` : ''}
-    </div>`;
-  };
+  // ── ALL MONTH PHOTOS (scored, diverse) ──
+  const allMonthImgs = [];
+  jRows.forEach(({p, done}) => {
+    done.forEach(v => {
+      _scoredImages(v.fileIds, v.fileTypes, v.fileNames, fc, 99).forEach(img => {
+        allMonthImgs.push({...img, label: p.name, emoji: p.emoji, color: p.color});
+      });
+    });
+  });
+  maintWorks.forEach(w => {
+    _scoredImages(w.fileIds, w.fileTypes, w.fileNames, fc, 99).forEach(img => {
+      allMonthImgs.push({...img, label: (w.title||'ТО территории').slice(0,28), emoji: '🏗️', color: '#f59e0b'});
+    });
+  });
+  sosEvts.forEach(s => {
+    _scoredImages(s.fileIds, s.fileTypes, s.fileNames, fc, 99).forEach(img => {
+      allMonthImgs.push({...img, label: (s.title||'Экстренное ТО').slice(0,28), emoji: '🚨', color: '#dc2626'});
+    });
+  });
+  allMonthImgs.sort((a,b) => (b.score||0) - (a.score||0));
+  const topImgs = [], labelCnt = {};
+  for (const img of allMonthImgs) {
+    if (topImgs.length >= 9) break;
+    const c = labelCnt[img.label] || 0;
+    if (c >= 2) continue;
+    labelCnt[img.label] = c + 1;
+    topImgs.push(img);
+  }
 
-  const secHeader = (emoji, title, subtitle, color) =>
-    `<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid ${color}20">
-       <div style="width:44px;height:44px;background:${color}15;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">${emoji}</div>
-       <div>
-         <div style="font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:${color};font-weight:700">${subtitle}</div>
-         <div style="font-size:20px;font-weight:700;color:#0f172a">${title}</div>
-       </div>
-     </div>`;
-
-  // ── JOURNAL CARDS ──
-  const journalCards = jRows.map(({p, sched, req, done}) => {
+  // ── STATUS CARDS (provider + best photo) ──
+  const statusCards = jRows.map(({p, req, done}) => {
     const ok = done.length >= req && req > 0;
-    const visitsHtml = done.map((v, vi) => {
-      const fCount = (v.fileIds||[]).length;
-      const nfCount = (v.fileIds||[]).filter((_,fi) => !(v.fileTypes||[])[fi]?.startsWith('image/')).length;
-      return `<div style="margin-top:8px;padding:10px 12px;background:#f8fafc;border-radius:8px;border-left:3px solid ${p.color}">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="font-size:11px;font-weight:700;color:#16a34a">✅ Посещение ${vi+1}</span>
-          ${v.completedDate ? `<span style="font-size:10px;color:#64748b">📅 ${v.completedDate}</span>` : ''}
-          ${fCount ? `<span style="font-size:10px;color:#2563eb">📎 ${fCount} файл(а)</span>` : ''}
-          ${nfCount ? `<span style="font-size:10px;color:#7c3aed">📄 ${nfCount} докум.</span>` : ''}
-        </div>
-        ${v.notes ? `<div style="font-size:11px;color:#374151;line-height:1.55;margin-top:6px;font-style:italic">${v.notes.replace(/</g,'&lt;')}</div>` : ''}
-        ${thumbsHtml(v.fileIds, v.fileTypes, v.fileNames, p.color)}
-      </div>`;
-    }).join('');
-
-    return `<div style="break-inside:avoid;page-break-inside:avoid;margin-bottom:14px;border:1px solid #e2e8f0;border-left:5px solid ${p.color};border-radius:12px;padding:14px;background:white;box-shadow:0 1px 4px rgba(0,0,0,0.05)">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="width:38px;height:38px;background:${p.bg||'#f1f5f9'};border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">${p.emoji}</div>
-          <div>
-            <div style="font-size:13px;font-weight:700;color:#1e293b">${p.name}</div>
-            <div style="font-size:10px;color:#64748b">${p.cat}${sched ? ' — ' + sched.desc : ''}</div>
-          </div>
-        </div>
-        <div style="background:${ok ? '#dcfce7' : req > 0 ? '#fee2e2' : '#f1f5f9'};color:${ok ? '#16a34a' : req > 0 ? '#dc2626' : '#94a3b8'};font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;flex-shrink:0">
-          ${ok ? '✓ Выполнено' : req > 0 ? '✗ Не выполнено' : '○ Внеплановые'} ${done.length}${req > 0 ? '/'+req : ''}
+    const best = _bestProvImg(done, fc);
+    const sc = ok ? '#16a34a' : req > 0 ? '#dc2626' : '#94a3b8';
+    return `<div style="display:flex;align-items:stretch;border-radius:12px;overflow:hidden;border:1px solid #e8ecf0;height:72px;background:white;box-shadow:0 2px 8px rgba(0,0,0,0.06)">
+      <div style="width:5px;background:${p.color};flex-shrink:0"></div>
+      <div style="width:52px;background:${p.bg||'#f8fafc'};display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">${p.emoji}</div>
+      <div style="flex:1;padding:0 14px;display:flex;flex-direction:column;justify-content:center;min-width:0">
+        <div style="font-size:13px;font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div>
+        <div style="font-size:10px;color:#94a3b8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.cat}</div>
+      </div>
+      <div style="padding:0 14px;display:flex;align-items:center;flex-shrink:0">
+        <div style="background:${sc}18;color:${sc};font-size:10px;font-weight:700;padding:4px 12px;border-radius:20px;border:1px solid ${sc}30;white-space:nowrap">
+          ${ok?'✓ Выполнено':req>0?'✗ Не выполнено':'—'} ${done.length}${req>0?'/'+req:''}
         </div>
       </div>
-      ${visitsHtml}
+      ${best
+        ? `<div style="width:96px;flex-shrink:0;overflow:hidden"><img src="${best.url}" alt="" style="width:100%;height:100%;object-fit:cover;display:block"></div>`
+        : `<div style="width:96px;flex-shrink:0;background:${p.bg||'#f1f5f9'};display:flex;align-items:center;justify-content:center;font-size:28px">${p.emoji}</div>`}
     </div>`;
   }).join('');
 
-  // ── MAINT CARDS ──
-  const maintCards = maintWorks.length ? maintWorks.map(w => {
-    const done = w.status === 'done' || w.status === 'completed';
-    const inProg = w.status === 'in_progress';
-    const sc = done ? '#16a34a' : inProg ? '#d97706' : '#2563eb';
-    const st = done ? '✓ Выполнено' : inProg ? '⏳ В процессе' : '📋 Запланировано';
-    return `<div style="break-inside:avoid;page-break-inside:avoid;margin-bottom:12px;border:1px solid #e2e8f0;border-left:5px solid #f59e0b;border-radius:10px;padding:12px 14px;background:white;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12px;font-weight:700;color:#1e293b;margin-bottom:2px">${(w.title||'Без названия').replace(/</g,'&lt;')}</div>
-          ${w.category ? `<div style="font-size:10px;color:#94a3b8;margin-bottom:3px">${w.category}</div>` : ''}
-          ${w.date ? `<div style="font-size:10px;color:#64748b">📅 ${w.date}</div>` : ''}
-          ${w.description ? `<div style="font-size:11px;color:#374151;margin-top:5px;font-style:italic;line-height:1.5">${w.description.replace(/</g,'&lt;')}</div>` : ''}
-        </div>
-        <div style="background:${sc}18;color:${sc};font-size:10px;font-weight:700;padding:3px 10px;border-radius:12px;border:1px solid ${sc}30;flex-shrink:0">${st}</div>
-      </div>
-      ${thumbsHtml(w.fileIds, w.fileTypes, w.fileNames, '#f59e0b')}
-    </div>`;
-  }).join('') : `<div style="text-align:center;padding:20px;color:#94a3b8;font-size:12px;font-style:italic">Работ по территории за ${moName} не зафиксировано</div>`;
+  // ── EXTRA WORK PHOTOS ──
+  const maintPhotos = [], sosPhotos = [];
+  maintWorks.forEach(w => { _scoredImages(w.fileIds, w.fileTypes, w.fileNames, fc, 2).forEach(img => { if (maintPhotos.length < 6) maintPhotos.push({...img, label:(w.title||'').slice(0,30), emoji:'🏗️'}); }); });
+  sosEvts.forEach(s => { _scoredImages(s.fileIds, s.fileTypes, s.fileNames, fc, 2).forEach(img => { if (sosPhotos.length < 6) sosPhotos.push({...img, label:(s.title||'').slice(0,30), emoji:'🚨'}); }); });
 
-  // ── SOS CARDS ──
-  const sosCards = sosEvts.length ? sosEvts.map(s => {
-    const res = s.status === 'resolved';
-    const bc = res ? '#16a34a' : '#dc2626';
-    return `<div style="break-inside:avoid;page-break-inside:avoid;margin-bottom:12px;border:1px solid ${bc}30;border-left:5px solid ${bc};border-radius:10px;padding:12px 14px;background:${res ? '#f0fdf4' : '#fff8f8'};box-shadow:0 1px 3px rgba(0,0,0,0.04)">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12px;font-weight:700;color:#1e293b;margin-bottom:2px">🚨 ${(s.title||'Экстренная ситуация').replace(/</g,'&lt;')}</div>
-          ${s.date ? `<div style="font-size:10px;color:#64748b">📅 ${s.date}</div>` : ''}
-          ${s.description ? `<div style="font-size:11px;color:#374151;margin-top:5px;font-style:italic;line-height:1.5">${s.description.replace(/</g,'&lt;')}</div>` : ''}
-        </div>
-        <div style="background:${bc}18;color:${bc};font-size:10px;font-weight:700;padding:3px 10px;border-radius:12px;border:1px solid ${bc}30;flex-shrink:0">${res ? '✓ Устранено' : '⚠ В работе'}</div>
+  // ── GRID BUILDER ──
+  const buildGrid = (imgs, cols) => `<div style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:6px">
+    ${imgs.map(img => `<div style="position:relative;aspect-ratio:4/3;border-radius:10px;overflow:hidden;background:#e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.1)">
+      <img src="${img.url}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">
+      <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,0.72));padding:8px 10px">
+        <div style="font-size:9px;color:rgba(255,255,255,0.92);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${img.emoji||''} ${img.label||''}</div>
       </div>
-      ${thumbsHtml(s.fileIds, s.fileTypes, s.fileNames, bc)}
-    </div>`;
-  }).join('') : '';
+    </div>`).join('')}
+  </div>`;
 
-  // ── CONCLUSION TEXT ──
-  const conclusionText = pct >= 100
-    ? `Все запланированные работы по техническому обслуживанию объекта за ${moName} ${yr} г. выполнены в полном объёме и в установленные сроки. Объект находится в надлежащем техническом состоянии.`
-    : pct >= 75
-      ? `Плановые работы за ${moName} ${yr} г. выполнены на ${pct}%. Большинство подрядчиков своевременно выполнили возложенные задачи.${provsIssue > 0 ? ' Требует дополнительного внимания: ' + provsIssue + ' позиц' + (provsIssue === 1 ? 'ия' : 'ии') + '.' : ''}`
-      : `Плановые работы за ${moName} ${yr} г. выполнены на ${pct}%. Необходимо усилить контроль за выполнением обслуживания объекта.`;
-  const sosNote = sosEvts.length > 0
-    ? ` За отчётный период зафиксировано ${sosEvts.length} экстренн${sosEvts.length === 1 ? 'ая ситуация' : 'ых ситуации'}, ${sosEvts.filter(s => s.status === 'resolved').length === sosEvts.length ? 'все устранены' : 'часть устранена'}.`
+  // ── CONCLUSION ──
+  const conclusionText = pct>=100
+    ? 'Все запланированные работы выполнены в полном объёме. Объект под надёжным контролем.'
+    : pct>=75
+      ? `Выполнено ${pct}% от плана. Большинство систем в норме.${provsIssue>0?' Требует внимания: '+provsIssue+' поз.':''}`
+      : `Выполнено ${pct}% от плана. Требуется усиление контроля.`;
+  const sosNote = sosEvts.length>0
+    ? `За месяц: ${sosEvts.length} экстренн${sosEvts.length===1?'ая ситуация':'ых ситуации'}, ${sosEvts.filter(s=>s.status==='resolved').length===sosEvts.length?'все устранены':'часть устранена'}.`
     : '';
-  const conclusionIcon = pct >= 100 ? '✅' : pct >= 75 ? '✔️' : '⚠️';
+  const conclusionIcon = pct>=100?'✅':pct>=75?'✔️':'⚠️';
+  const gridCols = topImgs.length <= 4 ? 2 : 3;
 
-  // ── FULL HTML ──
+  // secHeader removed — new design uses inline section headers
+
+  // ── NEW VISUAL HTML ──
   const html = `<!DOCTYPE html>
-<html lang="ru">
-<head>
+<html lang="ru"><head>
 <meta charset="UTF-8">
 <title>Отчёт — ${moName} ${yr}</title>
 <link href="https://fonts.googleapis.com/css2?family=PT+Sans:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'PT Sans',Arial,sans-serif;background:#dde3ea;color:#1e293b;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.page{width:210mm;min-height:297mm;margin:0 auto 22px;background:white;box-shadow:0 4px 24px rgba(0,0,0,0.13);padding:18mm;position:relative;overflow:hidden}
-.cover{padding:0 !important;display:flex;flex-direction:column;background:linear-gradient(145deg,#0f172a 0%,#1e3a8a 55%,#2563eb 100%)}
-@media print{
-  body{background:white}
-  .no-print{display:none!important}
-  .page{margin:0;box-shadow:none;page-break-after:always;min-height:unset}
-  .page:last-child{page-break-after:avoid}
-  @page{size:A4 portrait;margin:0}
-}
-</style>
-</head>
-<body>
-
-<!-- PRINT BUTTON -->
-<div class="no-print" id="printbar" style="position:fixed;top:0;left:0;right:0;z-index:999;background:#1e293b;color:white;display:flex;align-items:center;justify-content:space-between;padding:10px 20px;gap:12px;font-family:'PT Sans',sans-serif">
-  <div>
-    <span style="font-size:14px;font-weight:700">📋 Отчёт — ${moName} ${yr}</span>
-    <span id="img-status" style="font-size:11px;color:#94a3b8;margin-left:12px">Загрузка изображений…</span>
+body{font-family:'PT Sans',Arial,sans-serif;background:#c8d0da;-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#1e293b}
+.page{width:210mm;min-height:297mm;margin:0 auto 24px;background:white;box-shadow:0 8px 40px rgba(0,0,0,0.18);padding:18mm;position:relative;overflow:hidden}
+.cover{padding:0!important;display:flex;flex-direction:column;background:linear-gradient(145deg,#0f172a 0%,#1e3a8a 55%,#2563eb 100%)}
+@media print{body{background:white}.np{display:none!important}.page{margin:0;box-shadow:none;page-break-after:always;min-height:unset}.page:last-child{page-break-after:avoid}@page{size:A4 portrait;margin:0}}
+</style></head><body>
+<div class="np" style="position:fixed;top:0;left:0;right:0;z-index:999;background:#0f172a;display:flex;align-items:center;justify-content:space-between;padding:11px 22px">
+  <div style="display:flex;align-items:center;gap:14px">
+    <span style="font-size:14px;font-weight:700;color:white">📋 ${moName} ${yr}</span>
+    <span id="ims" style="font-size:11px;color:#64748b">Загрузка фото…</span>
   </div>
-  <button id="print-btn" onclick="window.print()" disabled style="background:#2563eb;color:white;border:none;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:not-allowed;opacity:0.5;font-family:'PT Sans',sans-serif;transition:.2s">
-    🖨️ Сохранить PDF
-  </button>
+  <button id="pbtn" onclick="window.print()" disabled style="background:#2563eb;color:white;border:none;padding:9px 22px;border-radius:8px;font-size:13px;font-weight:700;cursor:not-allowed;opacity:0.4;transition:.3s">🖨️ Сохранить PDF</button>
 </div>
-<div class="no-print" style="height:44px"></div>
-
-<!-- ═══════ COVER ═══════ -->
+<div class="np" style="height:46px"></div>
+<!-- COVER -->
 <div class="page cover">
-  <div style="position:absolute;width:500px;height:500px;background:rgba(255,255,255,0.04);border-radius:50%;top:-180px;right:-140px;pointer-events:none"></div>
-  <div style="position:absolute;width:300px;height:300px;background:rgba(255,255,255,0.04);border-radius:50%;bottom:-80px;left:-60px;pointer-events:none"></div>
-  <div style="padding:26px 32px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,0.1);position:relative;z-index:1">
+  <div style="position:absolute;width:460px;height:460px;background:rgba(255,255,255,0.04);border-radius:50%;top:-150px;right:-110px"></div>
+  <div style="position:absolute;width:260px;height:260px;background:rgba(255,255,255,0.04);border-radius:50%;bottom:-60px;left:-40px"></div>
+  <div style="padding:24px 30px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,0.1);position:relative;z-index:1">
     <span style="font-size:22px">🏗️</span>
     <div>
-      <div style="color:rgba(255,255,255,0.95);font-weight:700;font-size:14px">Управление услугами</div>
-      <div style="color:rgba(255,255,255,0.45);font-size:9px;letter-spacing:2px;text-transform:uppercase">Система мониторинга и ТО</div>
+      <div style="color:white;font-weight:700;font-size:14px">Управление услугами</div>
+      <div style="color:rgba(255,255,255,0.38);font-size:9px;letter-spacing:2px;text-transform:uppercase">Система мониторинга и ТО</div>
     </div>
   </div>
-  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:36px 32px;position:relative;z-index:1">
-    <div style="font-size:72px;margin-bottom:22px;filter:drop-shadow(0 6px 12px rgba(0,0,0,0.4))">📋</div>
-    <div style="font-size:10px;letter-spacing:4px;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:10px">Ежемесячный отчёт</div>
-    <h1 style="font-size:34px;font-weight:700;color:white;line-height:1.25;margin-bottom:10px">Отчёт об обслуживании<br>объекта</h1>
-    <div style="width:56px;height:3px;background:linear-gradient(90deg,#60a5fa,#a78bfa);border-radius:2px;margin:18px auto"></div>
-    <div style="font-size:30px;font-weight:700;color:#93c5fd;margin-bottom:4px">${moName} ${yr}</div>
-    <div style="display:flex;gap:12px;margin-top:36px;justify-content:center;flex-wrap:wrap">
-      ${[
-        [totalDone, 'Визитов'],
-        [pct + '%', 'Выполнено'],
-        [jRows.length, 'Подрядчиков'],
-        ...(totalFiles ? [[totalFiles, 'Файлов']] : []),
-        ...(maintWorks.length ? [[maintWorks.length, 'Работ ТО']] : []),
-        ...(sosEvts.length ? [[sosEvts.length, 'SOS']] : [])
-      ].map(([val, lbl]) => `<div style="background:rgba(255,255,255,0.08);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.15);border-radius:12px;padding:13px 18px;text-align:center;min-width:80px">
-        <div style="font-size:26px;font-weight:700;color:white">${val}</div>
-        <div style="font-size:8px;color:rgba(255,255,255,0.55);text-transform:uppercase;letter-spacing:1px;margin-top:2px">${lbl}</div>
-      </div>`).join('')}
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:30px;position:relative;z-index:1">
+    <div style="font-size:66px;margin-bottom:18px;filter:drop-shadow(0 8px 16px rgba(0,0,0,0.5))">📋</div>
+    <div style="font-size:10px;letter-spacing:4px;text-transform:uppercase;color:rgba(255,255,255,0.38);margin-bottom:8px">Ежемесячный отчёт</div>
+    <h1 style="font-size:34px;font-weight:700;color:white;line-height:1.2;margin-bottom:8px">Отчёт об обслуживании<br>объекта</h1>
+    <div style="width:50px;height:3px;background:linear-gradient(90deg,#60a5fa,#a78bfa);border-radius:2px;margin:16px auto"></div>
+    <div style="font-size:30px;font-weight:700;color:#93c5fd">${moName} ${yr}</div>
+    <div style="display:flex;gap:10px;margin-top:30px;justify-content:center;flex-wrap:wrap">
+      ${[[totalDone,'Визитов'],[pct+'%','Выполнено'],[jRows.length,'Подрядчиков'],...(totalFiles?[[totalFiles,'Файлов']]:[])]
+        .map(([v,l])=>`<div style="background:rgba(255,255,255,0.09);border:1px solid rgba(255,255,255,0.18);border-radius:14px;padding:14px 20px;min-width:84px;text-align:center">
+          <div style="font-size:28px;font-weight:700;color:white">${v}</div>
+          <div style="font-size:8px;color:rgba(255,255,255,0.45);text-transform:uppercase;letter-spacing:1px;margin-top:3px">${l}</div>
+        </div>`).join('')}
     </div>
   </div>
-  <div style="padding:16px 32px;border-top:1px solid rgba(255,255,255,0.1);display:flex;justify-content:space-between;align-items:center;position:relative;z-index:1">
-    <div style="font-size:10px;color:rgba(255,255,255,0.35)">Сформирован: ${todayStr}</div>
-    <div style="font-size:10px;color:rgba(255,255,255,0.35)">Конфиденциально</div>
+  <div style="padding:14px 30px;border-top:1px solid rgba(255,255,255,0.1);display:flex;justify-content:space-between;position:relative;z-index:1">
+    <div style="font-size:10px;color:rgba(255,255,255,0.28)">Сформирован: ${todayStr}</div>
+    <div style="font-size:10px;color:rgba(255,255,255,0.28)">Конфиденциально</div>
   </div>
 </div>
-
-<!-- ═══════ SUMMARY ═══════ -->
+<!-- STATS -->
 <div class="page">
-  <div style="margin-bottom:20px">
-    <div style="font-size:9px;letter-spacing:3px;text-transform:uppercase;color:#94a3b8;margin-bottom:4px">Сводная информация</div>
-    <h2 style="font-size:22px;font-weight:700;color:#0f172a">${moName} ${yr} — Общая статистика</h2>
+  <div style="margin-bottom:22px">
+    <div style="font-size:9px;letter-spacing:3px;text-transform:uppercase;color:#94a3b8;margin-bottom:3px">Сводная информация</div>
+    <h2 style="font-size:24px;font-weight:700;color:#0f172a">${moName} ${yr} — Общая статистика</h2>
     <div style="height:3px;background:linear-gradient(90deg,#2563eb,transparent);border-radius:2px;margin-top:8px"></div>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
-    <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #bbf7d0;border-radius:14px;padding:16px 18px">
-      <div style="font-size:9px;color:#15803d;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px">Выполнено визитов</div>
-      <div style="font-size:42px;font-weight:700;color:#16a34a;line-height:1">${totalDone}</div>
-      <div style="font-size:11px;color:#15803d;margin-top:4px">из ${totalReq} запланированных</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px">
+    <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #bbf7d0;border-radius:16px;padding:20px">
+      <div style="font-size:9px;color:#15803d;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">Выполнено визитов</div>
+      <div style="font-size:52px;font-weight:700;color:#16a34a;line-height:1">${totalDone}</div>
+      <div style="font-size:12px;color:#15803d;margin-top:6px">из ${totalReq} запланированных</div>
     </div>
-    <div style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #bfdbfe;border-radius:14px;padding:16px 18px">
-      <div style="font-size:9px;color:#1d4ed8;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px">Выполнение плана</div>
-      <div style="font-size:42px;font-weight:700;color:#2563eb;line-height:1">${pct}%</div>
-      <div style="font-size:11px;color:#1d4ed8;margin-top:4px">${provsOk} из ${jRows.length} поставщиков ✓</div>
+    <div style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #bfdbfe;border-radius:16px;padding:20px">
+      <div style="font-size:9px;color:#1d4ed8;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">Выполнение плана</div>
+      <div style="font-size:52px;font-weight:700;color:#2563eb;line-height:1">${pct}%</div>
+      <div style="font-size:12px;color:#1d4ed8;margin-top:6px">${provsOk} из ${jRows.length} поставщиков ✓</div>
     </div>
-    <div style="background:linear-gradient(135deg,#fefce8,#fef9c3);border:1px solid #fde68a;border-radius:14px;padding:16px 18px">
-      <div style="font-size:9px;color:#92400e;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px">Работы по территории</div>
-      <div style="font-size:42px;font-weight:700;color:#d97706;line-height:1">${maintWorks.length}</div>
-      <div style="font-size:11px;color:#92400e;margin-top:4px">выполнено в ${moName}</div>
+    <div style="background:linear-gradient(135deg,#fefce8,#fef9c3);border:1px solid #fde68a;border-radius:16px;padding:20px">
+      <div style="font-size:9px;color:#92400e;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">Работы по территории</div>
+      <div style="font-size:52px;font-weight:700;color:#d97706;line-height:1">${maintWorks.length||'—'}</div>
+      <div style="font-size:12px;color:#92400e;margin-top:6px">${maintWorks.length?'выполнено в '+moName:'нет за '+moName}</div>
     </div>
-    <div style="background:linear-gradient(135deg,${provsIssue > 0 ? '#fff1f2,#fee2e2' : '#f5f3ff,#ede9fe'});border:1px solid ${provsIssue > 0 ? '#fecaca' : '#ddd6fe'};border-radius:14px;padding:16px 18px">
-      <div style="font-size:9px;color:${provsIssue > 0 ? '#b91c1c' : '#5b21b6'};font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px">${provsIssue > 0 ? 'Требует внимания' : 'Загружено файлов'}</div>
-      <div style="font-size:42px;font-weight:700;color:${provsIssue > 0 ? '#dc2626' : '#7c3aed'};line-height:1">${provsIssue > 0 ? provsIssue : totalFiles}</div>
-      <div style="font-size:11px;color:${provsIssue > 0 ? '#b91c1c' : '#5b21b6'};margin-top:4px">${provsIssue > 0 ? 'позиц' + (provsIssue === 1 ? 'ия' : 'ии') + ' не закрыт' + (provsIssue === 1 ? 'а' : 'ы') : 'фото и документов'}</div>
+    <div style="background:linear-gradient(135deg,${provsIssue>0?'#fff1f2,#fee2e2':'#f5f3ff,#ede9fe'});border:1px solid ${provsIssue>0?'#fecaca':'#ddd6fe'};border-radius:16px;padding:20px">
+      <div style="font-size:9px;color:${provsIssue>0?'#b91c1c':'#5b21b6'};font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">${provsIssue>0?'Требует внимания':'Загружено файлов'}</div>
+      <div style="font-size:52px;font-weight:700;color:${provsIssue>0?'#dc2626':'#7c3aed'};line-height:1">${provsIssue>0?provsIssue:totalFiles||'—'}</div>
+      <div style="font-size:12px;color:${provsIssue>0?'#b91c1c':'#5b21b6'};margin-top:6px">${provsIssue>0?'позиц'+(provsIssue===1?'ия':'ии')+' не закрыт'+(provsIssue===1?'а':'ы'):'фото и документов'}</div>
     </div>
   </div>
-  <div style="background:#f8fafc;border-radius:12px;padding:14px 16px;margin-bottom:18px">
-    <div style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;margin-bottom:7px">
-      <span style="font-weight:600">Прогресс выполнения за ${moName}</span>
-      <span style="font-weight:700;color:#1e293b">${totalDone} / ${totalReq}</span>
+  <div style="background:#f8fafc;border-radius:14px;padding:16px 20px">
+    <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:8px">
+      <span style="font-weight:600;color:#475569">Прогресс выполнения за ${moName}</span>
+      <span style="font-weight:700;color:#0f172a">${totalDone} / ${totalReq}</span>
     </div>
-    <div style="height:14px;background:#e2e8f0;border-radius:7px;overflow:hidden">
-      <div style="height:100%;width:${Math.min(pct,100)}%;background:linear-gradient(90deg,#22c55e,#16a34a);border-radius:7px"></div>
+    <div style="height:18px;background:#e2e8f0;border-radius:9px;overflow:hidden;box-shadow:inset 0 1px 3px rgba(0,0,0,0.08)">
+      <div style="height:100%;width:${Math.min(pct,100)}%;background:linear-gradient(90deg,#34d399,#16a34a);border-radius:9px"></div>
     </div>
-    <div style="font-size:9px;color:#94a3b8;margin-top:5px;text-align:right">${pct}% выполнено</div>
-  </div>
-  <div style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
-    <div style="background:#f8fafc;padding:9px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e2e8f0">
-      <span style="font-size:10px;font-weight:700;color:#374151;letter-spacing:0.5px">СВОДКА ПО ПОСТАВЩИКАМ</span>
-      <span style="font-size:10px;color:#94a3b8">${jRows.length} позиций</span>
-    </div>
-    ${jRows.map(({p, req, done}) => {
-      const cnt = done.length, ok = cnt >= req && req > 0;
-      return `<div style="display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid #f1f5f9">
-        <span style="font-size:16px;flex-shrink:0">${p.emoji}</span>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:11px;font-weight:600;color:#1e293b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div>
-          <div style="font-size:9px;color:#94a3b8">${p.cat}</div>
-        </div>
-        <div style="background:${ok ? '#dcfce7' : req > 0 ? '#fee2e2' : '#f1f5f9'};color:${ok ? '#16a34a' : req > 0 ? '#dc2626' : '#94a3b8'};font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px;flex-shrink:0">
-          ${cnt}${req > 0 ? '/'+req : ''} ${ok ? '✓' : req > 0 ? '✗' : ''}
-        </div>
-      </div>`;
-    }).join('')}
+    <div style="font-size:10px;color:#94a3b8;margin-top:6px;text-align:right">${pct}% выполнено</div>
   </div>
 </div>
-
-<!-- ═══════ JOURNAL DETAIL ═══════ -->
+${topImgs.length>0?`<!-- PHOTO HIGHLIGHTS -->
 <div class="page">
-  ${secHeader('📋', 'Журнал визитов', 'Подробный отчёт', '#2563eb')}
-  ${journalCards || '<div style="color:#94a3b8;font-size:12px;font-style:italic;text-align:center;padding:24px">Нет данных за этот месяц</div>'}
+  <div style="margin-bottom:18px">
+    <div style="font-size:9px;letter-spacing:3px;text-transform:uppercase;color:#94a3b8;margin-bottom:3px">${moName} ${yr}</div>
+    <h2 style="font-size:24px;font-weight:700;color:#0f172a">Месяц в фотографиях</h2>
+    <div style="height:3px;background:linear-gradient(90deg,#7c3aed,transparent);border-radius:2px;margin-top:8px"></div>
+  </div>
+  ${buildGrid(topImgs,gridCols)}
+</div>`:''}
+<!-- STATUS DASHBOARD -->
+<div class="page">
+  <div style="margin-bottom:18px">
+    <div style="font-size:9px;letter-spacing:3px;text-transform:uppercase;color:#94a3b8;margin-bottom:3px">Состояние систем</div>
+    <h2 style="font-size:24px;font-weight:700;color:#0f172a">${pct>=100?'Все системы под контролем ✓':'Статус обслуживания объекта'}</h2>
+    <div style="height:3px;background:linear-gradient(90deg,${pct>=100?'#16a34a':'#f59e0b'},transparent);border-radius:2px;margin-top:8px"></div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:8px">${statusCards}</div>
+  ${(maintWorks.length||sosEvts.length)?`<div style="margin-top:18px;display:grid;grid-template-columns:${maintWorks.length&&sosEvts.length?'1fr 1fr':'1fr'};gap:12px">
+    ${maintWorks.length?`<div style="background:linear-gradient(135deg,#fefce8,#fef9c3);border:1px solid #fde68a;border-radius:14px;padding:14px 18px;display:flex;align-items:center;gap:12px"><span style="font-size:30px">🏗️</span><div><div style="font-size:22px;font-weight:700;color:#d97706">${maintWorks.length}</div><div style="font-size:11px;color:#92400e">работ по территории</div></div></div>`:''}
+    ${sosEvts.length?`<div style="background:linear-gradient(135deg,#fff1f2,#fee2e2);border:1px solid #fecaca;border-radius:14px;padding:14px 18px;display:flex;align-items:center;gap:12px"><span style="font-size:30px">🚨</span><div><div style="font-size:22px;font-weight:700;color:#dc2626">${sosEvts.length}</div><div style="font-size:11px;color:#b91c1c">экстренных ситуаций</div></div></div>`:''}
+  </div>`:''}
 </div>
-
-${maintWorks.length ? `<!-- ═══════ MAINTENANCE ═══════ -->
+${maintPhotos.length>0||sosPhotos.length>0?`<!-- EXTRA WORK PHOTOS -->
 <div class="page">
-  ${secHeader('🏗️', 'Обслуживание территории', 'Выполненные работы', '#f59e0b')}
-  ${maintCards}
-</div>` : ''}
-
-${sosEvts.length ? `<!-- ═══════ SOS ═══════ -->
-<div class="page">
-  ${secHeader('🚨', 'Экстренное ТО', 'Аварийные и внеплановые работы', '#dc2626')}
-  ${sosCards}
-</div>` : ''}
-
-<!-- ═══════ CONCLUSION ═══════ -->
-<div class="page" style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;min-height:297mm">
-  <div style="max-width:420px">
-    <div style="font-size:60px;margin-bottom:18px">${conclusionIcon}</div>
-    <h2 style="font-size:24px;font-weight:700;color:#0f172a;margin-bottom:14px">Заключение</h2>
-    <p style="font-size:13px;color:#475569;line-height:1.85;margin-bottom:28px">${conclusionText}${sosNote}</p>
-    <div style="border-top:1px solid #e2e8f0;padding-top:20px;margin-top:8px;font-size:10px;color:#94a3b8;line-height:1.7">
+  <div style="margin-bottom:18px">
+    <div style="font-size:9px;letter-spacing:3px;text-transform:uppercase;color:#94a3b8;margin-bottom:3px">Дополнительные работы</div>
+    <h2 style="font-size:24px;font-weight:700;color:#0f172a">ТО территории и экстренные ситуации</h2>
+    <div style="height:3px;background:linear-gradient(90deg,#f59e0b,transparent);border-radius:2px;margin-top:8px"></div>
+  </div>
+  ${maintPhotos.length>0?`<div style="margin-bottom:18px"><div style="font-size:10px;font-weight:700;color:#92400e;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:10px">🏗️ Обслуживание территории</div>${buildGrid(maintPhotos,Math.min(maintPhotos.length,3))}</div>`:''}
+  ${sosPhotos.length>0?`<div><div style="font-size:10px;font-weight:700;color:#b91c1c;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:10px">🚨 Экстренное ТО</div>${buildGrid(sosPhotos,Math.min(sosPhotos.length,3))}</div>`:''}
+</div>`:''}
+<!-- CONCLUSION -->
+<div class="page" style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center">
+  <div style="max-width:400px">
+    <div style="font-size:64px;margin-bottom:16px">${conclusionIcon}</div>
+    <h2 style="font-size:26px;font-weight:700;color:#0f172a;margin-bottom:14px">Заключение</h2>
+    <p style="font-size:14px;color:#475569;line-height:1.8;margin-bottom:${sosNote?'10px':'24px'}">${conclusionText}</p>
+    ${sosNote?`<p style="font-size:13px;color:#64748b;line-height:1.7;margin-bottom:24px">${sosNote}</p>`:''}
+    <div style="padding-top:20px;border-top:1px solid #e2e8f0;font-size:10px;color:#94a3b8;line-height:1.8">
       Отчёт сформирован автоматически<br>
-      Дата: ${todayStr}<br>
-      Система управления услугами — Управление услугами
+      Дата: ${todayStr} · Управление услугами
     </div>
   </div>
 </div>
-
 <script>
 (function(){
-  var imgs = document.querySelectorAll('img');
-  var total = imgs.length, loaded = 0;
-  var status = document.getElementById('img-status');
-  var btn = document.getElementById('print-btn');
-  function tick(){
-    loaded++;
-    if(status) status.textContent = loaded + ' / ' + total + ' фото загружено';
-    if(loaded >= total){
-      if(status) status.textContent = '✅ Готово к печати';
-      if(btn){ btn.disabled=false; btn.style.opacity='1'; btn.style.cursor='pointer'; }
-    }
-  }
-  if(!total){
-    if(status) status.textContent = '✅ Готово к печати';
-    if(btn){ btn.disabled=false; btn.style.opacity='1'; btn.style.cursor='pointer'; }
-    return;
-  }
-  imgs.forEach(function(img){
-    if(img.complete) tick();
-    else { img.addEventListener('load',tick); img.addEventListener('error',tick); }
-  });
+  var imgs=document.querySelectorAll('img'),n=imgs.length,k=0;
+  var s=document.getElementById('ims'),b=document.getElementById('pbtn');
+  function t(){if(++k>=n||!n){if(s)s.textContent='✅ Готово к печати';if(b){b.disabled=false;b.style.opacity='1';b.style.cursor='pointer';}}}
+  if(!n){t();return;}
+  imgs.forEach(function(i){if(i.complete)t();else{i.addEventListener('load',t);i.addEventListener('error',t);}});
 })();
 <\/script>
-</body>
-</html>`;
+</body></html>`;
 
   const win = window.open('', '_blank');
   if (!win) { _showToast('❌ Разрешите всплывающие окна в браузере', false); return; }
