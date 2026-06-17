@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-17e';
+const APP_VERSION = 'v2026-06-17f';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3229,10 +3229,11 @@ body{font-family:'PT Sans',Arial,sans-serif;background:#3a3a3a;-webkit-print-col
     <div style="padding:52px 0 48px">
       <div style="font-size:9px;letter-spacing:5px;text-transform:uppercase;color:#c8d600;margin-bottom:18px;font-weight:700">Ежемесячный отчёт</div>
       <h1 style="font-size:54px;font-weight:700;color:white;line-height:1.1;margin-bottom:24px">Отчёт об<br>обслуживании<br>объекта</h1>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:48px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:22px">
         <div style="width:52px;height:4px;background:#c8d600"></div>
         <div style="width:16px;height:4px;background:rgba(255,255,255,0.15)"></div>
       </div>
+      <div style="font-size:42px;font-weight:700;color:#c8d600;letter-spacing:2px;line-height:1;margin-bottom:32px">${moName} ${yr}</div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:2px;max-width:520px">
         <div style="background:#222;border-top:4px solid #c8d600;padding:18px 14px;text-align:center">
           <div style="font-size:34px;font-weight:700;color:white;line-height:1">${totalDone}</div>
