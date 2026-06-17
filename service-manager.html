@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-17f';
+const APP_VERSION = 'v2026-06-17g';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -2963,8 +2963,8 @@ function generateReport() {
     const req = sched ? (sched.visits||1) : 0;
     const visits = r.visits ? [...r.visits] : (r.completed !== undefined ? [{...r}] : []);
     const done = visits.filter(v => v.completed);
-    if (!sched && !done.length) return;
-    jRows.push({p, sched, req, done});
+    if (!sched && !done.length && !visits.some(v => (v.fileIds||[]).length)) return;
+    jRows.push({p, sched, req, done, visits});
   });
   const totalReq  = jRows.reduce((s,r) => s + r.req, 0);
   const totalDone = jRows.reduce((s,r) => s + r.done.length, 0);
@@ -2984,10 +2984,10 @@ function generateReport() {
   maintWorks.forEach(w => totalFiles += (w.fileIds||[]).length);
   sosEvts.forEach(s => totalFiles += (s.fileIds||[]).length);
 
-  // ── ALL MONTH PHOTOS (scored, diverse) ──
+  // ── ALL MONTH PHOTOS (scored, diverse — includes partial visits) ──
   const allMonthImgs = [];
-  jRows.forEach(({p, done}) => {
-    done.forEach(v => {
+  jRows.forEach(({p, visits}) => {
+    (visits||[]).forEach(v => {
       _scoredImages(v.fileIds, v.fileTypes, v.fileNames, fc, 99).forEach(img => {
         allMonthImgs.push({...img, label: p.name, emoji: p.emoji, color: p.color});
       });
@@ -3006,12 +3006,15 @@ function generateReport() {
   allMonthImgs.sort((a,b) => (b.score||0) - (a.score||0));
   const topImgs = [], labelCnt = {};
   for (const img of allMonthImgs) {
-    if (topImgs.length >= 9) break;
+    if (topImgs.length >= 60) break;
     const c = labelCnt[img.label] || 0;
-    if (c >= 2) continue;
+    if (c >= 3) continue;
     labelCnt[img.label] = c + 1;
     topImgs.push(img);
   }
+  const GALLERY_PER_PAGE = 6;
+  const galleryChunks = [];
+  for (let _gi = 0; _gi < topImgs.length; _gi += GALLERY_PER_PAGE) galleryChunks.push(topImgs.slice(_gi, _gi+GALLERY_PER_PAGE));
 
   // ── STATUS CARDS (provider status grid — dark pcard design) ──
   const statusCards = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px">${
@@ -3325,15 +3328,13 @@ body{font-family:'PT Sans',Arial,sans-serif;background:#3a3a3a;-webkit-print-col
   </div>
 </div>
 
-${topImgs.length>0?`<!-- ══ 3. PHOTOS ══ -->
+${galleryChunks.map((chunk, ci) => `<!-- ══ GALLERY PAGE ══ -->
 <div class="page">
-  <div class="band"><span class="band-num">02</span><span class="band-vl"></span><span class="band-title">Фотографии</span><span class="band-sub">${moName} ${yr}</span></div>
+  <div class="band"><span class="band-num">02</span><span class="band-vl"></span><span class="band-title">Фотографии${galleryChunks.length>1?' · '+(ci+1)+'/'+galleryChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
-  <div style="padding:28px 52px 18px;flex-shrink:0">
-    <div style="font-size:26px;font-weight:700;color:#1a1a1a">Месяц в фотографиях</div>
-  </div>
-  <div style="flex:1;overflow:hidden">${buildGrid(topImgs, gridCols)}</div>
-</div>`:''}
+  ${ci===0?`<div style="padding:20px 52px 14px;flex-shrink:0"><div style="font-size:26px;font-weight:700;color:#1a1a1a">Месяц в фотографиях</div></div>`:''}
+  <div style="flex:1;overflow:hidden">${buildGrid(chunk, 3)}</div>
+</div>`).join('')}
 
 <!-- ══ 4. VISIT SUMMARIES ══ -->
 <div class="page">
