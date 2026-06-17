@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-17c';
+const APP_VERSION = 'v2026-06-17d';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3013,33 +3013,29 @@ function generateReport() {
     topImgs.push(img);
   }
 
-  // ── STATUS CARDS (provider + best photo) ──
-  const statusCards = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">${
+  // ── STATUS CARDS (provider status grid — dark pcard design) ──
+  const statusCards = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px">${
     jRows.map(({p, req, done}) => {
       const ok = done.length >= req && req > 0;
-      const best = _bestProvImg(done, fc);
-      const sc = ok ? '#16a34a' : req > 0 ? '#dc2626' : '#94a3b8';
-      const stLabel = ok ? 'ВЫПОЛНЕНО' : req > 0 ? 'НЕ ВЫПОЛНЕНО' : '—';
-      return `<div style="border-radius:14px;overflow:hidden;background:white;box-shadow:0 4px 20px rgba(0,0,0,0.09)">
-        ${best
-          ? `<div style="height:120px;position:relative;overflow:hidden">
-               <img src="${best.url}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:top center;display:block">
-               <div style="position:absolute;inset:0;background:linear-gradient(to bottom,transparent 20%,rgba(0,0,0,0.78))"></div>
-               <div style="position:absolute;bottom:0;left:0;right:0;padding:10px 13px">
-                 <div style="font-size:13px;font-weight:700;color:white;line-height:1.2">${p.name}</div>
-                 <div style="font-size:9px;color:rgba(255,255,255,0.6);margin-top:2px">${p.cat}</div>
-               </div>
-             </div>`
-          : `<div style="height:80px;background:linear-gradient(135deg,${p.bg||'#f8fafc'},${p.color}22);display:flex;align-items:center;padding:14px;gap:12px">
-               <span style="font-size:36px">${p.emoji}</span>
-               <div>
-                 <div style="font-size:13px;font-weight:700;color:#0f172a">${p.name}</div>
-                 <div style="font-size:9px;color:#94a3b8;margin-top:2px">${p.cat}</div>
-               </div>
-             </div>`}
-        <div style="padding:9px 13px;display:flex;align-items:center;justify-content:space-between;border-top:3px solid ${p.color}">
-          <span style="font-size:11px;font-weight:700;color:#475569">${done.length}${req>0?' / '+req:''}</span>
-          <span style="background:${sc};color:white;font-size:8px;font-weight:800;padding:3px 9px;border-radius:10px;letter-spacing:0.5px">${stLabel}</span>
+      const isIssue = req > 0 && !ok;
+      const badgeBg = ok ? '#c8d600' : isIssue ? '#dc2626' : '#64748b';
+      const badgeColor = ok ? '#1a1a1a' : 'white';
+      const badgeText = ok ? `✓ ${done.length}/${req}` : isIssue ? `✗ ${done.length}/${req}` : '—';
+      const cardBg = isIssue ? '#1e1010' : '#232323';
+      const cardBorder = isIssue ? 'border:1px solid #dc2626;' : 'border:1px solid #2e2e2e;';
+      const stripeColor = isIssue ? '#dc2626' : '#c8d600';
+      const emojiBg = isIssue ? '#1a0f0f' : '#1e1e1e';
+      return `<div style="background:${cardBg};${cardBorder}display:flex;flex-direction:column">
+        <div style="display:flex;align-items:center;justify-content:center;font-size:50px;height:110px;position:relative;overflow:hidden;background:${emojiBg}">
+          ${p.emoji}
+          <div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:${stripeColor}"></div>
+        </div>
+        <div style="padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="min-width:0">
+            <div style="font-size:12px;font-weight:700;color:white;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div>
+            <div style="font-size:9px;color:rgba(255,255,255,0.35);margin-top:2px">${p.cat}</div>
+          </div>
+          <span style="background:${badgeBg};color:${badgeColor};font-size:8px;font-weight:800;padding:4px 10px;letter-spacing:.5px;white-space:nowrap;flex-shrink:0">${badgeText}</span>
         </div>
       </div>`;
     }).join('')
@@ -3050,31 +3046,31 @@ function generateReport() {
   maintWorks.forEach(w => { _scoredImages(w.fileIds, w.fileTypes, w.fileNames, fc, 2).forEach(img => { if (maintPhotos.length < 6) maintPhotos.push({...img, label:(w.title||'').slice(0,30), emoji:'🏗️'}); }); });
   sosEvts.forEach(s => { _scoredImages(s.fileIds, s.fileTypes, s.fileNames, fc, 2).forEach(img => { if (sosPhotos.length < 6) sosPhotos.push({...img, label:(s.title||'').slice(0,30), emoji:'🚨'}); }); });
 
-  // ── GRID BUILDER — editorial layout, object-position:top to avoid head cropping ──
+  // ── GRID BUILDER — full-bleed editorial layout ──
   const buildGrid = (imgs, cols) => {
     if (!imgs.length) return '';
-    const cell = (img, style) => `<div style="position:relative;overflow:hidden;background:#1e293b;border-radius:10px;box-shadow:0 3px 12px rgba(0,0,0,0.18);${style}">
+    const cell = (img, style) => `<div style="position:relative;overflow:hidden;background:#1e1e1e;${style}">
       <img src="${img.url}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:top center;display:block">
-      <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,0.75));padding:8px 11px">
+      <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,0.82));padding:10px 13px">
         <div style="font-size:9px;color:rgba(255,255,255,0.92);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${img.emoji||''} ${img.label||''}</div>
       </div>
     </div>`;
     if (imgs.length >= 3) {
       const [hero, b, ...rest] = imgs;
-      return `<div style="display:flex;flex-direction:column;gap:6px">
-        <div style="display:grid;grid-template-columns:3fr 2fr;gap:6px;height:210px">
-          ${cell(hero,'height:210px')}
-          <div style="display:flex;flex-direction:column;gap:6px;height:210px">
-            ${cell(b,'height:100px')}
-            ${rest[0] ? cell(rest[0],'height:100px') : `<div style="height:100px;background:#f1f5f9;border-radius:10px"></div>`}
+      return `<div style="display:flex;flex-direction:column;gap:3px">
+        <div style="display:grid;grid-template-columns:3fr 2fr;gap:3px;height:310px">
+          ${cell(hero,'height:310px')}
+          <div style="display:flex;flex-direction:column;gap:3px;height:310px">
+            ${cell(b,'height:153px')}
+            ${rest[0] ? cell(rest[0],'height:153px') : `<div style="height:153px;background:#1e1e1e"></div>`}
           </div>
         </div>
-        ${rest.slice(1).length ? `<div style="display:grid;grid-template-columns:repeat(${Math.min(rest.slice(1).length,3)},1fr);gap:6px">
+        ${rest.slice(1).length ? `<div style="display:grid;grid-template-columns:repeat(${Math.min(rest.slice(1).length,3)},1fr);gap:3px">
           ${rest.slice(1,4).map(img => cell(img,'aspect-ratio:4/3')).join('')}
         </div>` : ''}
       </div>`;
     }
-    return `<div style="display:grid;grid-template-columns:repeat(${Math.min(imgs.length,cols)},1fr);gap:6px">
+    return `<div style="display:grid;grid-template-columns:repeat(${Math.min(imgs.length,cols)},1fr);gap:3px">
       ${imgs.map(img => cell(img,'aspect-ratio:4/3')).join('')}
     </div>`;
   };
@@ -3091,9 +3087,43 @@ function generateReport() {
   const conclusionIcon = pct>=100?'✅':pct>=75?'✔️':'⚠️';
   const gridCols = topImgs.length <= 4 ? 2 : 3;
 
-  // secHeader removed — new design uses inline section headers
+  // ── VISIT SUMMARIES (built from provider notes) ──
+  const visitSummaryCards = jRows.map(({p, req, done}) => {
+    const ok = done.length >= req && req > 0;
+    const isIssue = req > 0 && !ok;
+    const accentColor = ok ? '#16a34a' : isIssue ? '#dc2626' : '#c8d600';
+    const allNotes = done.map(v => v.notes||'').filter(Boolean);
+    const summaryText = allNotes.length > 0
+      ? allNotes[allNotes.length-1].slice(0, 220)
+      : ok ? 'Плановые работы выполнены в полном объёме.'
+      : isIssue ? 'Плановые работы не выполнены в этом месяце. Требуется связаться с подрядчиком.'
+      : '';
+    const visitDatesStr = done.map(v => (v.completedDate||v.date||'').slice(5).replace('-','.')).filter(Boolean).slice(0,4).join(', ');
+    const countLine = req > 0 ? `${done.length} из ${req} визитов` + (visitDatesStr ? ' · ' + visitDatesStr : '') : `${done.length} визитов`;
+    const badge = ok
+      ? `<span style="background:#1a1a1a;color:#c8d600;font-size:8px;font-weight:800;padding:4px 10px;letter-spacing:.5px;white-space:nowrap;flex-shrink:0">✓ ВЫПОЛНЕНО</span>`
+      : isIssue
+      ? `<span style="background:#dc2626;color:white;font-size:8px;font-weight:800;padding:4px 10px;letter-spacing:.5px;white-space:nowrap;flex-shrink:0">✗ НЕ ВЫПОЛНЕНО</span>`
+      : `<span style="background:#64748b;color:white;font-size:8px;font-weight:800;padding:4px 10px;letter-spacing:.5px;white-space:nowrap;flex-shrink:0">—</span>`;
+    return `<div style="display:grid;grid-template-columns:5px 1fr;margin-bottom:3px;${isIssue?'background:#fff5f5;border:1px solid #fecaca':'background:#f8f9fa'}">
+      <div style="background:${accentColor}"></div>
+      <div style="padding:16px 20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0">
+            <span style="font-size:18px;flex-shrink:0">${p.emoji}</span>
+            <div style="min-width:0">
+              <div style="font-size:12px;font-weight:700;color:#1a1a1a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}${p.cat?' — '+p.cat:''}</div>
+              <div style="font-size:9px;color:#94a3b8;margin-top:1px">${countLine}</div>
+            </div>
+          </div>
+          ${badge}
+        </div>
+        ${summaryText?`<div style="font-size:12px;color:${isIssue?'#dc2626':'#374151'};line-height:1.65;border-left:2px solid ${isIssue?'#fca5a5':'#e2e8f0'};padding-left:12px${isIssue?';font-style:italic':''}">${summaryText}</div>`:''}
+      </div>
+    </div>`;
+  }).join('');
 
-  // ── NEW VISUAL HTML ──
+  // ── NEW VISUAL HTML (construction aesthetic — dark charcoal + yellow-lime) ──
   const html = `<!DOCTYPE html>
 <html lang="ru"><head>
 <meta charset="UTF-8">
@@ -3101,141 +3131,194 @@ function generateReport() {
 <link href="https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'PT Sans',Arial,sans-serif;background:#94a3b8;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.page{width:210mm;min-height:297mm;margin:0 auto 20px;background:white;box-shadow:0 10px 50px rgba(0,0,0,0.22);overflow:hidden;position:relative}
-.pad{padding:18mm}
-.dark{background:linear-gradient(145deg,#0f172a 0%,#1a2e6b 60%,#1e40af 100%);color:white;min-height:297mm;display:flex;flex-direction:column}
-.tag{font-size:8px;letter-spacing:3.5px;text-transform:uppercase;font-weight:700;opacity:.55;margin-bottom:6px}
-.sec-title{font-size:26px;font-weight:700;line-height:1.15}
-.rule{height:3px;border-radius:2px;margin-top:10px;margin-bottom:22px}
+body{font-family:'PT Sans',Arial,sans-serif;background:#3a3a3a;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.page{width:794px;min-height:1123px;margin:0 auto 24px;background:white;box-shadow:0 16px 60px rgba(0,0,0,0.45);position:relative;overflow:hidden;display:flex;flex-direction:column}
+.dark{background:#1a1a1a;color:white}
+.hatch{background:repeating-linear-gradient(45deg,transparent,transparent 18px,rgba(200,214,0,0.06) 18px,rgba(200,214,0,0.06) 20px)}
+.band{background:#1a1a1a;padding:0 52px;height:56px;display:flex;align-items:center;gap:16px;flex-shrink:0}
+.band-num{font-size:32px;font-weight:700;color:#c8d600;line-height:1}
+.band-vl{width:2px;height:28px;background:rgba(255,255,255,0.15);flex-shrink:0}
+.band-title{font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:white}
+.band-sub{margin-left:auto;font-size:10px;color:rgba(255,255,255,0.3);letter-spacing:1px}
+.scard{padding:26px 28px;position:relative;overflow:hidden;flex:1}
+.scard-acc{position:absolute;left:0;top:0;bottom:0;width:5px}
+.scard-ico{position:absolute;right:14px;top:12px;font-size:56px;opacity:.07}
+.scard-lbl{font-size:8px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;margin-bottom:10px}
+.scard-val{font-size:72px;font-weight:700;line-height:1}
+.scard-sub{font-size:12px;margin-top:8px;opacity:.7}
 @media print{body{background:white}.np{display:none!important}.page{margin:0;box-shadow:none;page-break-after:always}@page{size:A4 portrait;margin:0}}
 </style></head><body>
 
 <!-- TOP BAR -->
-<div class="np" style="position:fixed;top:0;left:0;right:0;z-index:999;background:#0f172a;display:flex;align-items:center;justify-content:space-between;padding:10px 22px">
+<div class="np" style="position:fixed;top:0;left:0;right:0;z-index:999;background:#1a1a1a;display:flex;align-items:center;justify-content:space-between;padding:10px 22px">
   <div style="display:flex;align-items:center;gap:14px">
     <span style="font-size:14px;font-weight:700;color:white">📋 ${moName} ${yr}</span>
-    <span id="ims" style="font-size:11px;color:#475569">Загрузка фото…</span>
+    <span id="ims" style="font-size:11px;color:#94a3b8">Загрузка фото…</span>
   </div>
-  <button id="pbtn" onclick="window.print()" disabled style="background:#3b82f6;color:white;border:none;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:not-allowed;opacity:0.4;transition:.3s;font-family:inherit">🖨️ Сохранить PDF</button>
+  <button id="pbtn" onclick="window.print()" disabled style="background:#c8d600;color:#1a1a1a;border:none;padding:8px 20px;font-size:13px;font-weight:800;cursor:not-allowed;opacity:0.4;transition:.3s;font-family:inherit;letter-spacing:.5px">🖨️ СОХРАНИТЬ PDF</button>
 </div>
 <div class="np" style="height:44px"></div>
 
 <!-- ══ 1. COVER ══ -->
 <div class="page dark">
-  <div style="position:absolute;width:520px;height:520px;border:1px solid rgba(255,255,255,0.06);border-radius:50%;top:-180px;right:-120px"></div>
-  <div style="position:absolute;width:320px;height:320px;border:1px solid rgba(255,255,255,0.06);border-radius:50%;bottom:-80px;left:-60px"></div>
-  <div style="position:absolute;width:200px;height:200px;background:rgba(59,130,246,0.12);border-radius:50%;top:40%;left:30%"></div>
-  <div class="pad" style="flex:1;display:flex;flex-direction:column;position:relative;z-index:1">
-    <div style="display:flex;align-items:center;gap:10px;padding-bottom:20px;border-bottom:1px solid rgba(255,255,255,0.1);margin-bottom:auto">
+  <div class="hatch" style="position:absolute;inset:0;pointer-events:none"></div>
+  <div style="position:absolute;top:-60px;right:160px;width:4px;height:180%;background:#c8d600;opacity:.22;transform:rotate(25deg);transform-origin:top center;pointer-events:none"></div>
+  <div style="position:absolute;top:-60px;right:192px;width:2px;height:180%;background:#c8d600;opacity:.1;transform:rotate(25deg);transform-origin:top center;pointer-events:none"></div>
+  <div style="position:absolute;top:-60px;right:128px;width:1px;height:180%;background:#c8d600;opacity:.08;transform:rotate(25deg);transform-origin:top center;pointer-events:none"></div>
+  <div style="position:absolute;top:0;right:0;width:0;height:0;border-style:solid;border-width:0 240px 240px 0;border-color:transparent #c8d600 transparent transparent;opacity:.12;pointer-events:none"></div>
+  <div style="position:absolute;bottom:0;left:0;width:0;height:0;border-style:solid;border-width:160px 0 0 160px;border-color:transparent transparent transparent #c8d600;opacity:.1;pointer-events:none"></div>
+  <div style="position:absolute;left:52px;top:90px;bottom:90px;width:2px;background:#c8d600;opacity:.35;pointer-events:none"></div>
+  <div style="flex:1;display:flex;flex-direction:column;padding:52px 52px 52px 74px;position:relative;z-index:1">
+    <div style="display:flex;align-items:center;gap:14px;padding-bottom:24px;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:auto">
       <span style="font-size:20px">🏗️</span>
       <div>
-        <div style="color:white;font-weight:700;font-size:13px">Управление услугами</div>
-        <div style="color:rgba(255,255,255,0.35);font-size:8px;letter-spacing:2.5px;text-transform:uppercase;margin-top:2px">Система мониторинга объекта</div>
+        <div style="color:white;font-weight:700;font-size:13px;letter-spacing:.5px">Управление услугами</div>
+        <div style="color:rgba(255,255,255,0.28);font-size:8px;letter-spacing:3px;text-transform:uppercase;margin-top:3px">Система мониторинга объекта</div>
       </div>
+      <div style="margin-left:auto;font-size:9px;color:rgba(255,255,255,0.2);letter-spacing:2px;text-transform:uppercase">${moName} ${yr}</div>
     </div>
-    <div style="margin:auto 0;padding:20px 0">
-      <div style="font-size:9px;letter-spacing:4px;text-transform:uppercase;color:rgba(255,255,255,0.38);margin-bottom:14px">Ежемесячный отчёт</div>
-      <h1 style="font-size:42px;font-weight:700;color:white;line-height:1.15;margin-bottom:16px">Отчёт об<br>обслуживании<br>объекта</h1>
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:28px">
-        <div style="width:44px;height:3px;background:#3b82f6;border-radius:2px"></div>
-        <div style="width:12px;height:3px;background:#a78bfa;border-radius:2px"></div>
-        <div style="font-size:22px;font-weight:700;color:#93c5fd">${moName} ${yr}</div>
+    <div style="padding:52px 0 48px">
+      <div style="font-size:9px;letter-spacing:5px;text-transform:uppercase;color:#c8d600;margin-bottom:18px;font-weight:700">Ежемесячный отчёт</div>
+      <h1 style="font-size:54px;font-weight:700;color:white;line-height:1.1;margin-bottom:24px">Отчёт об<br>обслуживании<br>объекта</h1>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:48px">
+        <div style="width:52px;height:4px;background:#c8d600"></div>
+        <div style="width:16px;height:4px;background:rgba(255,255,255,0.15)"></div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;max-width:440px">
-        ${[[totalDone,'Визитов',pct>=100?'#22c55e':'#3b82f6'],[pct+'%','Выполнено',pct>=100?'#22c55e':pct>=75?'#f59e0b':'#ef4444'],[jRows.length,'Подрядчиков','#a78bfa'],[(totalFiles||maintWorks.length||sosEvts.length||(jRows.length)),'Файлов','#67e8f9']]
-          .map(([v,l,c])=>`<div style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:14px 10px;text-align:center">
-            <div style="font-size:26px;font-weight:700;color:${c};line-height:1">${v}</div>
-            <div style="font-size:8px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:1px;margin-top:4px">${l}</div>
-          </div>`).join('')}
-      </div>
-    </div>
-    <div style="padding-top:16px;border-top:1px solid rgba(255,255,255,0.1);display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,0.28)">
-      <span>Сформирован: ${todayStr}</span>
-      <span>Конфиденциально</span>
-    </div>
-  </div>
-</div>
-
-<!-- ══ 2. STATS ══ -->
-<div class="page">
-  <div class="pad">
-    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px">
-      <span style="font-size:8px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#3b82f6">01</span>
-      <span style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:#94a3b8">Статистика</span>
-    </div>
-    <div class="sec-title" style="color:#0f172a">${moName} ${yr} — Итоги месяца</div>
-    <div class="rule" style="background:linear-gradient(90deg,#3b82f6,#a78bfa,transparent)"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">
-      <div style="background:linear-gradient(145deg,#f0fdf4,#dcfce7);border-radius:18px;padding:22px;position:relative;overflow:hidden">
-        <div style="position:absolute;right:-10px;top:-10px;font-size:60px;opacity:.12">✅</div>
-        <div style="font-size:8px;color:#15803d;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">Выполнено визитов</div>
-        <div style="font-size:60px;font-weight:700;color:#16a34a;line-height:1">${totalDone}</div>
-        <div style="font-size:12px;color:#15803d;margin-top:8px">из ${totalReq} запланированных</div>
-      </div>
-      <div style="background:linear-gradient(145deg,#eff6ff,#dbeafe);border-radius:18px;padding:22px;position:relative;overflow:hidden">
-        <div style="position:absolute;right:-10px;top:-10px;font-size:60px;opacity:.1">📊</div>
-        <div style="font-size:8px;color:#1d4ed8;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">Выполнение плана</div>
-        <div style="font-size:60px;font-weight:700;color:#2563eb;line-height:1">${pct}%</div>
-        <div style="font-size:12px;color:#1d4ed8;margin-top:8px">${provsOk} из ${jRows.length} поставщиков</div>
-      </div>
-      <div style="background:linear-gradient(145deg,#fefce8,#fef9c3);border-radius:18px;padding:22px;position:relative;overflow:hidden">
-        <div style="position:absolute;right:-10px;top:-10px;font-size:60px;opacity:.1">🏗️</div>
-        <div style="font-size:8px;color:#92400e;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">Работы по территории</div>
-        <div style="font-size:60px;font-weight:700;color:#d97706;line-height:1">${maintWorks.length||'0'}</div>
-        <div style="font-size:12px;color:#92400e;margin-top:8px">${maintWorks.length?'выполнено в '+moName:'нет за '+moName}</div>
-      </div>
-      <div style="background:linear-gradient(145deg,${provsIssue>0?'#fff1f2,#fee2e2':'#f5f3ff,#ede9fe'});border-radius:18px;padding:22px;position:relative;overflow:hidden">
-        <div style="position:absolute;right:-10px;top:-10px;font-size:60px;opacity:.1">${provsIssue>0?'⚠️':'📎'}</div>
-        <div style="font-size:8px;color:${provsIssue>0?'#b91c1c':'#5b21b6'};font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">${provsIssue>0?'Требует внимания':'Файлов загружено'}</div>
-        <div style="font-size:60px;font-weight:700;color:${provsIssue>0?'#dc2626':'#7c3aed'};line-height:1">${provsIssue>0?provsIssue:totalFiles||'0'}</div>
-        <div style="font-size:12px;color:${provsIssue>0?'#b91c1c':'#5b21b6'};margin-top:8px">${provsIssue>0?'позиц'+(provsIssue===1?'ия':'ии')+' не закрыт'+(provsIssue===1?'а':'ы'):'фото и документов'}</div>
-      </div>
-    </div>
-    <div style="background:#f8fafc;border-radius:14px;padding:16px 20px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <span style="font-size:11px;font-weight:700;color:#374151">Общий прогресс за ${moName}</span>
-        <span style="font-size:20px;font-weight:700;color:#0f172a">${pct}%</span>
-      </div>
-      <div style="height:20px;background:#e2e8f0;border-radius:10px;overflow:hidden">
-        <div style="height:100%;width:${Math.min(pct,100)}%;background:linear-gradient(90deg,${pct>=100?'#22c55e,#16a34a':pct>=75?'#34d399,#22c55e':'#f59e0b,#d97706'});border-radius:10px;position:relative">
-          ${pct>15?`<div style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:9px;font-weight:700;color:white">${totalDone}/${totalReq}</div>`:''}
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:2px;max-width:520px">
+        <div style="background:#222;border-top:4px solid #c8d600;padding:18px 14px;text-align:center">
+          <div style="font-size:34px;font-weight:700;color:white;line-height:1">${totalDone}</div>
+          <div style="font-size:8px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:1.5px;margin-top:6px">Визитов</div>
+        </div>
+        <div style="background:#222;border-top:4px solid #c8d600;padding:18px 14px;text-align:center">
+          <div style="font-size:34px;font-weight:700;color:#c8d600;line-height:1">${pct}%</div>
+          <div style="font-size:8px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:1.5px;margin-top:6px">Выполнено</div>
+        </div>
+        <div style="background:#222;border-top:4px solid #333;padding:18px 14px;text-align:center">
+          <div style="font-size:34px;font-weight:700;color:white;line-height:1">${jRows.length}</div>
+          <div style="font-size:8px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:1.5px;margin-top:6px">Подрядчиков</div>
+        </div>
+        <div style="background:#222;border-top:4px solid #333;padding:18px 14px;text-align:center">
+          <div style="font-size:34px;font-weight:700;color:white;line-height:1">${totalFiles}</div>
+          <div style="font-size:8px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:1.5px;margin-top:6px">Файлов</div>
         </div>
       </div>
     </div>
+    <div style="padding-top:20px;border-top:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;font-size:9px;color:rgba(255,255,255,0.18);letter-spacing:1.5px;text-transform:uppercase">
+      <span>Сформирован: ${todayStr}</span><span>Конфиденциально</span>
+    </div>
   </div>
 </div>
 
-${topImgs.length>0?`<!-- ══ 3. PHOTO GALLERY ══ -->
+<!-- ══ 2. STATISTICS ══ -->
 <div class="page">
-  <div class="pad">
-    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px">
-      <span style="font-size:8px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#7c3aed">02</span>
-      <span style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:#94a3b8">Фотогалерея</span>
+  <div class="band"><span class="band-num">01</span><span class="band-vl"></span><span class="band-title">Статистика</span><span class="band-sub">${moName} ${yr}</span></div>
+  <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
+  <div style="flex:1;display:flex;flex-direction:column;padding:36px 52px 44px">
+    <div style="margin-bottom:28px">
+      <div style="font-size:32px;font-weight:700;color:#1a1a1a">Итоги месяца</div>
+      <div style="font-size:13px;color:#94a3b8;margin-top:5px">Сводный отчёт по всем поставщикам и работам</div>
     </div>
-    <div class="sec-title" style="color:#0f172a">Месяц в фотографиях</div>
-    <div class="rule" style="background:linear-gradient(90deg,#7c3aed,#ec4899,transparent)"></div>
-    ${buildGrid(topImgs,gridCols)}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:3px">
+      <div class="scard" style="background:#f8f9fa">
+        <div class="scard-acc" style="background:#16a34a"></div>
+        <div class="scard-ico">✅</div>
+        <div class="scard-lbl" style="color:#64748b">Выполнено визитов</div>
+        <div class="scard-val" style="color:#1a1a1a">${totalDone}</div>
+        <div class="scard-sub" style="color:#64748b">из ${totalReq} запланированных</div>
+      </div>
+      <div class="scard" style="background:#1a1a1a">
+        <div class="scard-acc" style="background:#c8d600"></div>
+        <div class="scard-ico" style="opacity:.15">📊</div>
+        <div class="scard-lbl" style="color:rgba(255,255,255,0.4)">Выполнение плана</div>
+        <div class="scard-val" style="color:#c8d600">${pct}%</div>
+        <div class="scard-sub" style="color:rgba(255,255,255,0.4)">${provsOk} из ${jRows.length} поставщиков ✓</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:28px">
+      <div class="scard" style="background:#f8f9fa">
+        <div class="scard-acc" style="background:#d97706"></div>
+        <div class="scard-ico">🏗️</div>
+        <div class="scard-lbl" style="color:#64748b">Работы по территории</div>
+        <div class="scard-val" style="color:#1a1a1a">${maintWorks.length||0}</div>
+        <div class="scard-sub" style="color:#64748b">${maintWorks.length?'выполнено в '+moName:'нет в '+moName}</div>
+      </div>
+      <div class="scard" style="background:#f8f9fa">
+        <div class="scard-acc" style="background:${provsIssue>0?'#dc2626':'#16a34a'}"></div>
+        <div class="scard-ico">${provsIssue>0?'⚠️':'📎'}</div>
+        <div class="scard-lbl" style="color:#64748b">${provsIssue>0?'Требует внимания':'Файлов загружено'}</div>
+        <div class="scard-val" style="color:#1a1a1a">${provsIssue>0?provsIssue:totalFiles||0}</div>
+        <div class="scard-sub" style="color:#64748b">${provsIssue>0?'позиц'+(provsIssue===1?'ия':'ии')+' не закрыт'+(provsIssue===1?'а':'ы'):'фото и документов'}</div>
+      </div>
+    </div>
+    <div style="border:1px solid #e8e8e8;padding:22px 24px;margin-bottom:24px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
+        <span style="font-size:10px;font-weight:700;color:#1a1a1a;letter-spacing:2px;text-transform:uppercase">Общий прогресс</span>
+        <span style="font-size:26px;font-weight:700;color:#1a1a1a">${totalDone} / ${totalReq}</span>
+      </div>
+      <div style="background:#e8e8e8;height:22px;position:relative">
+        <div style="position:absolute;left:0;top:0;bottom:0;width:${Math.min(pct,100)}%;background:#c8d600;display:flex;align-items:center;justify-content:flex-end;padding-right:12px">
+          ${pct>12?`<span style="font-size:10px;font-weight:800;color:#1a1a1a;letter-spacing:1px">${pct}%</span>`:''}
+        </div>
+        <div style="position:absolute;left:${Math.min(pct,100)}%;top:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent,transparent 4px,rgba(0,0,0,0.08) 4px,rgba(0,0,0,0.08) 5px)"></div>
+      </div>
+    </div>
+    <div style="background:#f8f9fa;padding:18px 22px">
+      <div style="font-size:8px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:#94a3b8;margin-bottom:12px">Статус поставщиков</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        ${jRows.map(({p,req,done:d2}) => {
+          const ok2 = d2.length >= req && req > 0;
+          const iss2 = req > 0 && !ok2;
+          return `<span style="background:${iss2?'#dc2626':'#1a1a1a'};color:${iss2?'white':'#c8d600'};font-size:9px;font-weight:800;padding:5px 11px;letter-spacing:.5px">${p.emoji} ${p.name} ${ok2?'✓':'✗'}</span>`;
+        }).join('')}
+      </div>
+    </div>
   </div>
+</div>
+
+${topImgs.length>0?`<!-- ══ 3. PHOTOS ══ -->
+<div class="page">
+  <div class="band"><span class="band-num">02</span><span class="band-vl"></span><span class="band-title">Фотографии</span><span class="band-sub">${moName} ${yr}</span></div>
+  <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
+  <div style="padding:28px 52px 18px;flex-shrink:0">
+    <div style="font-size:26px;font-weight:700;color:#1a1a1a">Месяц в фотографиях</div>
+  </div>
+  <div style="flex:1;overflow:hidden">${buildGrid(topImgs, gridCols)}</div>
 </div>`:''}
 
-<!-- ══ 4. STATUS DASHBOARD ══ -->
-<div class="page dark">
-  <div class="pad" style="flex:1;position:relative;z-index:1">
-    <div style="position:absolute;width:400px;height:400px;border:1px solid rgba(255,255,255,0.05);border-radius:50%;top:-100px;right:-80px;pointer-events:none"></div>
-    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px">
-      <span style="font-size:8px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#60a5fa">03</span>
-      <span style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,0.35)">Поставщики</span>
+<!-- ══ 4. VISIT SUMMARIES ══ -->
+<div class="page">
+  <div class="band"><span class="band-num">03</span><span class="band-vl"></span><span class="band-title">Краткие итоги визитов</span><span class="band-sub">${moName} ${yr}</span></div>
+  <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
+  <div style="flex:1;padding:36px 52px 44px;overflow:hidden">
+    <div style="margin-bottom:24px">
+      <div style="font-size:26px;font-weight:700;color:#1a1a1a">Что сделано за месяц</div>
+      <div style="font-size:12px;color:#94a3b8;margin-top:5px">Выжимка из отчётов поставщиков — только главное</div>
     </div>
-    <div class="sec-title" style="color:white">${pct>=100?'Все системы под контролем ✓':'Статус обслуживания объекта'}</div>
-    <div class="rule" style="background:linear-gradient(90deg,#60a5fa,#a78bfa,transparent)"></div>
+    ${visitSummaryCards}
+  </div>
+</div>
+
+<!-- ══ 5. PROVIDER STATUS ══ -->
+<div class="page dark">
+  <div class="hatch" style="position:absolute;inset:0;opacity:.7;pointer-events:none"></div>
+  <div style="position:absolute;top:0;right:0;width:0;height:0;border-style:solid;border-width:0 200px 200px 0;border-color:transparent #c8d600 transparent transparent;opacity:.12;pointer-events:none"></div>
+  <div style="position:absolute;bottom:0;left:0;width:0;height:0;border-style:solid;border-width:120px 0 0 120px;border-color:transparent transparent transparent #c8d600;opacity:.1;pointer-events:none"></div>
+  <div style="position:absolute;left:52px;top:90px;bottom:90px;width:2px;background:#c8d600;opacity:.28;pointer-events:none"></div>
+  <div style="flex:1;padding:52px 52px 52px 74px;position:relative;z-index:1">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:8px">
+      <span style="font-size:38px;font-weight:700;color:#c8d600;line-height:1">04</span>
+      <div style="width:2px;height:28px;background:rgba(255,255,255,0.15);flex-0;align-self:center"></div>
+      <span style="font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:white">Поставщики</span>
+    </div>
+    <div style="font-size:32px;font-weight:700;color:white;margin-bottom:8px">${pct>=100?'Все системы под контролем ✓':'Статус обслуживания'}</div>
+    <div style="height:4px;background:#c8d600;width:60px;margin-bottom:28px"></div>
     ${statusCards}
-    ${(maintWorks.length||sosEvts.length)?`<div style="margin-top:14px;display:grid;grid-template-columns:${maintWorks.length&&sosEvts.length?'1fr 1fr':'1fr'};gap:10px">
-      ${maintWorks.length?`<div style="background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.25);border-radius:14px;padding:14px 18px;display:flex;align-items:center;gap:12px">
+    ${(maintWorks.length||sosEvts.length)?`<div style="margin-top:14px;display:grid;grid-template-columns:${maintWorks.length&&sosEvts.length?'1fr 1fr':'1fr'};gap:3px">
+      ${maintWorks.length?`<div style="background:rgba(200,214,0,0.1);border:1px solid rgba(200,214,0,0.25);padding:14px 18px;display:flex;align-items:center;gap:12px">
         <span style="font-size:28px">🏗️</span>
-        <div><div style="font-size:24px;font-weight:700;color:#fbbf24">${maintWorks.length}</div><div style="font-size:11px;color:rgba(255,255,255,0.55)">работ по территории</div></div>
+        <div><div style="font-size:24px;font-weight:700;color:#c8d600">${maintWorks.length}</div><div style="font-size:11px;color:rgba(255,255,255,0.55)">работ по территории</div></div>
       </div>`:''}
-      ${sosEvts.length?`<div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.25);border-radius:14px;padding:14px 18px;display:flex;align-items:center;gap:12px">
+      ${sosEvts.length?`<div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.25);padding:14px 18px;display:flex;align-items:center;gap:12px">
         <span style="font-size:28px">🚨</span>
         <div><div style="font-size:24px;font-weight:700;color:#f87171">${sosEvts.length}</div><div style="font-size:11px;color:rgba(255,255,255,0.55)">экстренных ситуаций</div></div>
       </div>`:''}
@@ -3243,15 +3326,12 @@ ${topImgs.length>0?`<!-- ══ 3. PHOTO GALLERY ══ -->
   </div>
 </div>
 
-${maintPhotos.length>0||sosPhotos.length>0?`<!-- ══ 5. EXTRA WORKS ══ -->
+${maintPhotos.length>0||sosPhotos.length>0?`<!-- ══ 6. EXTRA WORKS ══ -->
 <div class="page">
-  <div class="pad">
-    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px">
-      <span style="font-size:8px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#d97706">04</span>
-      <span style="font-size:8px;letter-spacing:2px;text-transform:uppercase;color:#94a3b8">Доп. работы</span>
-    </div>
-    <div class="sec-title" style="color:#0f172a">ТО территории и экстренные ситуации</div>
-    <div class="rule" style="background:linear-gradient(90deg,#f59e0b,#ef4444,transparent)"></div>
+  <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">Доп. работы</span><span class="band-sub">${moName} ${yr}</span></div>
+  <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
+  <div style="padding:36px 52px 44px">
+    <div style="font-size:26px;font-weight:700;color:#1a1a1a;margin-bottom:20px">ТО территории и экстренные ситуации</div>
     ${maintPhotos.length>0?`<div style="margin-bottom:20px">
       <div style="font-size:9px;font-weight:700;color:#92400e;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">🏗️ Обслуживание территории</div>
       ${buildGrid(maintPhotos,Math.min(maintPhotos.length,3))}
@@ -3263,19 +3343,25 @@ ${maintPhotos.length>0||sosPhotos.length>0?`<!-- ══ 5. EXTRA WORKS ══ --
   </div>
 </div>`:''}
 
-<!-- ══ 6. CONCLUSION ══ -->
+<!-- ══ 7. CONCLUSION ══ -->
 <div class="page dark">
-  <div class="pad" style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;position:relative;z-index:1">
-    <div style="position:absolute;width:380px;height:380px;border:1px solid rgba(255,255,255,0.06);border-radius:50%;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none"></div>
-    <div style="font-size:80px;margin-bottom:10px;filter:drop-shadow(0 8px 20px rgba(0,0,0,0.5))">${conclusionIcon}</div>
-    <div style="font-size:72px;font-weight:700;color:${pct>=100?'#4ade80':pct>=75?'#fbbf24':'#f87171'};line-height:1;margin-bottom:8px">${pct}%</div>
-    <div style="font-size:14px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:3px;margin-bottom:22px">выполнено за ${moName}</div>
-    <div style="max-width:360px">
-      <p style="font-size:16px;color:rgba(255,255,255,0.9);line-height:1.75;margin-bottom:${sosNote?'12px':'0'}">${conclusionText}</p>
-      ${sosNote?`<p style="font-size:13px;color:rgba(255,255,255,0.55);line-height:1.7">${sosNote}</p>`:''}
+  <div class="hatch" style="position:absolute;inset:0;opacity:.6;pointer-events:none"></div>
+  <div style="position:absolute;top:-80px;left:200px;width:3px;height:200%;background:#c8d600;opacity:.15;transform:rotate(25deg);transform-origin:top center;pointer-events:none"></div>
+  <div style="position:absolute;top:-80px;left:240px;width:1px;height:200%;background:#c8d600;opacity:.08;transform:rotate(25deg);transform-origin:top center;pointer-events:none"></div>
+  <div style="position:absolute;top:-80px;left:168px;width:1px;height:200%;background:#c8d600;opacity:.07;transform:rotate(25deg);transform-origin:top center;pointer-events:none"></div>
+  <div style="position:absolute;bottom:0;right:0;width:0;height:0;border-style:solid;border-width:0 0 280px 280px;border-color:transparent transparent #c8d600 transparent;opacity:.1;pointer-events:none"></div>
+  <div style="position:absolute;top:0;left:0;width:0;height:0;border-style:solid;border-width:140px 140px 0 0;border-color:#c8d600 transparent transparent transparent;opacity:.07;pointer-events:none"></div>
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:52px;position:relative;z-index:1">
+    <div style="font-size:10px;letter-spacing:5px;text-transform:uppercase;color:rgba(255,255,255,0.28);margin-bottom:14px;font-weight:700">Итог месяца</div>
+    <div style="font-size:120px;font-weight:700;color:#c8d600;line-height:1;margin-bottom:6px">${pct}%</div>
+    <div style="font-size:13px;letter-spacing:3px;text-transform:uppercase;color:rgba(255,255,255,0.32);margin-bottom:32px">выполнено за ${moName} ${yr}</div>
+    <div style="width:60px;height:4px;background:#c8d600;margin-bottom:30px"></div>
+    <div style="max-width:420px">
+      <p style="font-size:17px;color:rgba(255,255,255,0.82);line-height:1.75">${conclusionText}</p>
+      ${sosNote?`<p style="font-size:14px;color:rgba(255,255,255,0.45);line-height:1.7;margin-top:12px">${sosNote}</p>`:''}
     </div>
-    <div style="margin-top:36px;padding-top:22px;border-top:1px solid rgba(255,255,255,0.1);font-size:10px;color:rgba(255,255,255,0.25);line-height:1.8">
-      Отчёт сформирован автоматически · ${todayStr}<br>Управление услугами
+    <div style="position:absolute;bottom:52px;left:52px;right:52px;border-top:1px solid rgba(255,255,255,0.08);padding-top:18px;display:flex;justify-content:space-between;font-size:9px;color:rgba(255,255,255,0.18);letter-spacing:2px;text-transform:uppercase">
+      <span>Отчёт сформирован автоматически · ${todayStr}</span><span>Управление услугами</span>
     </div>
   </div>
 </div>
