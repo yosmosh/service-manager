@@ -426,7 +426,7 @@ img{max-width:100%;height:auto}
     <div class="sidebar-section-title">Управление</div>
     <div class="nav-item" id="nav-contacts" onclick="showView('contacts')">📞 Контакты поставщиков</div>
     <div class="nav-item admin-or-owner" id="nav-settings" onclick="openSettingsModal()">⚙️ Настройки доступа</div>
-    <div class="nav-item owner-only" id="nav-report" onclick="generateReport()" style="color:#7c3aed;font-weight:600">📑 Отчёт за месяц (HTML)</div>
+    <div class="nav-item owner-only" id="nav-report" onclick="generateReport()" style="color:#7c3aed;font-weight:600">📑 Отчёт за месяц (PDF)</div>
     <div class="nav-item owner-only" id="nav-export" onclick="exportCSV()">📊 Экспорт данных (CSV)</div>
     <div class="nav-item owner-only" id="recompress-btn" onclick="recompressExistingImages()" style="color:#f59e0b">🗜️ דחוס תמונות קיימות</div>
   </div>
@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-17k';
+const APP_VERSION = 'v2026-06-17l';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3192,7 +3192,7 @@ function generateReport() {
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'PT Sans',Arial,sans-serif;background:#3a3a3a;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.page{width:794px;min-height:1123px;margin:0 auto 24px;background:white;box-shadow:0 16px 60px rgba(0,0,0,0.45);position:relative;overflow:hidden;display:flex;flex-direction:column}
+.page{width:794px;height:1123px;margin:0 auto 24px;background:white;box-shadow:0 16px 60px rgba(0,0,0,0.45);position:relative;overflow:hidden;display:flex;flex-direction:column}
 .dark{background:#1a1a1a;color:white}
 .hatch{background:repeating-linear-gradient(45deg,transparent,transparent 18px,rgba(200,214,0,0.06) 18px,rgba(200,214,0,0.06) 20px)}
 .band{background:#1a1a1a;padding:0 52px;height:56px;display:flex;align-items:center;gap:16px;flex-shrink:0}
@@ -3206,7 +3206,7 @@ body{font-family:'PT Sans',Arial,sans-serif;background:#3a3a3a;-webkit-print-col
 .scard-lbl{font-size:8px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;margin-bottom:10px}
 .scard-val{font-size:72px;font-weight:700;line-height:1}
 .scard-sub{font-size:12px;margin-top:8px;opacity:.7}
-@media print{body{background:white}.np{display:none!important}.page{margin:0;box-shadow:none;page-break-after:always}@page{size:A4 portrait;margin:0}}
+@media print{body{background:white;margin:0;padding:0}.np{display:none!important}.page{width:210mm;height:297mm;margin:0;box-shadow:none;overflow:hidden;page-break-after:always;page-break-inside:avoid;display:flex;flex-direction:column}@page{size:A4 portrait;margin:0}}
 </style></head><body>
 
 <!-- TOP BAR -->
@@ -3215,7 +3215,7 @@ body{font-family:'PT Sans',Arial,sans-serif;background:#3a3a3a;-webkit-print-col
     <span style="font-size:14px;font-weight:700;color:white">📋 ${moName} ${yr}</span>
     <span id="ims" style="font-size:11px;color:#94a3b8">Загрузка фото…</span>
   </div>
-  <button id="pbtn" onclick="window.print()" disabled style="background:#c8d600;color:#1a1a1a;border:none;padding:8px 20px;font-size:13px;font-weight:800;cursor:not-allowed;opacity:0.4;transition:.3s;font-family:inherit;letter-spacing:.5px">🖨️ ПЕЧАТЬ / PDF</button>
+  <button id="pbtn" onclick="window.print()" disabled style="background:#c8d600;color:#1a1a1a;border:none;padding:8px 20px;font-size:13px;font-weight:800;cursor:not-allowed;opacity:0.4;transition:.3s;font-family:inherit;letter-spacing:.5px">🖨️ СОХРАНИТЬ PDF</button>
 </div>
 <div class="np" style="height:44px"></div>
 
@@ -3446,16 +3446,10 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
 <\/script>
 </body></html>`;
 
-  const blob = new Blob([html], {type: 'text/html;charset=utf-8'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `report_${moName}_${yr}.html`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
-  _showToast('✅ Отчёт скачан как HTML', true);
+  const win = window.open('', '_blank');
+  if (!win) { _showToast('❌ Разрешите всплывающие окна в браузере', false); return; }
+  win.document.write(html);
+  win.document.close();
 }
 
 // ==============================
