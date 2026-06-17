@@ -426,7 +426,7 @@ img{max-width:100%;height:auto}
     <div class="sidebar-section-title">Управление</div>
     <div class="nav-item" id="nav-contacts" onclick="showView('contacts')">📞 Контакты поставщиков</div>
     <div class="nav-item admin-or-owner" id="nav-settings" onclick="openSettingsModal()">⚙️ Настройки доступа</div>
-    <div class="nav-item owner-only" id="nav-report" onclick="generateReport()" style="color:#7c3aed;font-weight:600">📑 Отчёт за месяц (PDF)</div>
+    <div class="nav-item owner-only" id="nav-report" onclick="generateReport()" style="color:#7c3aed;font-weight:600">📑 Отчёт за месяц (HTML)</div>
     <div class="nav-item owner-only" id="nav-export" onclick="exportCSV()">📊 Экспорт данных (CSV)</div>
     <div class="nav-item owner-only" id="recompress-btn" onclick="recompressExistingImages()" style="color:#f59e0b">🗜️ דחוס תמונות קיימות</div>
   </div>
@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-17j';
+const APP_VERSION = 'v2026-06-17k';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3215,7 +3215,7 @@ body{font-family:'PT Sans',Arial,sans-serif;background:#3a3a3a;-webkit-print-col
     <span style="font-size:14px;font-weight:700;color:white">📋 ${moName} ${yr}</span>
     <span id="ims" style="font-size:11px;color:#94a3b8">Загрузка фото…</span>
   </div>
-  <button id="pbtn" onclick="window.print()" disabled style="background:#c8d600;color:#1a1a1a;border:none;padding:8px 20px;font-size:13px;font-weight:800;cursor:not-allowed;opacity:0.4;transition:.3s;font-family:inherit;letter-spacing:.5px">🖨️ СОХРАНИТЬ PDF</button>
+  <button id="pbtn" onclick="window.print()" disabled style="background:#c8d600;color:#1a1a1a;border:none;padding:8px 20px;font-size:13px;font-weight:800;cursor:not-allowed;opacity:0.4;transition:.3s;font-family:inherit;letter-spacing:.5px">🖨️ ПЕЧАТЬ / PDF</button>
 </div>
 <div class="np" style="height:44px"></div>
 
@@ -3446,10 +3446,16 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
 <\/script>
 </body></html>`;
 
-  const win = window.open('', '_blank');
-  if (!win) { _showToast('❌ Разрешите всплывающие окна в браузере', false); return; }
-  win.document.write(html);
-  win.document.close();
+  const blob = new Blob([html], {type: 'text/html;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `report_${moName}_${yr}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  _showToast('✅ Отчёт скачан как HTML', true);
 }
 
 // ==============================
