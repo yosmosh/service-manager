@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-17g';
+const APP_VERSION = 'v2026-06-17h';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -2984,23 +2984,13 @@ function generateReport() {
   maintWorks.forEach(w => totalFiles += (w.fileIds||[]).length);
   sosEvts.forEach(s => totalFiles += (s.fileIds||[]).length);
 
-  // ── ALL MONTH PHOTOS (scored, diverse — includes partial visits) ──
+  // ── ALL PROVIDER PHOTOS for section 02 (scored, diverse — includes partial visits) ──
   const allMonthImgs = [];
   jRows.forEach(({p, visits}) => {
     (visits||[]).forEach(v => {
       _scoredImages(v.fileIds, v.fileTypes, v.fileNames, fc, 99).forEach(img => {
         allMonthImgs.push({...img, label: p.name, emoji: p.emoji, color: p.color});
       });
-    });
-  });
-  maintWorks.forEach(w => {
-    _scoredImages(w.fileIds, w.fileTypes, w.fileNames, fc, 99).forEach(img => {
-      allMonthImgs.push({...img, label: (w.title||'ТО территории').slice(0,28), emoji: '🏗️', color: '#f59e0b'});
-    });
-  });
-  sosEvts.forEach(s => {
-    _scoredImages(s.fileIds, s.fileTypes, s.fileNames, fc, 99).forEach(img => {
-      allMonthImgs.push({...img, label: (s.title||'Экстренное ТО').slice(0,28), emoji: '🚨', color: '#dc2626'});
     });
   });
   allMonthImgs.sort((a,b) => (b.score||0) - (a.score||0));
@@ -3049,32 +3039,17 @@ function generateReport() {
   maintWorks.forEach(w => { _scoredImages(w.fileIds, w.fileTypes, w.fileNames, fc, 2).forEach(img => { if (maintPhotos.length < 18) maintPhotos.push({...img, label:(w.title||'').slice(0,30), emoji:'🏗️'}); }); });
   sosEvts.forEach(s => { _scoredImages(s.fileIds, s.fileTypes, s.fileNames, fc, 2).forEach(img => { if (sosPhotos.length < 18) sosPhotos.push({...img, label:(s.title||'').slice(0,30), emoji:'🚨'}); }); });
 
-  // ── GRID BUILDER — full-bleed editorial layout ──
+  // ── GRID BUILDER — CSS masonry columns, no cropping (natural aspect ratio) ──
   const buildGrid = (imgs, cols) => {
     if (!imgs.length) return '';
-    const cell = (img, style) => `<div style="position:relative;overflow:hidden;background:#1e1e1e;${style}">
-      <img src="${img.url}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:top center;display:block">
-      <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,0.82));padding:10px 13px">
-        <div style="font-size:9px;color:rgba(255,255,255,0.92);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${img.emoji||''} ${img.label||''}</div>
-      </div>
-    </div>`;
-    if (imgs.length >= 3) {
-      const [hero, b, ...rest] = imgs;
-      return `<div style="display:flex;flex-direction:column;gap:3px">
-        <div style="display:grid;grid-template-columns:3fr 2fr;gap:3px;height:310px">
-          ${cell(hero,'height:310px')}
-          <div style="display:flex;flex-direction:column;gap:3px;height:310px">
-            ${cell(b,'height:153px')}
-            ${rest[0] ? cell(rest[0],'height:153px') : `<div style="height:153px;background:#1e1e1e"></div>`}
-          </div>
+    const colCount = Math.min(imgs.length, cols || 3);
+    return `<div style="columns:${colCount};column-gap:4px;padding:4px">
+      ${imgs.map(img => `<div style="break-inside:avoid;margin-bottom:4px;position:relative;background:#1e1e1e;display:block">
+        <img src="${img.url}" alt="" style="width:100%;height:auto;display:block;vertical-align:bottom">
+        <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,0.85));padding:8px 12px">
+          <div style="font-size:9px;color:rgba(255,255,255,0.92);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${img.emoji||''} ${img.label||''}</div>
         </div>
-        ${rest.slice(1).length ? `<div style="display:grid;grid-template-columns:repeat(${Math.min(rest.slice(1).length,3)},1fr);gap:3px">
-          ${rest.slice(1,4).map(img => cell(img,'aspect-ratio:4/3')).join('')}
-        </div>` : ''}
-      </div>`;
-    }
-    return `<div style="display:grid;grid-template-columns:repeat(${Math.min(imgs.length,cols)},1fr);gap:3px">
-      ${imgs.map(img => cell(img,'aspect-ratio:4/3')).join('')}
+      </div>`).join('')}
     </div>`;
   };
 
@@ -3332,8 +3307,8 @@ ${galleryChunks.map((chunk, ci) => `<!-- ══ GALLERY PAGE ══ -->
 <div class="page">
   <div class="band"><span class="band-num">02</span><span class="band-vl"></span><span class="band-title">Фотографии${galleryChunks.length>1?' · '+(ci+1)+'/'+galleryChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
-  ${ci===0?`<div style="padding:20px 52px 14px;flex-shrink:0"><div style="font-size:26px;font-weight:700;color:#1a1a1a">Месяц в фотографиях</div></div>`:''}
-  <div style="flex:1;overflow:hidden">${buildGrid(chunk, 3)}</div>
+  ${ci===0?`<div style="padding:20px 52px 14px"><div style="font-size:26px;font-weight:700;color:#1a1a1a">Месяц в фотографиях</div></div>`:''}
+  <div>${buildGrid(chunk, 3)}</div>
 </div>`).join('')}
 
 <!-- ══ 4. VISIT SUMMARIES ══ -->
@@ -3377,11 +3352,23 @@ ${galleryChunks.map((chunk, ci) => `<!-- ══ GALLERY PAGE ══ -->
   </div>
 </div>
 
+${maintChunks.map((chunk, ci) => `<!-- ══ MAINT PHOTOS PAGE ══ -->
+<div class="page">
+  <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🏗️ Обслуживание территории${maintChunks.length>1?' · '+(ci+1)+'/'+maintChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
+  <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
+  <div>${buildGrid(chunk, 3)}</div>
+</div>`).join('')}
+${sosChunks.map((chunk, ci) => `<!-- ══ SOS PHOTOS PAGE ══ -->
+<div class="page">
+  <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🚨 Экстренное ТО${sosChunks.length>1?' · '+(ci+1)+'/'+sosChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
+  <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
+  <div>${buildGrid(chunk, 3)}</div>
+</div>`).join('')}
 ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ══ -->
 <div class="page">
   <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">Доп. работы — итоги</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
-  <div style="flex:1;padding:36px 52px 44px;overflow:hidden">
+  <div style="flex:1;padding:36px 52px 44px">
     <div style="margin-bottom:24px">
       <div style="font-size:26px;font-weight:700;color:#1a1a1a">ТО территории и экстренные ситуации</div>
       <div style="font-size:12px;color:#94a3b8;margin-top:5px">Выполненные работы за ${moName} ${yr}</div>
@@ -3390,18 +3377,6 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
     ${sosWorkCards}
   </div>
 </div>`:''}
-${maintChunks.map((chunk, ci) => `<!-- ══ MAINT PHOTOS PAGE ══ -->
-<div class="page">
-  <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🏗️ Обслуживание территории${maintChunks.length>1?' · '+(ci+1)+'/'+maintChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
-  <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
-  <div style="flex:1;overflow:hidden">${buildGrid(chunk, 3)}</div>
-</div>`).join('')}
-${sosChunks.map((chunk, ci) => `<!-- ══ SOS PHOTOS PAGE ══ -->
-<div class="page">
-  <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🚨 Экстренное ТО${sosChunks.length>1?' · '+(ci+1)+'/'+sosChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
-  <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
-  <div style="flex:1;overflow:hidden">${buildGrid(chunk, 3)}</div>
-</div>`).join('')}
 
 <!-- ══ 7. CONCLUSION ══ -->
 <div class="page dark">
