@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-17i';
+const APP_VERSION = 'v2026-06-17j';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3011,7 +3011,7 @@ function generateReport() {
       topImgs.push(img);
     }
   }
-  const GALLERY_PER_PAGE = 6;
+  const GALLERY_PER_PAGE = 9;
   const galleryChunks = [];
   for (let _gi = 0; _gi < topImgs.length; _gi += GALLERY_PER_PAGE) galleryChunks.push(topImgs.slice(_gi, _gi+GALLERY_PER_PAGE));
 
@@ -3069,15 +3069,16 @@ function generateReport() {
     });
   });
 
-  // ── GRID BUILDER — fills available height; JS detects portrait and switches to contain ──
-  const buildGrid = (imgs, cols) => {
+  // ── GRID BUILDER — explicit pixel heights ensure full page fill ──
+  const buildGrid = (imgs, cols, availH) => {
     if (!imgs.length) return '';
     const colCount = Math.min(imgs.length, cols || 3);
     const rowCount = Math.ceil(imgs.length / colCount);
-    const rowTpl = Array(rowCount).fill('1fr').join(' ');
-    return `<div style="display:grid;grid-template-columns:repeat(${colCount},1fr);grid-template-rows:${rowTpl};gap:4px;padding:4px;height:100%">
-      ${imgs.map(img => `<div style="position:relative;overflow:hidden;background:#1e1e1e;min-height:0">
-        <img class="gimg" src="${img.url}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:top center;display:block">
+    const h = availH || 1000;
+    const cellH = Math.floor((h - (rowCount - 1) * 4 - 8) / rowCount);
+    return `<div style="display:grid;grid-template-columns:repeat(${colCount},1fr);gap:4px;padding:4px">
+      ${imgs.map(img => `<div style="position:relative;overflow:hidden;background:#1e1e1e;height:${cellH}px">
+        <img src="${img.url}" alt="" style="width:100%;height:100%;object-fit:contain;object-position:center;display:block">
         <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,0.82));padding:8px 12px">
           <div style="font-size:9px;color:rgba(255,255,255,0.92);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${img.emoji||''} ${img.label||''}</div>
         </div>
@@ -3139,8 +3140,8 @@ function generateReport() {
     </div>`;
   }).join('');
 
-  // ── PHOTO PAGINATION (6 per page) ──
-  const EW_PER_PAGE = 6;
+  // ── PHOTO PAGINATION (9 per page) ──
+  const EW_PER_PAGE = 9;
   const maintChunks = [];
   for (let _i = 0; _i < maintPhotos.length; _i += EW_PER_PAGE) maintChunks.push(maintPhotos.slice(_i, _i+EW_PER_PAGE));
   const sosChunks = [];
@@ -3340,7 +3341,7 @@ ${galleryChunks.map((chunk, ci) => `<!-- ══ GALLERY PAGE ══ -->
   <div class="band"><span class="band-num">02</span><span class="band-vl"></span><span class="band-title">Фотографии${galleryChunks.length>1?' · '+(ci+1)+'/'+galleryChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
   ${ci===0?`<div style="padding:20px 52px 14px;flex-shrink:0"><div style="font-size:26px;font-weight:700;color:#1a1a1a">Месяц в фотографиях</div></div>`:''}
-  <div style="flex:1;overflow:hidden">${buildGrid(chunk, 3)}</div>
+  ${buildGrid(chunk, 3, ci===0 ? 993 : 1055)}
 </div>`).join('')}
 
 <!-- ══ 4. VISIT SUMMARIES ══ -->
@@ -3388,13 +3389,13 @@ ${maintChunks.map((chunk, ci) => `<!-- ══ MAINT PHOTOS PAGE ══ -->
 <div class="page">
   <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🏗️ Обслуживание территории${maintChunks.length>1?' · '+(ci+1)+'/'+maintChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
-  <div style="flex:1;overflow:hidden">${buildGrid(chunk, 3)}</div>
+  ${buildGrid(chunk, 3, 1055)}
 </div>`).join('')}
 ${sosChunks.map((chunk, ci) => `<!-- ══ SOS PHOTOS PAGE ══ -->
 <div class="page">
   <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🚨 Экстренное ТО${sosChunks.length>1?' · '+(ci+1)+'/'+sosChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
-  <div style="flex:1;overflow:hidden">${buildGrid(chunk, 3)}</div>
+  ${buildGrid(chunk, 3, 1055)}
 </div>`).join('')}
 ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ══ -->
 <div class="page">
@@ -3441,17 +3442,7 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
   if(!n){t();return;}
   imgs.forEach(function(i){if(i.complete)t();else{i.addEventListener('load',t);i.addEventListener('error',t);}});
 })();
-// Portrait detection: switch to contain so full photo is visible without cropping
-document.querySelectorAll('.gimg').forEach(function(img){
-  function orient(){
-    if(img.naturalHeight>img.naturalWidth*1.15){
-      img.style.objectFit='contain';
-      img.style.objectPosition='center center';
-    }
-  }
-  if(img.complete&&img.naturalWidth)orient();
-  else img.addEventListener('load',orient);
-});
+
 <\/script>
 </body></html>`;
 
