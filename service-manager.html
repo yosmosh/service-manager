@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-17h';
+const APP_VERSION = 'v2026-06-17i';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -2984,23 +2984,32 @@ function generateReport() {
   maintWorks.forEach(w => totalFiles += (w.fileIds||[]).length);
   sosEvts.forEach(s => totalFiles += (s.fileIds||[]).length);
 
-  // ── ALL PROVIDER PHOTOS for section 02 (scored, diverse — includes partial visits) ──
-  const allMonthImgs = [];
+  // ── ALL PROVIDER PHOTOS — guaranteed 1 per visit, then fill to 3 per provider ──
+  const _allProv = [];
   jRows.forEach(({p, visits}) => {
-    (visits||[]).forEach(v => {
-      _scoredImages(v.fileIds, v.fileTypes, v.fileNames, fc, 99).forEach(img => {
-        allMonthImgs.push({...img, label: p.name, emoji: p.emoji, color: p.color});
+    (visits||[]).forEach((v, vi) => {
+      _scoredImages(v.fileIds, v.fileTypes, v.fileNames, fc, 99).forEach((img, rank) => {
+        _allProv.push({...img, label: p.name, emoji: p.emoji, color: p.color, _vk: p.id+'~'+vi, _rank: rank});
       });
     });
   });
-  allMonthImgs.sort((a,b) => (b.score||0) - (a.score||0));
-  const topImgs = [], labelCnt = {};
-  for (const img of allMonthImgs) {
-    if (topImgs.length >= 60) break;
-    const c = labelCnt[img.label] || 0;
-    if (c >= 3) continue;
-    labelCnt[img.label] = c + 1;
-    topImgs.push(img);
+  const topImgs = [], _seenUrl = new Set(), _seenVk = new Set(), _provCnt = {};
+  // Pass 1: best photo from every visit that has files
+  for (const img of [..._allProv].sort((a,b) => a._rank - b._rank || (b.score||0)-(a.score||0))) {
+    if (img._rank === 0 && !_seenVk.has(img._vk) && !_seenUrl.has(img.url)) {
+      _seenVk.add(img._vk); _seenUrl.add(img.url);
+      _provCnt[img.label] = (_provCnt[img.label]||0) + 1;
+      topImgs.push(img);
+    }
+  }
+  // Pass 2: up to 2 additional per provider (max 3 total)
+  for (const img of [..._allProv].sort((a,b) => (b.score||0)-(a.score||0))) {
+    if (topImgs.length >= 90) break;
+    if (!_seenUrl.has(img.url) && (_provCnt[img.label]||0) < 3) {
+      _seenUrl.add(img.url);
+      _provCnt[img.label] = (_provCnt[img.label]||0) + 1;
+      topImgs.push(img);
+    }
   }
   const GALLERY_PER_PAGE = 6;
   const galleryChunks = [];
@@ -3034,19 +3043,42 @@ function generateReport() {
     }).join('')
   }</div>`;
 
-  // ── EXTRA WORK PHOTOS ──
+  // ── EXTRA WORK PHOTOS — guaranteed 1 per work item, then up to 2 more ──
   const maintPhotos = [], sosPhotos = [];
-  maintWorks.forEach(w => { _scoredImages(w.fileIds, w.fileTypes, w.fileNames, fc, 2).forEach(img => { if (maintPhotos.length < 18) maintPhotos.push({...img, label:(w.title||'').slice(0,30), emoji:'🏗️'}); }); });
-  sosEvts.forEach(s => { _scoredImages(s.fileIds, s.fileTypes, s.fileNames, fc, 2).forEach(img => { if (sosPhotos.length < 18) sosPhotos.push({...img, label:(s.title||'').slice(0,30), emoji:'🚨'}); }); });
+  const _mUrl = new Set(), _sUrl = new Set();
+  // Pass 1: 1 best per maintenance work
+  maintWorks.forEach(w => {
+    const imgs = _scoredImages(w.fileIds, w.fileTypes, w.fileNames, fc, 99);
+    if (imgs[0] && !_mUrl.has(imgs[0].url)) { _mUrl.add(imgs[0].url); maintPhotos.push({...imgs[0], label:(w.title||'').slice(0,30), emoji:'🏗️'}); }
+  });
+  // Pass 2: up to 2 more per work
+  maintWorks.forEach(w => {
+    _scoredImages(w.fileIds, w.fileTypes, w.fileNames, fc, 99).slice(1,3).forEach(img => {
+      if (!_mUrl.has(img.url) && maintPhotos.length < 60) { _mUrl.add(img.url); maintPhotos.push({...img, label:(w.title||'').slice(0,30), emoji:'🏗️'}); }
+    });
+  });
+  // Pass 1: 1 best per SOS event
+  sosEvts.forEach(s => {
+    const imgs = _scoredImages(s.fileIds, s.fileTypes, s.fileNames, fc, 99);
+    if (imgs[0] && !_sUrl.has(imgs[0].url)) { _sUrl.add(imgs[0].url); sosPhotos.push({...imgs[0], label:(s.title||'').slice(0,30), emoji:'🚨'}); }
+  });
+  // Pass 2: up to 2 more per SOS
+  sosEvts.forEach(s => {
+    _scoredImages(s.fileIds, s.fileTypes, s.fileNames, fc, 99).slice(1,3).forEach(img => {
+      if (!_sUrl.has(img.url) && sosPhotos.length < 60) { _sUrl.add(img.url); sosPhotos.push({...img, label:(s.title||'').slice(0,30), emoji:'🚨'}); }
+    });
+  });
 
-  // ── GRID BUILDER — CSS masonry columns, no cropping (natural aspect ratio) ──
+  // ── GRID BUILDER — fills available height; JS detects portrait and switches to contain ──
   const buildGrid = (imgs, cols) => {
     if (!imgs.length) return '';
     const colCount = Math.min(imgs.length, cols || 3);
-    return `<div style="columns:${colCount};column-gap:4px;padding:4px">
-      ${imgs.map(img => `<div style="break-inside:avoid;margin-bottom:4px;position:relative;background:#1e1e1e;display:block">
-        <img src="${img.url}" alt="" style="width:100%;height:auto;display:block;vertical-align:bottom">
-        <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,0.85));padding:8px 12px">
+    const rowCount = Math.ceil(imgs.length / colCount);
+    const rowTpl = Array(rowCount).fill('1fr').join(' ');
+    return `<div style="display:grid;grid-template-columns:repeat(${colCount},1fr);grid-template-rows:${rowTpl};gap:4px;padding:4px;height:100%">
+      ${imgs.map(img => `<div style="position:relative;overflow:hidden;background:#1e1e1e;min-height:0">
+        <img class="gimg" src="${img.url}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:top center;display:block">
+        <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,0.82));padding:8px 12px">
           <div style="font-size:9px;color:rgba(255,255,255,0.92);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${img.emoji||''} ${img.label||''}</div>
         </div>
       </div>`).join('')}
@@ -3307,8 +3339,8 @@ ${galleryChunks.map((chunk, ci) => `<!-- ══ GALLERY PAGE ══ -->
 <div class="page">
   <div class="band"><span class="band-num">02</span><span class="band-vl"></span><span class="band-title">Фотографии${galleryChunks.length>1?' · '+(ci+1)+'/'+galleryChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
-  ${ci===0?`<div style="padding:20px 52px 14px"><div style="font-size:26px;font-weight:700;color:#1a1a1a">Месяц в фотографиях</div></div>`:''}
-  <div>${buildGrid(chunk, 3)}</div>
+  ${ci===0?`<div style="padding:20px 52px 14px;flex-shrink:0"><div style="font-size:26px;font-weight:700;color:#1a1a1a">Месяц в фотографиях</div></div>`:''}
+  <div style="flex:1;overflow:hidden">${buildGrid(chunk, 3)}</div>
 </div>`).join('')}
 
 <!-- ══ 4. VISIT SUMMARIES ══ -->
@@ -3356,13 +3388,13 @@ ${maintChunks.map((chunk, ci) => `<!-- ══ MAINT PHOTOS PAGE ══ -->
 <div class="page">
   <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🏗️ Обслуживание территории${maintChunks.length>1?' · '+(ci+1)+'/'+maintChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
-  <div>${buildGrid(chunk, 3)}</div>
+  <div style="flex:1;overflow:hidden">${buildGrid(chunk, 3)}</div>
 </div>`).join('')}
 ${sosChunks.map((chunk, ci) => `<!-- ══ SOS PHOTOS PAGE ══ -->
 <div class="page">
   <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🚨 Экстренное ТО${sosChunks.length>1?' · '+(ci+1)+'/'+sosChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:4px;background:#c8d600;flex-shrink:0"></div>
-  <div>${buildGrid(chunk, 3)}</div>
+  <div style="flex:1;overflow:hidden">${buildGrid(chunk, 3)}</div>
 </div>`).join('')}
 ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ══ -->
 <div class="page">
@@ -3409,6 +3441,17 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
   if(!n){t();return;}
   imgs.forEach(function(i){if(i.complete)t();else{i.addEventListener('load',t);i.addEventListener('error',t);}});
 })();
+// Portrait detection: switch to contain so full photo is visible without cropping
+document.querySelectorAll('.gimg').forEach(function(img){
+  function orient(){
+    if(img.naturalHeight>img.naturalWidth*1.15){
+      img.style.objectFit='contain';
+      img.style.objectPosition='center center';
+    }
+  }
+  if(img.complete&&img.naturalWidth)orient();
+  else img.addEventListener('load',orient);
+});
 <\/script>
 </body></html>`;
 
