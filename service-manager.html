@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-18b';
+const APP_VERSION = 'v2026-06-18c';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3187,22 +3187,25 @@ function generateReport() {
   const html = `<!DOCTYPE html>
 <html lang="ru"><head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Отчёт — ${moName} ${yr}</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Inter',system-ui,sans-serif;background:#08080d;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.page{width:794px;height:1123px;margin:0 auto 28px;background:#0f1117;box-shadow:0 32px 80px rgba(0,0,0,0.7),0 0 0 1px rgba(255,255,255,0.04);position:relative;overflow:hidden;display:flex;flex-direction:column;color:#f8fafc}
+html{width:210mm;max-width:210mm;overflow-x:hidden}
+body{font-family:'Inter',system-ui,sans-serif;width:210mm;max-width:210mm;overflow-x:hidden;background:#08080d;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.page{width:210mm;height:297mm;margin:0 auto 8mm;background:#0f1117;box-shadow:0 8mm 20mm rgba(0,0,0,0.6);position:relative;overflow:hidden;display:flex;flex-direction:column;color:#f8fafc;box-sizing:border-box}
 .hatch{background:repeating-linear-gradient(45deg,transparent,transparent 18px,rgba(200,214,0,0.04) 18px,rgba(200,214,0,0.04) 20px)}
-.band{background:#060609;padding:0 48px;height:60px;display:flex;align-items:center;gap:16px;flex-shrink:0;border-bottom:1px solid rgba(200,214,0,0.15)}
+.band{background:#060609;padding:0 6%;height:60px;display:flex;align-items:center;gap:16px;flex-shrink:0;border-bottom:1px solid rgba(200,214,0,0.15)}
 .band-num{font-size:24px;font-weight:900;color:#c8d600;line-height:1;letter-spacing:-1px}
 .band-vl{width:1px;height:22px;background:rgba(255,255,255,0.1);flex-shrink:0}
 .band-title{font-size:10px;font-weight:700;letter-spacing:3.5px;text-transform:uppercase;color:rgba(255,255,255,0.6)}
 .band-sub{margin-left:auto;font-size:9px;color:rgba(255,255,255,0.2);letter-spacing:2px}
-.gcard{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:28px;position:relative;overflow:hidden}
+.gcard{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:28px;position:relative;overflow:hidden;box-sizing:border-box}
+@page{size:A4 portrait;margin:0}
 @media print{
   *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
-  body{background:#08080d!important;margin:0;padding:0}
+  html,body{width:210mm;max-width:210mm;overflow:hidden;background:#08080d!important;margin:0;padding:0}
   .np{display:none!important}
   h1,h2,h3{break-after:avoid;page-break-after:avoid}
   .gcard{break-inside:avoid;page-break-inside:avoid}
@@ -3213,10 +3216,9 @@ body{font-family:'Inter',system-ui,sans-serif;background:#08080d;-webkit-print-c
     page-break-after:always;break-after:page;
     page-break-inside:avoid;break-inside:avoid;
     display:flex;flex-direction:column;
-    position:relative
+    position:relative;box-sizing:border-box
   }
   .page:last-of-type{page-break-after:auto;break-after:auto}
-  @page{size:A4 portrait;margin:0}
 }
 </style></head><body>
 
