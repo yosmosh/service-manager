@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-18d';
+const APP_VERSION = 'v2026-06-18e';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3069,15 +3069,13 @@ function generateReport() {
     });
   });
 
-  // ── GRID BUILDER — explicit pixel heights ensure full page fill ──
-  const buildGrid = (imgs, cols, availH) => {
+  // ── GRID BUILDER — fixed cell height so photos never push page height unexpectedly ──
+  const buildGrid = (imgs, cols, cellH) => {
     if (!imgs.length) return '';
     const colCount = Math.min(imgs.length, cols || 3);
-    const rowCount = Math.ceil(imgs.length / colCount);
-    const h = availH || 1000;
-    const cellH = Math.floor((h - (rowCount - 1) * 4 - 8) / rowCount);
-    return `<div style="display:grid;grid-template-columns:repeat(${colCount},1fr);gap:4px;padding:4px">
-      ${imgs.map(img => `<div style="position:relative;overflow:hidden;background:#1e1e1e;height:${cellH}px">
+    const h = cellH || 300;
+    return `<div style="display:grid;grid-template-columns:repeat(${colCount},1fr);gap:4px;padding:4px;box-sizing:border-box">
+      ${imgs.map(img => `<div style="position:relative;overflow:hidden;background:#1e1e1e;height:${h}px;box-sizing:border-box">
         <img src="${img.url}" alt="" style="width:100%;height:100%;object-fit:contain;object-position:center;display:block">
         <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,0.82));padding:8px 12px">
           <div style="font-size:9px;color:rgba(255,255,255,0.92);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${img.emoji||''} ${img.label||''}</div>
@@ -3192,9 +3190,9 @@ function generateReport() {
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-html{width:794px;overflow:hidden}
-body{font-family:'Inter',system-ui,sans-serif;width:794px;overflow:hidden;background:#08080d;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.page{width:794px;height:1123px;margin:0 auto 16px;background:#0f1117;box-shadow:0 24px 60px rgba(0,0,0,0.7);position:relative;overflow:hidden;display:flex;flex-direction:column;color:#f8fafc;box-sizing:border-box}
+html{width:794px;overflow-x:hidden}
+body{font-family:'Inter',system-ui,sans-serif;width:794px;overflow-x:hidden;background:#08080d;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.page{width:794px;min-height:1123px;margin:0 auto 16px;background:#0f1117;box-shadow:0 24px 60px rgba(0,0,0,0.7);position:relative;overflow:visible;display:flex;flex-direction:column;color:#f8fafc;box-sizing:border-box}
 .hatch{background:repeating-linear-gradient(45deg,transparent,transparent 18px,rgba(200,214,0,0.04) 18px,rgba(200,214,0,0.04) 20px)}
 .band{background:#060609;padding:0 48px;height:60px;display:flex;align-items:center;gap:16px;flex-shrink:0;border-bottom:1px solid rgba(200,214,0,0.15)}
 .band-num{font-size:24px;font-weight:900;color:#c8d600;line-height:1;letter-spacing:-1px}
@@ -3205,15 +3203,15 @@ body{font-family:'Inter',system-ui,sans-serif;width:794px;overflow:hidden;backgr
 @page{size:A4 portrait;margin:0}
 @media print{
   *,*::before,*::after{box-sizing:border-box!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
-  html,body{width:210mm!important;max-width:210mm!important;overflow:hidden!important;background:#08080d!important;margin:0!important;padding:0!important}
+  html,body{width:210mm!important;max-width:210mm!important;overflow-x:hidden!important;background:#08080d!important;margin:0!important;padding:0!important}
   .np{display:none!important}
   h1,h2,h3{break-after:avoid!important;page-break-after:avoid!important}
   .gcard{break-inside:avoid!important;page-break-inside:avoid!important}
   .page{
     width:210mm!important;max-width:210mm!important;
-    height:296mm!important;
+    min-height:297mm!important;height:auto!important;
     margin:0!important;padding:0!important;box-shadow:none!important;
-    overflow:hidden!important;
+    overflow:visible!important;
     page-break-after:always!important;break-after:page!important;
     page-break-inside:avoid!important;break-inside:avoid!important;
     display:flex!important;flex-direction:column!important;
@@ -3361,7 +3359,7 @@ ${galleryChunks.map((chunk, ci) => `<!-- ══ GALLERY PAGE ══ -->
   <div class="band"><span class="band-num">02</span><span class="band-vl"></span><span class="band-title">Фотографии${galleryChunks.length>1?' · '+(ci+1)+'/'+galleryChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:3px;background:linear-gradient(90deg,#c8d600,#a8b800);flex-shrink:0"></div>
   ${ci===0?`<div style="padding:18px 48px 12px;flex-shrink:0"><div style="font-size:22px;font-weight:900;color:#f8fafc;letter-spacing:-0.5px">Месяц в фотографиях</div></div>`:''}
-  ${buildGrid(chunk, 3, ci===0 ? 993 : 1055)}
+  ${buildGrid(chunk, 3, 300)}
 </div>`).join('')}
 
 <!-- ══ 03. VISIT SUMMARIES ══ -->
@@ -3409,13 +3407,13 @@ ${maintChunks.map((chunk, ci) => `<!-- ══ MAINT PHOTOS PAGE ══ -->
 <div class="page">
   <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🏗️ Обслуживание территории${maintChunks.length>1?' · '+(ci+1)+'/'+maintChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:3px;background:linear-gradient(90deg,#c8d600,#a8b800);flex-shrink:0"></div>
-  ${buildGrid(chunk, 3, 1055)}
+  ${buildGrid(chunk, 3, 300)}
 </div>`).join('')}
 ${sosChunks.map((chunk, ci) => `<!-- ══ SOS PHOTOS PAGE ══ -->
 <div class="page">
   <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🚨 Экстренное ТО${sosChunks.length>1?' · '+(ci+1)+'/'+sosChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:3px;background:linear-gradient(90deg,#c8d600,#a8b800);flex-shrink:0"></div>
-  ${buildGrid(chunk, 3, 1055)}
+  ${buildGrid(chunk, 3, 300)}
 </div>`).join('')}
 ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ══ -->
 <div class="page">
@@ -3438,7 +3436,7 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
   <div style="position:absolute;top:-100px;left:218px;width:1px;height:200%;background:#c8d600;opacity:.06;transform:rotate(22deg);pointer-events:none"></div>
   <div style="position:absolute;bottom:0;right:0;width:0;height:0;border-style:solid;border-width:0 0 300px 300px;border-color:transparent transparent #c8d600 transparent;opacity:.07;pointer-events:none"></div>
   <div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:52px;position:relative;z-index:1">
-    <div style="font-size:9px;letter-spacing:6px;text-transform:uppercase;color:rgba(255,255,255,0.18);margin-bottom:18px;font-weight:700">Итג месяца</div>
+    <div style="font-size:9px;letter-spacing:6px;text-transform:uppercase;color:rgba(255,255,255,0.18);margin-bottom:18px;font-weight:700">Итог месяца</div>
     <div style="font-size:130px;font-weight:900;color:#c8d600;line-height:1;margin-bottom:10px;letter-spacing:-6px">${pct}%</div>
     <div style="font-size:11px;letter-spacing:4px;text-transform:uppercase;color:rgba(255,255,255,0.22);margin-bottom:36px">выполнено за ${moName} ${yr}</div>
     <div style="width:44px;height:3px;background:#c8d600;border-radius:2px;margin-bottom:32px"></div>
