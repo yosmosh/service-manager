@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-19d';
+const APP_VERSION = 'v2026-06-19e';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3074,12 +3074,16 @@ function generateReport() {
     if (!imgs.length) return '';
     const colCount = Math.min(imgs.length, cols || 3);
     const h = cellH || 300;
-    return `<div style="display:grid;grid-template-columns:repeat(${colCount},1fr);gap:4px;padding:4px;box-sizing:border-box">
-      ${imgs.map(img => `<div class="photo-cell" style="position:relative;overflow:hidden;background:#1e1e1e;height:${h}px;box-sizing:border-box">
-        <img src="${img.url}" alt="" style="width:100%;height:100%;object-fit:contain;object-position:center;display:block">
-        <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,0.82));padding:8px 12px">
-          <div style="font-size:9px;color:rgba(255,255,255,0.92);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${img.emoji||''} ${img.label||''}</div>
-        </div>
+    const rows = [];
+    for (let i = 0; i < imgs.length; i += colCount) rows.push(imgs.slice(i, i + colCount));
+    return `<div style="padding:4px;box-sizing:border-box">
+      ${rows.map(row => `<div class="photo-row" style="display:flex;gap:4px;margin-bottom:4px">
+        ${row.map(img => `<div class="photo-cell" style="flex:1;position:relative;overflow:hidden;background:#1e1e1e;height:${h}px;box-sizing:border-box">
+          <img src="${img.url}" alt="" style="width:100%;height:100%;object-fit:contain;object-position:center;display:block">
+          <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,0.82));padding:8px 12px">
+            <div style="font-size:9px;color:rgba(255,255,255,0.92);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${img.emoji||''} ${img.label||''}</div>
+          </div>
+        </div>`).join('')}
       </div>`).join('')}
     </div>`;
   };
@@ -3206,7 +3210,11 @@ body{
   background:#0f1117;box-shadow:0 24px 60px rgba(0,0,0,0.7);
   position:relative;overflow:visible;
   display:flex;flex-direction:column;
-  color:#f8fafc;box-sizing:border-box
+  color:#f8fafc;box-sizing:border-box;
+  background-image:
+    linear-gradient(rgba(200,214,0,0.018) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(200,214,0,0.018) 1px,transparent 1px);
+  background-size:44px 44px
 }
 .hatch{background:repeating-linear-gradient(45deg,transparent,transparent 18px,rgba(200,214,0,0.04) 18px,rgba(200,214,0,0.04) 20px)}
 .band{background:#060609;padding:0 48px;height:60px;display:flex;align-items:center;gap:16px;flex-shrink:0;border-bottom:1px solid rgba(200,214,0,0.15)}
@@ -3215,6 +3223,7 @@ body{
 .band-title{font-size:10px;font-weight:700;letter-spacing:3.5px;text-transform:uppercase;color:rgba(255,255,255,0.6)}
 .band-sub{margin-left:auto;font-size:9px;color:rgba(255,255,255,0.2);letter-spacing:2px}
 .gcard{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:28px;position:relative;overflow:hidden;box-sizing:border-box}
+.photo-row{break-inside:avoid;page-break-inside:avoid}
 .photo-cell{break-inside:avoid;page-break-inside:avoid}
 .report-section-block{break-inside:avoid;page-break-inside:avoid}
 @page{size:A4 portrait;margin:15mm 12mm 15mm 12mm}
@@ -3236,11 +3245,11 @@ body{
     background-size:44px 44px!important
   }
   .np{display:none!important}
-  [style*="pointer-events:none"]{display:none!important}
-  .hatch{display:none!important}
+  .hatch{opacity:0.15!important}
+  [style*="pointer-events:none"]:not(.hatch){opacity:0.35!important}
   h1,h2,h3,h4{break-after:avoid!important;page-break-after:avoid!important}
   .band{break-after:avoid!important;page-break-after:avoid!important}
-  .gcard,.photo-cell,.report-section-block{break-inside:avoid!important;page-break-inside:avoid!important}
+  .gcard,.photo-row,.photo-cell,.report-section-block{break-inside:avoid!important;page-break-inside:avoid!important}
   .page{
     width:100%!important;
     height:auto!important;min-height:0!important;
