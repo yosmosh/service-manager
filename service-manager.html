@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-19a';
+const APP_VERSION = 'v2026-06-19b';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3230,12 +3230,13 @@ body{font-family:'Inter',system-ui,sans-serif;width:794px;overflow-x:hidden;back
     <span style="font-size:13px;font-weight:700;color:#f8fafc;letter-spacing:.3px">${moName} ${yr}</span>
     <span id="ims" style="font-size:11px;color:rgba(255,255,255,0.3)">Загрузка фото…</span>
   </div>
-  <button id="pbtn" onclick="savePdf()" disabled style="background:#c8d600;color:#0a0a0f;border:none;padding:9px 24px;font-size:12px;font-weight:800;cursor:not-allowed;opacity:0.35;transition:all .3s;font-family:inherit;letter-spacing:1px;border-radius:6px">🖨 СОХРАНИТЬ PDF</button>
+  <button id="pbtn" onclick="generatePDF()" disabled style="background:#c8d600;color:#0a0a0f;border:none;padding:9px 24px;font-size:12px;font-weight:800;cursor:not-allowed;opacity:0.35;transition:all .3s;font-family:inherit;letter-spacing:1px;border-radius:6px">🖨 СОХРАНИТЬ PDF</button>
 </div>
 <div class="np" style="height:50px"></div>
 
+<div id="report-content">
 <!-- ══ COVER ══ -->
-<div class="page" style="background:#09090e">
+<div class="page report-page" style="background:#09090e">
   <div class="hatch" style="position:absolute;inset:0;pointer-events:none"></div>
   <div style="position:absolute;top:-100px;right:140px;width:3px;height:200%;background:linear-gradient(to bottom,transparent,#c8d600 30%,#c8d600 70%,transparent);opacity:.18;transform:rotate(22deg);pointer-events:none"></div>
   <div style="position:absolute;top:-100px;right:176px;width:1px;height:200%;background:#c8d600;opacity:.07;transform:rotate(22deg);pointer-events:none"></div>
@@ -3288,7 +3289,7 @@ body{font-family:'Inter',system-ui,sans-serif;width:794px;overflow-x:hidden;back
 </div>
 
 <!-- ══ 01. STATISTICS ══ -->
-<div class="page">
+<div class="page report-page">
   <div class="band"><span class="band-num">01</span><span class="band-vl"></span><span class="band-title">Статистика</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:3px;background:linear-gradient(90deg,#c8d600,#a8b800);flex-shrink:0"></div>
   <div style="flex:1;display:flex;flex-direction:column;padding:32px 48px 36px;gap:18px">
@@ -3357,7 +3358,7 @@ body{font-family:'Inter',system-ui,sans-serif;width:794px;overflow-x:hidden;back
 </div>
 
 ${galleryChunks.map((chunk, ci) => `<!-- ══ GALLERY PAGE ══ -->
-<div class="page">
+<div class="page report-page">
   <div class="band"><span class="band-num">02</span><span class="band-vl"></span><span class="band-title">Фотографии${galleryChunks.length>1?' · '+(ci+1)+'/'+galleryChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:3px;background:linear-gradient(90deg,#c8d600,#a8b800);flex-shrink:0"></div>
   ${ci===0?`<div style="padding:18px 48px 12px;flex-shrink:0"><div style="font-size:22px;font-weight:900;color:#f8fafc;letter-spacing:-0.5px">Месяц в фотографиях</div></div>`:''}
@@ -3365,7 +3366,7 @@ ${galleryChunks.map((chunk, ci) => `<!-- ══ GALLERY PAGE ══ -->
 </div>`).join('')}
 
 <!-- ══ 03. VISIT SUMMARIES ══ -->
-<div class="page">
+<div class="page report-page">
   <div class="band"><span class="band-num">03</span><span class="band-vl"></span><span class="band-title">Краткие итоги визитов</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:3px;background:linear-gradient(90deg,#c8d600,#a8b800);flex-shrink:0"></div>
   <div style="flex:1;padding:30px 48px 36px;overflow:hidden">
@@ -3378,7 +3379,7 @@ ${galleryChunks.map((chunk, ci) => `<!-- ══ GALLERY PAGE ══ -->
 </div>
 
 <!-- ══ 04. PROVIDER STATUS ══ -->
-<div class="page" style="background:#09090e">
+<div class="page report-page" style="background:#09090e">
   <div class="hatch" style="position:absolute;inset:0;opacity:.8;pointer-events:none"></div>
   <div style="position:absolute;top:0;right:0;width:0;height:0;border-style:solid;border-width:0 240px 240px 0;border-color:transparent #c8d600 transparent transparent;opacity:.07;pointer-events:none"></div>
   <div style="position:absolute;bottom:0;left:0;width:0;height:0;border-style:solid;border-width:140px 0 0 140px;border-color:transparent transparent transparent #c8d600;opacity:.06;pointer-events:none"></div>
@@ -3406,19 +3407,19 @@ ${galleryChunks.map((chunk, ci) => `<!-- ══ GALLERY PAGE ══ -->
 </div>
 
 ${maintChunks.map((chunk, ci) => `<!-- ══ MAINT PHOTOS PAGE ══ -->
-<div class="page">
+<div class="page report-page">
   <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🏗️ Обслуживание территории${maintChunks.length>1?' · '+(ci+1)+'/'+maintChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:3px;background:linear-gradient(90deg,#c8d600,#a8b800);flex-shrink:0"></div>
   ${buildGrid(chunk, 3, 300)}
 </div>`).join('')}
 ${sosChunks.map((chunk, ci) => `<!-- ══ SOS PHOTOS PAGE ══ -->
-<div class="page">
+<div class="page report-page">
   <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">🚨 Экстренное ТО${sosChunks.length>1?' · '+(ci+1)+'/'+sosChunks.length:''}</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:3px;background:linear-gradient(90deg,#c8d600,#a8b800);flex-shrink:0"></div>
   ${buildGrid(chunk, 3, 300)}
 </div>`).join('')}
 ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ══ -->
-<div class="page">
+<div class="page report-page">
   <div class="band"><span class="band-num">05</span><span class="band-vl"></span><span class="band-title">Доп. работы — итоги</span><span class="band-sub">${moName} ${yr}</span></div>
   <div style="height:3px;background:linear-gradient(90deg,#c8d600,#a8b800);flex-shrink:0"></div>
   <div style="flex:1;padding:30px 48px 36px;overflow:hidden">
@@ -3432,7 +3433,7 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
 </div>`:''}
 
 <!-- ══ CONCLUSION ══ -->
-<div class="page" style="background:#09090e">
+<div class="page report-page" style="background:#09090e">
   <div class="hatch" style="position:absolute;inset:0;opacity:.6;pointer-events:none"></div>
   <div style="position:absolute;top:-100px;left:180px;width:2px;height:200%;background:#c8d600;opacity:.12;transform:rotate(22deg);pointer-events:none"></div>
   <div style="position:absolute;top:-100px;left:218px;width:1px;height:200%;background:#c8d600;opacity:.06;transform:rotate(22deg);pointer-events:none"></div>
@@ -3451,6 +3452,7 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
     </div>
   </div>
 </div>
+</div><!-- /report-content -->
 
 <script>
 // ── image pre-load: enable button once all photos are ready ──
@@ -3463,52 +3465,46 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
 })();
 
 // ── html2pdf export ──
-function savePdf(){
+function generatePDF(){
   var btn=document.getElementById('pbtn');
   var ims=document.getElementById('ims');
-  btn.disabled=true; btn.textContent='⏳ Генерация…';
+  if(btn){btn.disabled=true;btn.textContent='⏳ Генерация…';}
   if(ims) ims.textContent='Создание PDF…';
 
-  // hide UI-only elements (top bar + spacer)
-  var np=document.querySelectorAll('.np');
-  np.forEach(function(el){el.style.display='none';});
-
-  // lock viewport to A4 width before canvas render
-  document.documentElement.style.width='794px';
-  document.body.style.width='794px';
-  window.scrollTo(0,0);
+  var element=document.getElementById('report-content');
 
   var opt={
     margin:0,
     filename:'Отчёт_${moName}_${yr}.pdf',
-    image:{type:'jpeg',quality:0.95},
+    image:{type:'jpeg',quality:0.98},
     html2canvas:{
       scale:2,
       useCORS:true,
-      allowTaint:false,
+      allowTaint:true,
       logging:false,
       letterRendering:true,
+      backgroundColor:'#0f1117',
       scrollX:0,
       scrollY:0,
       width:794,
       windowWidth:794
     },
     jsPDF:{unit:'mm',format:'a4',orientation:'portrait',compress:true},
-    pagebreak:{mode:['css','legacy'],after:'.page',avoid:'.gcard'}
+    pagebreak:{mode:['css','legacy'],after:'.report-page',avoid:'.gcard'}
   };
 
-  html2pdf().set(opt).from(document.body).save()
-    .then(function(){ done(); })
-    .catch(function(){ done(); });
-
-  function done(){
-    np.forEach(function(el){el.style.display='';});
-    document.documentElement.style.width='';
-    document.body.style.width='';
-    btn.disabled=false; btn.style.opacity='1'; btn.style.cursor='pointer';
-    btn.textContent='🖨 СОХРАНИТЬ PDF';
-    if(ims) ims.textContent='✅ Готово';
-  }
+  setTimeout(function(){
+    html2pdf().set(opt).from(element).save()
+      .then(function(){
+        if(btn){btn.disabled=false;btn.style.opacity='1';btn.style.cursor='pointer';btn.textContent='🖨 СОХРАНИТЬ PDF';}
+        if(ims) ims.textContent='✅ Готово';
+      })
+      .catch(function(err){
+        console.error('PDF error:',err);
+        if(btn){btn.disabled=false;btn.style.opacity='1';btn.style.cursor='pointer';btn.textContent='❌ Ошибка';}
+        if(ims) ims.textContent='Ошибка';
+      });
+  },500);
 }
 <\/script>
 </body></html>`;
