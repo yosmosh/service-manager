@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-18a';
+const APP_VERSION = 'v2026-06-18b';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3200,7 +3200,24 @@ body{font-family:'Inter',system-ui,sans-serif;background:#08080d;-webkit-print-c
 .band-title{font-size:10px;font-weight:700;letter-spacing:3.5px;text-transform:uppercase;color:rgba(255,255,255,0.6)}
 .band-sub{margin-left:auto;font-size:9px;color:rgba(255,255,255,0.2);letter-spacing:2px}
 .gcard{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:28px;position:relative;overflow:hidden}
-@media print{body{background:white;margin:0;padding:0}.np{display:none!important}.page{width:210mm;height:297mm;margin:0;box-shadow:none;overflow:hidden;page-break-after:always;page-break-inside:avoid;display:flex;flex-direction:column}@page{size:A4 portrait;margin:0}}
+@media print{
+  *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
+  body{background:#08080d!important;margin:0;padding:0}
+  .np{display:none!important}
+  h1,h2,h3{break-after:avoid;page-break-after:avoid}
+  .gcard{break-inside:avoid;page-break-inside:avoid}
+  .page{
+    width:210mm;height:297mm;
+    margin:0;box-shadow:none;
+    overflow:hidden;
+    page-break-after:always;break-after:page;
+    page-break-inside:avoid;break-inside:avoid;
+    display:flex;flex-direction:column;
+    position:relative
+  }
+  .page:last-of-type{page-break-after:auto;break-after:auto}
+  @page{size:A4 portrait;margin:0}
+}
 </style></head><body>
 
 <!-- TOP BAR -->
