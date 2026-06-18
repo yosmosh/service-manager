@@ -474,7 +474,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
-const APP_VERSION = 'v2026-06-19b';
+const APP_VERSION = 'v2026-06-19c';
 
 // Global error catching - shows ALL JS errors visibly
 window.onerror = function(msg, src, line, col, err) {
@@ -3191,8 +3191,23 @@ function generateReport() {
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 html{width:794px;overflow-x:hidden}
-body{font-family:'Inter',system-ui,sans-serif;width:794px;overflow-x:hidden;background:#08080d;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.page{width:794px;min-height:1123px;margin:0 auto 16px;background:#0f1117;box-shadow:0 24px 60px rgba(0,0,0,0.7);position:relative;overflow:visible;display:flex;flex-direction:column;color:#f8fafc;box-sizing:border-box}
+body{
+  font-family:'Inter',system-ui,sans-serif;
+  width:794px;overflow-x:hidden;
+  background:#08080d;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact;
+  background-image:
+    linear-gradient(rgba(200,214,0,0.025) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(200,214,0,0.025) 1px,transparent 1px);
+  background-size:44px 44px
+}
+.page{
+  width:794px;min-height:1123px;margin:0 auto 16px;
+  background:#0f1117;box-shadow:0 24px 60px rgba(0,0,0,0.7);
+  position:relative;overflow:visible;
+  display:flex;flex-direction:column;
+  color:#f8fafc;box-sizing:border-box
+}
 .hatch{background:repeating-linear-gradient(45deg,transparent,transparent 18px,rgba(200,214,0,0.04) 18px,rgba(200,214,0,0.04) 20px)}
 .band{background:#060609;padding:0 48px;height:60px;display:flex;align-items:center;gap:16px;flex-shrink:0;border-bottom:1px solid rgba(200,214,0,0.15)}
 .band-num{font-size:24px;font-weight:900;color:#c8d600;line-height:1;letter-spacing:-1px}
@@ -3200,27 +3215,39 @@ body{font-family:'Inter',system-ui,sans-serif;width:794px;overflow-x:hidden;back
 .band-title{font-size:10px;font-weight:700;letter-spacing:3.5px;text-transform:uppercase;color:rgba(255,255,255,0.6)}
 .band-sub{margin-left:auto;font-size:9px;color:rgba(255,255,255,0.2);letter-spacing:2px}
 .gcard{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:28px;position:relative;overflow:hidden;box-sizing:border-box}
-@page{size:A4 portrait;margin:0}
+.report-section-block{break-inside:avoid;page-break-inside:avoid}
+@page{size:A4 portrait;margin:15mm 12mm 15mm 12mm}
 @media print{
-  *,*::before,*::after{box-sizing:border-box!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
-  html,body{width:210mm!important;max-width:210mm!important;overflow-x:hidden!important;background:#08080d!important;margin:0!important;padding:0!important}
+  *,*::before,*::after{
+    box-sizing:border-box!important;
+    -webkit-print-color-adjust:exact!important;
+    print-color-adjust:exact!important;
+    color-adjust:exact!important
+  }
+  html,body{
+    width:100%!important;
+    background-color:#08080d!important;
+    color:#f8fafc!important;
+    margin:0!important;padding:0!important;
+    background-image:
+      linear-gradient(rgba(200,214,0,0.025) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(200,214,0,0.025) 1px,transparent 1px)!important;
+    background-size:44px 44px!important
+  }
   .np{display:none!important}
-  h1,h2,h3{break-after:avoid!important;page-break-after:avoid!important}
-  .gcard{break-inside:avoid!important;page-break-inside:avoid!important}
+  h1,h2,h3,h4{break-after:avoid!important;page-break-after:avoid!important}
+  .band{break-after:avoid!important;page-break-after:avoid!important}
+  .gcard,.report-section-block{break-inside:avoid!important;page-break-inside:avoid!important}
   .page{
-    width:210mm!important;max-width:210mm!important;
-    min-height:297mm!important;height:auto!important;
-    margin:0!important;padding:0!important;box-shadow:none!important;
+    width:100%!important;
+    height:auto!important;min-height:0!important;
+    margin:0 0 4mm!important;padding:0!important;box-shadow:none!important;
     overflow:visible!important;
-    page-break-after:always!important;break-after:page!important;
-    page-break-inside:avoid!important;break-inside:avoid!important;
-    display:flex!important;flex-direction:column!important;
+    display:block!important;
     position:relative!important;box-sizing:border-box!important
   }
-  .page:last-of-type{page-break-after:auto!important;break-after:auto!important}
 }
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"><\/script>
 </head><body>
 
 <!-- TOP BAR -->
@@ -3230,7 +3257,7 @@ body{font-family:'Inter',system-ui,sans-serif;width:794px;overflow-x:hidden;back
     <span style="font-size:13px;font-weight:700;color:#f8fafc;letter-spacing:.3px">${moName} ${yr}</span>
     <span id="ims" style="font-size:11px;color:rgba(255,255,255,0.3)">Загрузка фото…</span>
   </div>
-  <button id="pbtn" onclick="generatePDF()" disabled style="background:#c8d600;color:#0a0a0f;border:none;padding:9px 24px;font-size:12px;font-weight:800;cursor:not-allowed;opacity:0.35;transition:all .3s;font-family:inherit;letter-spacing:1px;border-radius:6px">🖨 СОХРАНИТЬ PDF</button>
+  <button id="pbtn" onclick="window.print()" disabled style="background:#c8d600;color:#0a0a0f;border:none;padding:9px 24px;font-size:12px;font-weight:800;cursor:not-allowed;opacity:0.35;transition:all .3s;font-family:inherit;letter-spacing:1px;border-radius:6px">🖨 СОХРАНИТЬ PDF</button>
 </div>
 <div class="np" style="height:50px"></div>
 
@@ -3455,57 +3482,13 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
 </div><!-- /report-content -->
 
 <script>
-// ── image pre-load: enable button once all photos are ready ──
 (function(){
   var imgs=document.querySelectorAll('img'),n=imgs.length,k=0;
   var s=document.getElementById('ims'),b=document.getElementById('pbtn');
-  function t(){if(++k>=n||!n){if(s)s.textContent='✅ Готово';if(b){b.disabled=false;b.style.opacity='1';b.style.cursor='pointer';}}else if(s)s.textContent=k+' / '+n+' фото'}
+  function t(){if(++k>=n||!n){if(s)s.textContent='✅ Готово к печати';if(b){b.disabled=false;b.style.opacity='1';b.style.cursor='pointer';}}else if(s)s.textContent=k+' / '+n+' фото'}
   if(!n){t();return;}
   imgs.forEach(function(i){if(i.complete)t();else{i.addEventListener('load',t);i.addEventListener('error',t);}});
 })();
-
-// ── html2pdf export ──
-function generatePDF(){
-  var btn=document.getElementById('pbtn');
-  var ims=document.getElementById('ims');
-  if(btn){btn.disabled=true;btn.textContent='⏳ Генерация…';}
-  if(ims) ims.textContent='Создание PDF…';
-
-  var element=document.getElementById('report-content');
-
-  var opt={
-    margin:0,
-    filename:'Отчёт_${moName}_${yr}.pdf',
-    image:{type:'jpeg',quality:0.98},
-    html2canvas:{
-      scale:2,
-      useCORS:true,
-      allowTaint:true,
-      logging:false,
-      letterRendering:true,
-      backgroundColor:'#0f1117',
-      scrollX:0,
-      scrollY:0,
-      width:794,
-      windowWidth:794
-    },
-    jsPDF:{unit:'mm',format:'a4',orientation:'portrait',compress:true},
-    pagebreak:{mode:['css','legacy'],after:'.report-page',avoid:'.gcard'}
-  };
-
-  setTimeout(function(){
-    html2pdf().set(opt).from(element).save()
-      .then(function(){
-        if(btn){btn.disabled=false;btn.style.opacity='1';btn.style.cursor='pointer';btn.textContent='🖨 СОХРАНИТЬ PDF';}
-        if(ims) ims.textContent='✅ Готово';
-      })
-      .catch(function(err){
-        console.error('PDF error:',err);
-        if(btn){btn.disabled=false;btn.style.opacity='1';btn.style.cursor='pointer';btn.textContent='❌ Ошибка';}
-        if(ims) ims.textContent='Ошибка';
-      });
-  },500);
-}
 <\/script>
 </body></html>`;
 
