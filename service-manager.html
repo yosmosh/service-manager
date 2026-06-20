@@ -3945,6 +3945,7 @@ function renderJournal() {
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
             ${badgeHtml}
+            <button onclick="shareProviderMonth('${p.id}',${journalYear},${journalMonth},event)" title="Поделиться отчётом" style="background:none;border:none;cursor:pointer;font-size:15px;padding:2px 4px;opacity:0.75;line-height:1;border-radius:4px" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.75'">🔗</button>
             <span style="color:#94a3b8;font-size:12px">▼</span>
           </div>
         </div>
