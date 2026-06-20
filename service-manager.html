@@ -4439,7 +4439,9 @@ function overlayClick(e) {
 // ==============================
 async function shareProviderMonth(pid, yr, mo, evt) {
   evt && evt.stopPropagation();
-  if (!_firestoreDB) { alert('Firebase недоступен'); return; }
+  if (!_firestoreDB) { _showToast('❌ Firebase недоступен', false); return; }
+  const btn = evt && evt.currentTarget;
+  if (btn) { btn.textContent = '⏳'; btn.style.opacity = '1'; }
   const p = PROVIDERS.find(x => x.id === pid);
   if (!p) return;
   const rec = getRecord(pid, yr, mo);
@@ -4463,9 +4465,12 @@ async function shareProviderMonth(pid, yr, mo, evt) {
   try {
     await _firestoreDB.collection('appdata').doc('share_' + token).set(shareData);
     const url = location.origin + location.pathname + '?share=' + token;
-    showShareLinkModal(url);
+    await navigator.clipboard.writeText(url);
+    if (btn) { btn.textContent = '✅'; setTimeout(() => { btn.textContent = '🔗'; btn.style.opacity = '0.75'; }, 2500); }
+    _showToast('✅ Ссылка скопирована в буфер обмена!', true);
   } catch(e) {
-    alert('Ошибка создания ссылки: ' + e.message);
+    if (btn) { btn.textContent = '🔗'; btn.style.opacity = '0.75'; }
+    _showToast('❌ Ошибка: ' + e.message, false);
   }
 }
 
