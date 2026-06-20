@@ -1741,7 +1741,7 @@ function renderProvider(p) {
         <div class="month-name">${MONTHS[m-1]}</div>
         <div class="month-sub" style="font-size:10px;line-height:1.3">${subText}</div>
         ${dotsHtml}
-        <button onclick="shareProviderMonth('${p.id}',${displayYear},${m},event)" title="Поделиться отчётом" style="position:absolute;top:5px;right:5px;background:none;border:none;cursor:pointer;font-size:15px;padding:2px;line-height:1;opacity:0.75;border-radius:4px" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.75'">🔗</button>
+        ${(currentUser==='owner'||currentUser==='admin')?`<button onclick="shareProviderMonth('${p.id}',${displayYear},${m},event)" title="Поделиться отчётом" style="position:absolute;top:5px;right:5px;background:none;border:none;cursor:pointer;font-size:15px;padding:2px;line-height:1;opacity:0.75;border-radius:4px" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.75'">🔗</button>`:''}
       </div>`;
   }).join('');
 
@@ -3589,7 +3589,7 @@ function renderMaintenance() {
           </div>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
             ${statusBadge(w.status)}
-            <button onclick="shareMaintWork('${w.id}',event)" title="Поделиться" style="background:none;border:none;cursor:pointer;font-size:15px;padding:2px;opacity:0.7;line-height:1" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>
+            ${(currentUser==='owner'||currentUser==='admin')?`<button onclick="shareMaintWork('${w.id}',event)" title="Поделиться" style="background:none;border:none;cursor:pointer;font-size:15px;padding:2px;opacity:0.7;line-height:1" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>`:''}
           </div>
         </div>
         ${w.description ? `<div style="font-size:12px;color:#374151;margin-bottom:8px;background:#f8fafc;border-radius:6px;padding:7px 10px;border-left:3px solid #2563eb">${w.description}</div>` : ''}
@@ -3817,7 +3817,7 @@ function renderSOS() {
             <span class="badge ${s.status==='resolved'?'badge-success':s.status==='in_progress'?'badge-warning':'badge-danger'}">
               ${s.status==='resolved'?'✅ Выполнено':s.status==='in_progress'?'🔄 В работе':'⚠️ Ожидает'}
             </span>
-            <button onclick="shareSOSItem('${s.id}',event)" title="Поделиться" style="background:none;border:none;cursor:pointer;font-size:15px;padding:2px;opacity:0.7;line-height:1" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>
+            ${(currentUser==='owner'||currentUser==='admin')?`<button onclick="shareSOSItem('${s.id}',event)" title="Поделиться" style="background:none;border:none;cursor:pointer;font-size:15px;padding:2px;opacity:0.7;line-height:1" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>`:''}
           </div>
         </div>
         <div style="font-size:11px;color:#6b7280">📅 ${fmtDate(s.date)} · Приоритет: ${s.priority==='high'?'Высокий':s.priority==='medium'?'Средний':'Низкий'}</div>
@@ -3951,7 +3951,7 @@ function renderJournal() {
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
             ${badgeHtml}
-            <button onclick="shareProviderMonth('${p.id}',${journalYear},${journalMonth},event)" title="Поделиться отчётом" style="background:none;border:none;cursor:pointer;font-size:15px;padding:2px 4px;opacity:0.75;line-height:1;border-radius:4px" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.75'">🔗</button>
+            ${(currentUser==='owner'||currentUser==='admin')?`<button onclick="shareProviderMonth('${p.id}',${journalYear},${journalMonth},event)" title="Поделиться отчётом" style="background:none;border:none;cursor:pointer;font-size:15px;padding:2px 4px;opacity:0.75;line-height:1;border-radius:4px" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.75'">🔗</button>`:''}
             <span style="color:#94a3b8;font-size:12px">▼</span>
           </div>
         </div>
