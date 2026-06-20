@@ -4460,7 +4460,7 @@ async function shareProviderMonth(pid, yr, mo, evt) {
     createdAt: Date.now()
   };
   try {
-    await _firestoreDB.collection('shares').doc(token).set(shareData);
+    await _firestoreDB.collection('appdata').doc('share_' + token).set(shareData);
     const url = location.origin + location.pathname + '?share=' + token;
     showShareLinkModal(url);
   } catch(e) {
@@ -4490,7 +4490,7 @@ async function loadSharePage(token) {
     return;
   }
   try {
-    const doc = await _firestoreDB.collection('shares').doc(token).get();
+    const doc = await _firestoreDB.collection('appdata').doc('share_' + token).get();
     if (!doc.exists) {
       document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 24px"><h2 style="color:#1e293b">Ссылка не найдена</h2><p style="color:#6b7280">Эта ссылка недействительна или устарела.</p></div>';
       return;
