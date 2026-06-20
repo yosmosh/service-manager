@@ -1734,7 +1734,6 @@ function renderProvider(p) {
       ? (doneCnt >= requiredVisits ? `✓ ${doneCnt} визит(а) выполнено` : `${doneCnt} из ${requiredVisits} выполнено`)
       : (desc || '—');
 
-    const hasShareData = doneCnt > 0 || !!r.description;
     return `
       <div class="month-card ${status} ${isCur?'current-month':''}" style="position:relative"
            onclick="openRecordModal('${p.id}',${displayYear},${m})">
@@ -1742,7 +1741,7 @@ function renderProvider(p) {
         <div class="month-name">${MONTHS[m-1]}</div>
         <div class="month-sub" style="font-size:10px;line-height:1.3">${subText}</div>
         ${dotsHtml}
-        ${hasShareData ? `<button onclick="shareProviderMonth('${p.id}',${displayYear},${m},event)" title="Поделиться отчётом" style="position:absolute;top:4px;right:4px;background:none;border:none;cursor:pointer;font-size:13px;padding:3px 4px;opacity:0.4;line-height:1;border-radius:4px" onmouseover="this.style.opacity='1';this.style.background='rgba(0,0,0,0.06)'" onmouseout="this.style.opacity='0.4';this.style.background='none'">🔗</button>` : ''}
+        <button onclick="shareProviderMonth('${p.id}',${displayYear},${m},event)" title="Поделиться отчётом" style="position:absolute;top:5px;right:5px;background:none;border:none;cursor:pointer;font-size:15px;padding:2px;line-height:1;opacity:0.75;border-radius:4px" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.75'">🔗</button>
       </div>`;
   }).join('');
 
