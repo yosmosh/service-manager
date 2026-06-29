@@ -4649,6 +4649,7 @@ async function shareMonthlyReport() {
     stats: { totalDone, totalReq, pct, totalFiles },
     providers, maint, sos, createdAt: Date.now()
   }, null);
+  window.open(location.origin + location.pathname + '?share=' + token, '_blank');
 }
 
 function renderSharePageMonthlyReport(d) {
