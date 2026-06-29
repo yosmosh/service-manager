@@ -4468,15 +4468,24 @@ function overlayClick(e) {
 // ПУБЛИЧНЫЕ ССЫЛКИ (SHARE)
 // ==============================
 async function _doShare(token, data, btn) {
+  const url = location.origin + location.pathname + '?share=' + token;
+  // Copy URL synchronously BEFORE any network await — required for iOS Safari
+  let copied = false;
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = url; ta.style.cssText = 'position:fixed;opacity:0;top:-9999px;left:-9999px';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    copied = document.execCommand('copy');
+    document.body.removeChild(ta);
+  } catch(e) {}
+  if (!copied) try { await navigator.clipboard.writeText(url); copied = true; } catch(e) {}
   try {
     await _firestoreDB.collection('appdata').doc('share_' + token).set(data);
-    const url = location.origin + location.pathname + '?share=' + token;
-    await navigator.clipboard.writeText(url);
     if (btn) { btn.textContent = '✅'; setTimeout(() => { btn.textContent = '🔗'; btn.style.opacity = '0.7'; }, 2500); }
     _showToast('✅ Ссылка скопирована в буфер обмена!', true);
   } catch(e) {
     if (btn) { btn.textContent = '🔗'; btn.style.opacity = '0.7'; }
-    _showToast('❌ Ошибка: ' + e.message, false);
+    _showToast('❌ Ошибка сохранения: ' + e.message, false);
   }
 }
 
