@@ -426,7 +426,7 @@ img{max-width:100%;height:auto}
     <div class="sidebar-section-title">Управление</div>
     <div class="nav-item" id="nav-contacts" onclick="showView('contacts')">📞 Контакты поставщиков</div>
     <div class="nav-item admin-or-owner" id="nav-settings" onclick="openSettingsModal()">⚙️ Настройки доступа</div>
-    <div class="nav-item owner-only" id="nav-report" onclick="generateReport()" style="color:#7c3aed;font-weight:600">📑 Отчёт за месяц (PDF)</div>
+    <div class="nav-item owner-only" id="nav-report" onclick="shareMonthlyReport()" style="color:#7c3aed;font-weight:600">📊 Отчёт онлайн</div>
     <div class="nav-item owner-only" id="nav-export" onclick="exportCSV()">📊 Экспорт данных (CSV)</div>
     <div class="nav-item owner-only" id="recompress-btn" onclick="recompressExistingImages()" style="color:#f59e0b">🗜️ דחוס תמונות קיימות</div>
   </div>
@@ -4573,11 +4573,185 @@ async function loadSharePage(token) {
       return;
     }
     const d = doc.data();
-    if (d.type === 'maint' || d.type === 'sos') renderSharePageWork(d);
+    if (d.type === 'monthly_report') renderSharePageMonthlyReport(d);
+    else if (d.type === 'maint' || d.type === 'sos') renderSharePageWork(d);
     else renderSharePage(d);
   } catch(e) {
     document.body.innerHTML = `<div style="font-family:sans-serif;text-align:center;padding:80px 24px;color:#dc2626"><h2>Ошибка загрузки</h2><p>${e.message}</p></div>`;
   }
+}
+
+async function shareMonthlyReport() {
+  if (!_firestoreDB) { _showToast('❌ Firebase недоступен', false); return; }
+  const mo = journalMonth, yr = journalYear;
+  const moKey = `${yr}-${String(mo).padStart(2,'0')}`;
+  const today = new Date();
+  const todayStr = `${String(today.getDate()).padStart(2,'0')}.${String(today.getMonth()+1).padStart(2,'0')}.${today.getFullYear()}`;
+  const fc = getLS('files') || {};
+  _showToast('⏳ Формируем отчёт…', true);
+
+  function _media(fileIds, fileTypes, fileNames) {
+    const photos = [], docs = [];
+    (fileIds || []).forEach((fid, fi) => {
+      const url = (fc[fid] || {}).url || '';
+      if (!url) return;
+      const type = (fileTypes || [])[fi] || '';
+      const name = (fileNames || [])[fi] || 'Файл';
+      if (type.startsWith('image/')) photos.push({ url });
+      else docs.push({ url, name });
+    });
+    return { photos, docs };
+  }
+
+  let totalDone = 0, totalReq = 0, totalFiles = 0;
+  const providers = [];
+  PROVIDERS.forEach(p => {
+    const sched = p.schedules.find(s => s.months.includes(mo));
+    const r = getRecord(p.id, yr, mo);
+    const req = sched ? (sched.visits || 1) : 0;
+    const visits = r.visits ? [...r.visits] : (r.completed !== undefined ? [{...r}] : []);
+    const done = visits.filter(v => v.completed);
+    if (!sched && !done.length && !visits.some(v => (v.fileIds||[]).length)) return;
+    totalDone += done.length; totalReq += req;
+    done.forEach(v => totalFiles += (v.fileIds||[]).length);
+    providers.push({
+      name: p.name, emoji: p.emoji, cat: p.cat, color: p.color, bg: p.bg,
+      req, doneCnt: done.length, schedDesc: sched ? sched.desc : '',
+      visits: done.map(v => {
+        const { photos, docs } = _media(v.fileIds, v.fileTypes, v.fileNames);
+        return { completedDate: v.completedDate || '', notes: v.notes || '', photos, docs };
+      })
+    });
+  });
+
+  const maintWorks = getMaintWorks().filter(w => (w.date||'').startsWith(moKey));
+  const maint = maintWorks.map(w => {
+    const { photos, docs } = _media(w.fileIds, w.fileTypes, w.fileNames);
+    totalFiles += (w.fileIds||[]).length;
+    return { title: w.title, date: w.date, status: w.status,
+      categoryLabel: maintCatLabel(w.category||'other'),
+      cost: w.cost||'', description: w.description||'', photos, docs };
+  });
+
+  const sosEvts = getSOS().filter(s => (s.date||'').startsWith(moKey));
+  const sos = sosEvts.map(s => {
+    const { photos, docs } = _media(s.fileIds, s.fileTypes, s.fileNames);
+    totalFiles += (s.fileIds||[]).length;
+    const priLabel = s.priority==='high'?'Высокий':s.priority==='medium'?'Средний':'Низкий';
+    return { title: s.title, date: s.date, status: s.status,
+      priorityLabel: priLabel, description: s.description||'', photos, docs };
+  });
+
+  const pct = totalReq > 0 ? Math.round(totalDone / totalReq * 100) : 0;
+  const token = Math.random().toString(36).slice(2,9) + Math.random().toString(36).slice(2,9);
+  await _doShare(token, {
+    type: 'monthly_report', yr, mo, moName: MONTHS[mo-1], todayStr,
+    stats: { totalDone, totalReq, pct, totalFiles },
+    providers, maint, sos, createdAt: Date.now()
+  }, null);
+}
+
+function renderSharePageMonthlyReport(d) {
+  const stats = d.stats || {};
+  const providers = d.providers || [];
+  const maint = d.maint || [];
+  const sos = d.sos || [];
+
+  const fmtD = dt => {
+    if (!dt) return '—';
+    const p = dt.split('-');
+    return p.length === 3 ? p[2]+'.'+p[1]+'.'+p[0] : dt;
+  };
+  const thumbs = photos => photos.length
+    ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${photos.map(ph =>
+        `<img src="${ph.url}" alt="" loading="lazy" style="width:68px;height:68px;object-fit:cover;border-radius:6px;cursor:pointer;border:1px solid #e2e8f0" onclick="var s=this.style;s.width=s.width==='100%'?'68px':'100%';s.height=s.height==='auto'?'68px':'auto'">`
+      ).join('')}</div>` : '';
+  const docLinks = docs => docs.length
+    ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">${docs.map(doc =>
+        `<a href="${doc.url}" target="_blank" style="display:inline-flex;align-items:center;gap:3px;background:#f1f5f9;border-radius:5px;padding:3px 8px;text-decoration:none;color:#2563eb;font-size:11px">📎 ${doc.name}</a>`
+      ).join('')}</div>` : '';
+
+  const providersHtml = providers.map(p => {
+    const visitsHtml = p.visits.length === 0
+      ? '<div style="color:#9ca3af;font-size:12px;font-style:italic;padding:4px 0">Нет выполненных визитов</div>'
+      : p.visits.map((v, i) => `
+          <div style="padding:7px 0;${i>0?'border-top:1px solid #f1f5f9':''}">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:11px;font-weight:600;color:#16a34a">✅ Визит ${i+1}</span>
+              ${v.completedDate?`<span style="font-size:11px;color:#6b7280">📅 ${fmtD(v.completedDate)}</span>`:''}
+            </div>
+            ${v.notes?`<div style="font-size:12px;color:#374151;line-height:1.5;margin-top:3px;padding-left:6px;border-left:2px solid ${p.color}">${v.notes}</div>`:''}
+            ${thumbs(v.photos)}${docLinks(v.docs)}
+          </div>`).join('');
+    const ok = p.doneCnt >= p.req && p.req > 0;
+    return `
+      <div style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;border-left:4px solid ${p.color};margin-bottom:10px">
+        <div style="padding:9px 12px;background:${p.bg};display:flex;align-items:center;gap:10px;border-radius:8px 8px 0 0">
+          <span style="font-size:20px">${p.emoji}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:13px;color:#1e293b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div>
+            <div style="font-size:10px;color:#6b7280">${p.cat}</div>
+          </div>
+          <span style="background:${ok?'#dcfce7':'#fef3c7'};color:${ok?'#16a34a':'#d97706'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;white-space:nowrap">${p.doneCnt}/${p.req}</span>
+        </div>
+        <div style="padding:6px 12px 10px">${visitsHtml}</div>
+      </div>`;
+  }).join('');
+
+  const maintHtml = maint.length ? `
+    <div style="margin-bottom:12px">
+      <div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">🏗️ Обслуживание территории (${maint.length})</div>
+      ${maint.map(w => `
+        <div style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;border-left:4px solid #64748b;margin-bottom:8px;padding:9px 12px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:3px">
+            <div style="font-weight:600;font-size:13px;color:#1e293b">${w.title}</div>
+            <span style="background:${w.status==='done'?'#dcfce7':'#fef3c7'};color:${w.status==='done'?'#16a34a':'#d97706'};border-radius:5px;padding:2px 6px;font-size:10px;font-weight:700;flex-shrink:0">${w.status==='done'?'✅':'🔄'}</span>
+          </div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:3px">${w.categoryLabel} · ${fmtD(w.date)}${w.cost?' · 💰 '+Number(w.cost).toLocaleString('ru')+' ₽':''}</div>
+          ${w.description?`<div style="font-size:12px;color:#374151;margin-bottom:3px">${w.description}</div>`:''}
+          ${thumbs(w.photos)}${docLinks(w.docs)}
+        </div>`).join('')}
+    </div>` : '';
+
+  const sosHtml = sos.length ? `
+    <div style="margin-bottom:12px">
+      <div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">🚨 Экстренное ТО (${sos.length})</div>
+      ${sos.map(s => `
+        <div style="background:#fff;border-radius:12px;border:1px solid #fca5a5;border-left:4px solid #dc2626;margin-bottom:8px;padding:9px 12px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:3px">
+            <div style="font-weight:600;font-size:13px;color:#1e293b">${s.title}</div>
+            <span style="background:${s.status==='resolved'?'#dcfce7':'#fee2e2'};color:${s.status==='resolved'?'#16a34a':'#dc2626'};border-radius:5px;padding:2px 6px;font-size:10px;font-weight:700;flex-shrink:0">${s.status==='resolved'?'✅':'⚠️'}</span>
+          </div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:3px">📅 ${fmtD(s.date)} · Приоритет: ${s.priorityLabel}</div>
+          ${s.description?`<div style="font-size:12px;color:#374151;margin-bottom:3px">${s.description}</div>`:''}
+          ${thumbs(s.photos)}${docLinks(s.docs)}
+        </div>`).join('')}
+    </div>` : '';
+
+  document.body.style.margin = '0';
+  document.body.style.background = '#f8fafc';
+  document.body.innerHTML = `
+    <div style="min-height:100vh;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+      <div style="position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #e2e8f0;padding:10px 14px;display:flex;align-items:center;gap:10px;box-shadow:0 1px 4px rgba(0,0,0,.06)">
+        <div>
+          <div style="font-size:15px;font-weight:800;color:#1e293b">${d.moName} ${d.yr}</div>
+          <div style="font-size:10px;color:#9ca3af">Сформирован ${d.todayStr}</div>
+        </div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-left:auto">
+          <span style="background:#dcfce7;color:#16a34a;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:700">✅ ${stats.totalDone} выполнено</span>
+          ${stats.pct>0?`<span style="background:#f1f5f9;color:#374151;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:600">${stats.pct}%</span>`:''}
+          ${stats.totalFiles>0?`<span style="background:#eff6ff;color:#2563eb;border-radius:6px;padding:3px 8px;font-size:11px">📎 ${stats.totalFiles}</span>`:''}
+        </div>
+      </div>
+      <div style="max-width:640px;margin:0 auto;padding:12px 12px 40px">
+        <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Обслуживание поставщиков</div>
+        ${providersHtml || '<div style="color:#9ca3af;font-size:13px;text-align:center;padding:20px 0">Нет данных</div>'}
+        ${maintHtml}${sosHtml}
+        <div style="text-align:center;font-size:10px;color:#cbd5e1;padding:8px 0">
+          Отчёт сформирован системой управления ТО · Открывается без входа в систему
+        </div>
+      </div>
+    </div>`;
 }
 
 function renderSharePageWork(d) {
