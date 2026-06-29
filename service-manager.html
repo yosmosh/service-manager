@@ -4590,12 +4590,23 @@ async function shareMonthlyReport() {
   if (!_firestoreDB) { _showToast('❌ Firebase недоступен', false); return; }
   _showToast('⏳ Формируем отчёт…', true);
   const html = _buildReportHTML();
-  // Open preview immediately — same dark styled report as the PDF popup
-  const win = window.open('', '_blank');
-  if (win) { win.document.write(html); win.document.close(); }
-  else { _showToast('❌ Разрешите всплывающие окна в браузере', false); }
-  // Store in Firestore and copy share URL to clipboard
   const token = Math.random().toString(36).slice(2,9) + Math.random().toString(36).slice(2,9);
+  const shareUrl = location.origin + location.pathname + '?share=' + token;
+  // Open preview immediately (must be before await to avoid popup blocker)
+  const win = window.open('', '_blank');
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+    // Show share URL banner inside the preview tab so user sees it
+    const t = win.document.createElement('div');
+    t.style.cssText = 'position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#c8d600;color:#000;padding:11px 28px;border-radius:100px;font-family:sans-serif;font-size:13px;font-weight:700;z-index:99999;white-space:nowrap;box-shadow:0 4px 24px rgba(0,0,0,0.6);pointer-events:none';
+    t.textContent = '✅ Ссылка на отчёт скопирована в буфер обмена!';
+    win.document.body.appendChild(t);
+    win.setTimeout(() => t.remove(), 5000);
+  } else {
+    _showToast('❌ Разрешите всплывающие окна в браузере', false);
+  }
+  // Store in Firestore and copy share URL to clipboard
   await _doShare(token, { type: 'monthly_report', html, createdAt: Date.now() }, null);
 }
 
