@@ -2967,6 +2967,19 @@ function _bestProvImg(done, fc) {
   return best;
 }
 
+function _oneSentence(text, max) {
+  if (!text) return '';
+  max = max || 140;
+  text = text.trim().replace(/\s+/g, ' ');
+  // Find first complete sentence ending with . ! ?
+  const m = text.match(/^.{15,}?[.!?](?:\s|$)/);
+  if (m && m[0].trim().length <= max) return m[0].trim();
+  // No clean sentence end — truncate at word boundary
+  if (text.length <= max) return text;
+  const cut = text.lastIndexOf(' ', max);
+  return (cut > 20 ? text.slice(0, cut) : text.slice(0, max)) + '…';
+}
+
 function _buildReportHTML() {
   const mo = journalMonth, yr = journalYear;
   const moName = MONTHS[mo-1];
@@ -3136,7 +3149,7 @@ function _buildReportHTML() {
           </div>
           <span style="background:rgba(200,214,0,0.12);border:1px solid rgba(200,214,0,0.3);color:#c8d600;font-size:8px;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:.5px;white-space:nowrap;flex-shrink:0">✓ ВЫПОЛНЕНО</span>
         </div>
-        ${w.description?`<div style="font-size:11px;color:rgba(248,250,252,0.55);line-height:1.7;border-left:2px solid rgba(255,255,255,0.1);padding-left:10px;margin-top:8px">${w.description.slice(0,220)}</div>`:''}
+        ${w.description?`<div style="font-size:11px;color:rgba(248,250,252,0.55);line-height:1.7;border-left:2px solid rgba(255,255,255,0.1);padding-left:10px;margin-top:8px">${_oneSentence(w.description)}</div>`:''}
       </div>
     </div>`;
   }).join('');
@@ -3157,7 +3170,7 @@ function _buildReportHTML() {
           </div>
           <span style="background:${resolved?'rgba(34,197,94,0.12)':'rgba(239,68,68,0.12)'};border:1px solid ${resolved?'rgba(34,197,94,0.3)':'rgba(239,68,68,0.3)'};color:${resolved?'#4ade80':'#f87171'};font-size:8px;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:.5px;white-space:nowrap;flex-shrink:0">${resolved?'✓ УСТРАНЕНО':'⚠ В РАБОТЕ'}</span>
         </div>
-        ${s.description?`<div style="font-size:11px;color:${resolved?'rgba(248,250,252,0.55)':'rgba(248,112,112,0.7)'};line-height:1.7;border-left:2px solid ${resolved?'rgba(255,255,255,0.1)':'rgba(239,68,68,0.3)'};padding-left:10px;margin-top:8px">${s.description.slice(0,220)}</div>`:''}
+        ${s.description?`<div style="font-size:11px;color:${resolved?'rgba(248,250,252,0.55)':'rgba(248,112,112,0.7)'};line-height:1.7;border-left:2px solid ${resolved?'rgba(255,255,255,0.1)':'rgba(239,68,68,0.3)'};padding-left:10px;margin-top:8px">${_oneSentence(s.description)}</div>`:''}
       </div>
     </div>`;
   }).join('');
@@ -3176,7 +3189,7 @@ function _buildReportHTML() {
     const accentColor = ok ? '#22c55e' : isIssue ? '#ef4444' : '#c8d600';
     const allNotes = done.map(v => v.notes||'').filter(Boolean);
     const summaryText = allNotes.length > 0
-      ? allNotes[allNotes.length-1].slice(0, 220)
+      ? _oneSentence(allNotes[allNotes.length-1])
       : ok ? 'Плановые работы выполнены в полном объёме.'
       : isIssue ? 'Плановые работы не выполнены в этом месяце. Требуется связаться с подрядчиком.'
       : '';
