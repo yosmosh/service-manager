@@ -473,6 +473,7 @@ img{max-width:100%;height:auto}
 <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ru.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 <script>
 const APP_VERSION = 'v2026-06-21a';
 
@@ -1838,7 +1839,7 @@ function openRecordModal(pid, yr, mo) {
                onclick="document.getElementById('visit-fi-${vi}').click()"
                style="padding:12px;font-size:12px">
             📷 Фото / 🎬 Видео / 📄 Документ — перетащите или нажмите
-            <input type="file" id="visit-fi-${vi}" multiple accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx"
+            <input type="file" id="visit-fi-${vi}" multiple accept="image/*,.heic,.heif,video/*,.pdf,.doc,.docx,.xls,.xlsx"
                    style="display:none" onchange="onVisitFilePick(${vi},this)">
           </div>
           <div class="file-list" id="visit-pending-${vi}"></div>
@@ -1992,6 +1993,24 @@ function _fileFP(data, size) {
 
 function _compressImage(file) {
   return new Promise(function(resolve) {
+    // Convert HEIC/HEIF (iPhone format) → JPEG before processing
+    const isHeic = file.type === 'image/heic' || file.type === 'image/heif' ||
+                   /\.(heic|heif)$/i.test(file.name || '');
+    if (isHeic && typeof heic2any !== 'undefined') {
+      heic2any({ blob: file, toType: 'image/jpeg', quality: 0.85 })
+        .then(function(blob) {
+          const jpgFile = new File([blob], (file.name || 'photo').replace(/\.(heic|heif)$/i, '.jpg'), { type: 'image/jpeg' });
+          _compressImage(jpgFile).then(resolve);
+        })
+        .catch(function() {
+          // heic2any failed — try to pass through (Safari may handle it)
+          var fr = new FileReader();
+          fr.onload = function(e) { resolve({data: e.target.result, size: file.size, type: 'image/jpeg'}); };
+          fr.readAsDataURL(file);
+        });
+      return;
+    }
+
     if (!file.type.startsWith('image/') || file.type === 'image/gif') {
       var fr = new FileReader();
       fr.onload = function(e) { resolve({data: e.target.result, size: file.size, type: file.type}); };
@@ -2627,7 +2646,7 @@ function openRequestModal(editId) {
            style="padding:12px;font-size:12px;cursor:pointer">
         📷 Фото / 🎬 Видео / 📄 Документ — перетащите или нажмите
         <input type="file" id="req-fi" multiple
-               accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx"
+               accept="image/*,.heic,.heif,video/*,.pdf,.doc,.docx,.xls,.xlsx"
                style="display:none" onchange="onReqFilePick(this)">
       </div>
       <div id="req-pending-files" style="margin-top:6px"></div>
