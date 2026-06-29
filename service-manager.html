@@ -4604,9 +4604,13 @@ function renderSharePageMonthlyReport(d) {
     document.body.innerHTML = '<p style="font-family:sans-serif;padding:40px;color:#dc2626">Ошибка: отчёт не найден</p>';
     return;
   }
-  // Use Blob URL for a clean fresh document — avoids document.write conflicts with the app
-  const blob = new Blob([d.html], { type: 'text/html' });
-  window.location.replace(URL.createObjectURL(blob));
+  // srcdoc iframe — works on all browsers including iOS Safari
+  document.body.style.cssText = 'margin:0;padding:0;background:#08080d;overflow:hidden';
+  document.body.innerHTML = '';
+  const f = document.createElement('iframe');
+  f.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:none';
+  f.srcdoc = d.html;
+  document.body.appendChild(f);
 }
 
 function _renderSharePageMonthlyReportLEGACY(d) {
