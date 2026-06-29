@@ -2967,7 +2967,7 @@ function _bestProvImg(done, fc) {
   return best;
 }
 
-function generateReport() {
+function _buildReportHTML() {
   const mo = journalMonth, yr = journalYear;
   const moName = MONTHS[mo-1];
   const fc = getLS('files') || {};
@@ -3524,6 +3524,11 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
 <\/script>
 </body></html>`;
 
+  return html;
+}
+
+function generateReport() {
+  const html = _buildReportHTML();
   const win = window.open('', '_blank');
   if (!win) { _showToast('❌ Разрешите всплывающие окна в браузере', false); return; }
   win.document.write(html);
@@ -4583,76 +4588,19 @@ async function loadSharePage(token) {
 
 async function shareMonthlyReport() {
   if (!_firestoreDB) { _showToast('❌ Firebase недоступен', false); return; }
-  const mo = journalMonth, yr = journalYear;
-  const moKey = `${yr}-${String(mo).padStart(2,'0')}`;
-  const today = new Date();
-  const todayStr = `${String(today.getDate()).padStart(2,'0')}.${String(today.getMonth()+1).padStart(2,'0')}.${today.getFullYear()}`;
-  const fc = getLS('files') || {};
   _showToast('⏳ Формируем отчёт…', true);
-
-  function _media(fileIds, fileTypes, fileNames) {
-    const photos = [], docs = [];
-    (fileIds || []).forEach((fid, fi) => {
-      const url = (fc[fid] || {}).url || '';
-      if (!url) return;
-      const type = (fileTypes || [])[fi] || '';
-      const name = (fileNames || [])[fi] || 'Файл';
-      if (type.startsWith('image/')) photos.push({ url });
-      else docs.push({ url, name });
-    });
-    return { photos, docs };
-  }
-
-  let totalDone = 0, totalReq = 0, totalFiles = 0;
-  const providers = [];
-  PROVIDERS.forEach(p => {
-    const sched = p.schedules.find(s => s.months.includes(mo));
-    const r = getRecord(p.id, yr, mo);
-    const req = sched ? (sched.visits || 1) : 0;
-    const visits = r.visits ? [...r.visits] : (r.completed !== undefined ? [{...r}] : []);
-    const done = visits.filter(v => v.completed);
-    if (!sched && !done.length && !visits.some(v => (v.fileIds||[]).length)) return;
-    totalDone += done.length; totalReq += req;
-    done.forEach(v => totalFiles += (v.fileIds||[]).length);
-    providers.push({
-      name: p.name, emoji: p.emoji, cat: p.cat, color: p.color, bg: p.bg,
-      req, doneCnt: done.length, schedDesc: sched ? sched.desc : '',
-      visits: done.map(v => {
-        const { photos, docs } = _media(v.fileIds, v.fileTypes, v.fileNames);
-        return { completedDate: v.completedDate || '', notes: v.notes || '', photos, docs };
-      })
-    });
-  });
-
-  const maintWorks = getMaintWorks().filter(w => (w.date||'').startsWith(moKey));
-  const maint = maintWorks.map(w => {
-    const { photos, docs } = _media(w.fileIds, w.fileTypes, w.fileNames);
-    totalFiles += (w.fileIds||[]).length;
-    return { title: w.title, date: w.date, status: w.status,
-      categoryLabel: maintCatLabel(w.category||'other'),
-      cost: w.cost||'', description: w.description||'', photos, docs };
-  });
-
-  const sosEvts = getSOS().filter(s => (s.date||'').startsWith(moKey));
-  const sos = sosEvts.map(s => {
-    const { photos, docs } = _media(s.fileIds, s.fileTypes, s.fileNames);
-    totalFiles += (s.fileIds||[]).length;
-    const priLabel = s.priority==='high'?'Высокий':s.priority==='medium'?'Средний':'Низкий';
-    return { title: s.title, date: s.date, status: s.status,
-      priorityLabel: priLabel, description: s.description||'', photos, docs };
-  });
-
-  const pct = totalReq > 0 ? Math.round(totalDone / totalReq * 100) : 0;
+  const html = _buildReportHTML();
   const token = Math.random().toString(36).slice(2,9) + Math.random().toString(36).slice(2,9);
-  await _doShare(token, {
-    type: 'monthly_report', yr, mo, moName: MONTHS[mo-1], todayStr,
-    stats: { totalDone, totalReq, pct, totalFiles },
-    providers, maint, sos, createdAt: Date.now()
-  }, null);
+  await _doShare(token, { type: 'monthly_report', html, createdAt: Date.now() }, null);
   window.open(location.origin + location.pathname + '?share=' + token, '_blank');
 }
 
 function renderSharePageMonthlyReport(d) {
+  document.open();
+  document.write(d.html || '<p style="font-family:sans-serif;padding:40px">Ошибка: отчёт не найден</p>');
+  document.close();
+  return;
+  // (legacy data-based renderer below — unreachable but kept for reference)
   const stats = d.stats || {};
   const providers = d.providers || [];
   const maint = d.maint || [];
