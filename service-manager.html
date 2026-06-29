@@ -3222,7 +3222,7 @@ function _buildReportHTML() {
   const html = `<!DOCTYPE html>
 <html lang="ru"><head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=794">
 <title>Отчёт — ${moName} ${yr}</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
@@ -3528,14 +3528,6 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
 
 <script>
 (function(){
-  // Auto-zoom to fit 794px report into any screen width
-  function applyZoom(){
-    var vw=window.innerWidth||document.documentElement.clientWidth;
-    if(vw<794){document.documentElement.style.zoom=vw/794;}
-  }
-  applyZoom();
-  window.addEventListener('resize',applyZoom);
-  // Image load counter
   var imgs=document.querySelectorAll('img'),n=imgs.length,k=0;
   var s=document.getElementById('ims'),b=document.getElementById('pbtn');
   function t(){if(++k>=n||!n){if(s)s.textContent='✅ Готово к печати';if(b){b.disabled=false;b.style.opacity='1';b.style.cursor='pointer';}}else if(s)s.textContent=k+' / '+n+' фото'}
