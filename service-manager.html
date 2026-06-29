@@ -4590,17 +4590,26 @@ async function shareMonthlyReport() {
   if (!_firestoreDB) { _showToast('❌ Firebase недоступен', false); return; }
   _showToast('⏳ Формируем отчёт…', true);
   const html = _buildReportHTML();
+  // Open preview immediately — same dark styled report as the PDF popup
+  const win = window.open('', '_blank');
+  if (win) { win.document.write(html); win.document.close(); }
+  else { _showToast('❌ Разрешите всплывающие окна в браузере', false); }
+  // Store in Firestore and copy share URL to clipboard
   const token = Math.random().toString(36).slice(2,9) + Math.random().toString(36).slice(2,9);
   await _doShare(token, { type: 'monthly_report', html, createdAt: Date.now() }, null);
-  window.open(location.origin + location.pathname + '?share=' + token, '_blank');
 }
 
 function renderSharePageMonthlyReport(d) {
-  document.open();
-  document.write(d.html || '<p style="font-family:sans-serif;padding:40px">Ошибка: отчёт не найден</p>');
-  document.close();
-  return;
-  // (legacy data-based renderer below — unreachable but kept for reference)
+  if (!d.html) {
+    document.body.innerHTML = '<p style="font-family:sans-serif;padding:40px;color:#dc2626">Ошибка: отчёт не найден</p>';
+    return;
+  }
+  // Use Blob URL for a clean fresh document — avoids document.write conflicts with the app
+  const blob = new Blob([d.html], { type: 'text/html' });
+  window.location.replace(URL.createObjectURL(blob));
+}
+
+function _renderSharePageMonthlyReportLEGACY(d) {
   const stats = d.stats || {};
   const providers = d.providers || [];
   const maint = d.maint || [];
