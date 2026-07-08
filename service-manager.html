@@ -4786,12 +4786,28 @@ function openQuarterlyEditor() {
     const opts = _QR_SECTIONS.map(s =>
       `<option value="${s.id}" ${curSecId===s.id?'selected':''}>${s.emoji} ${s.title}</option>`
     ).join('') + `<option value="other" ${curSecId==='other'?'selected':''}>🔧 Прочие работы</option>`;
-    return `<div class="qe-work" id="qe-w-${w.id}" data-id="${w.id}" style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(255,255,255,0.03);border-radius:10px;margin-bottom:7px;border:1px solid rgba(255,255,255,0.06)">
-      <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600;color:#f8fafc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(w.title||'').replace(/"/g,'&quot;')}">${w.title||'—'}</div>
-        <div style="font-size:10px;color:rgba(248,250,252,0.35);margin-top:2px">📅 ${fmtD(w.date)}${w.cost?` · 💰 ${Number(w.cost).toLocaleString('ru')} ₽`:''}</div>
+    const statusBadge = w.status==='done'
+      ? '<span style="background:rgba(22,163,74,0.2);color:#4ade80;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700">✅ Выполнено</span>'
+      : w.status==='in_progress'
+      ? '<span style="background:rgba(217,119,6,0.2);color:#fbbf24;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700">🔄 В работе</span>' : '';
+    const safeTitle = (w.title||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    return `<div class="qe-work" id="qe-w-${w.id}" data-id="${w.id}" style="background:rgba(255,255,255,0.03);border-radius:10px;margin-bottom:7px;border:1px solid rgba(255,255,255,0.06);overflow:hidden">
+      <div onclick="qeToggle('${w.id}')" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:#f8fafc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${w.title||'—'}</div>
+          <div style="font-size:10px;color:rgba(248,250,252,0.35);margin-top:2px">📅 ${fmtD(w.date)}${w.cost?` · 💰 ${Number(w.cost).toLocaleString('ru')} ₽`:''}</div>
+        </div>
+        <span id="qe-arr-${w.id}" style="color:rgba(255,255,255,0.25);font-size:11px;flex-shrink:0">▼</span>
       </div>
-      <select onchange="qeMoveWork('${w.id}',this.value)" style="background:#111827;color:#f8fafc;border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:6px 8px;font-size:11px;min-width:190px;max-width:220px;cursor:pointer;flex-shrink:0">${opts}</select>
+      <div id="qe-det-${w.id}" style="display:none;padding:10px 14px 14px;border-top:1px solid rgba(255,255,255,0.06)">
+        ${w.description ? `<div style="font-size:12px;color:rgba(248,250,252,0.5);line-height:1.55;margin-bottom:10px">${w.description}</div>` : ''}
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          ${statusBadge}
+          <div style="flex:1"></div>
+          <label style="font-size:11px;color:rgba(248,250,252,0.5);white-space:nowrap">Раздел:</label>
+          <select onchange="qeMoveWork('${w.id}',this.value);event.stopPropagation()" style="background:#111827;color:#f8fafc;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:7px 10px;font-size:12px;min-width:200px;cursor:pointer">${opts}</select>
+        </div>
+      </div>
     </div>`;
   }
 
@@ -4836,6 +4852,15 @@ function openQuarterlyEditor() {
     ${otherHTML}
   </div>`;
   document.body.appendChild(overlay);
+}
+
+function qeToggle(workId) {
+  const det = document.getElementById('qe-det-' + workId);
+  const arr = document.getElementById('qe-arr-' + workId);
+  if (!det) return;
+  const open = det.style.display !== 'none';
+  det.style.display = open ? 'none' : 'block';
+  if (arr) arr.textContent = open ? '▼' : '▲';
 }
 
 function qeMoveWork(workId, newSecId) {
