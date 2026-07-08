@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html dir="ltr" lang="ru">
 <head>
 <meta charset="UTF-8">
@@ -4678,18 +4678,18 @@ function _qrGetWorks() {
   }).sort((a, b) => new Date(a.date) - new Date(b.date));
 }
 
-function _buildQuarterlyReportHTML() {
+function _buildQuarterlyReportHTML(worksOverride, sectionsOverride) {
   const fc = getLS('files') || {};
   const today = new Date();
   const todayStr = `${String(today.getDate()).padStart(2,'0')}.${String(today.getMonth()+1).padStart(2,'0')}.${today.getFullYear()}`;
 
-  const allWorks = _qrGetWorks();
-  const SECTIONS = _QR_SECTIONS;
+  const allWorks = worksOverride || _qrGetWorks();
+  const SECTIONS = sectionsOverride || _QR_SECTIONS;
 
   const sectionWorks = {};
   SECTIONS.forEach(s => { sectionWorks[s.id] = []; });
   sectionWorks['other'] = [];
-  allWorks.forEach(w => { sectionWorks[_qrMatchSection(w)].push(w); });
+  allWorks.forEach(w => { (sectionWorks[_qrMatchSection(w)] || sectionWorks['other']).push(w); });
 
   function fmtD(dt) {
     if (!dt) return '—';
@@ -4768,13 +4768,49 @@ ${bodyHTML}
 
 function shareQuarterlyReport() { openQuarterlyEditor(); }
 
-function openQuarterlyEditor() {
-  const allWorks = _qrGetWorks();
+let _qeWorks = [];
+let _qeCustomSections = [];
 
+function openQuarterlyEditor() {
+  _qeWorks = _qrGetWorks().map(w => ({...w}));
+  _qeCustomSections = [];
+
+  const overlay = document.createElement('div');
+  overlay.id = 'quarterly-editor-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#08080d;overflow-y:auto';
+  overlay.innerHTML = `<div style="max-width:860px;margin:0 auto;padding:0 16px 80px">
+    <div style="display:flex;align-items:center;gap:12px;padding:14px 0 16px;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:24px;position:sticky;top:0;background:#08080d;z-index:10">
+      <button onclick="document.getElementById('quarterly-editor-overlay').remove()" style="background:rgba(255,255,255,0.07);border:none;color:#f8fafc;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;flex-shrink:0">← Назад</button>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:800;color:#f8fafc">📋 Квартальный отчёт — Редактор</div>
+        <div id="qe-hdr-count" style="font-size:10px;color:rgba(248,250,252,0.4);margin-top:2px"></div>
+      </div>
+      <button onclick="qeSaveAndShare()" style="background:#c8d600;color:#000;border:none;padding:10px 20px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0">📤 Поделиться</button>
+    </div>
+    <div id="qe-content"></div>
+    <div style="display:flex;gap:10px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.06);margin-top:8px;flex-wrap:wrap">
+      <button onclick="qeAddSection()" style="flex:1;min-width:140px;background:rgba(200,214,0,0.07);border:1px dashed rgba(200,214,0,0.3);color:#c8d600;padding:10px 16px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:600">➕ Новый раздел</button>
+      <button onclick="qeShowAddWork()" style="flex:1;min-width:140px;background:rgba(37,99,235,0.07);border:1px dashed rgba(37,99,235,0.3);color:#60a5fa;padding:10px 16px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:600">➕ Добавить работу из системы</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  _qeRender();
+}
+
+function _qeRender() {
+  const allSections = [..._QR_SECTIONS, ..._qeCustomSections];
   const sectionedWorks = {};
-  _QR_SECTIONS.forEach(s => { sectionedWorks[s.id] = []; });
+  allSections.forEach(s => { sectionedWorks[s.id] = []; });
   sectionedWorks['other'] = [];
-  allWorks.forEach(w => { (sectionedWorks[_qrMatchSection(w)] || sectionedWorks['other']).push(w); });
+  _qeWorks.forEach(w => { (sectionedWorks[_qrMatchSection(w)] || sectionedWorks['other']).push(w); });
+
+  const expanded = new Set();
+  document.querySelectorAll('[id^="qe-det-"]').forEach(el => {
+    if (el.style.display !== 'none') expanded.add(el.id.replace('qe-det-', ''));
+  });
+
+  const hdr = document.getElementById('qe-hdr-count');
+  if (hdr) hdr.textContent = `${_qeWorks.length} работ · редактируйте разделы, затем нажмите «Поделиться»`;
 
   function fmtD(dt) {
     if (!dt) return '—';
@@ -4783,75 +4819,74 @@ function openQuarterlyEditor() {
   }
 
   function workRowHTML(w, curSecId) {
-    const opts = _QR_SECTIONS.map(s =>
+    const opts = allSections.map(s =>
       `<option value="${s.id}" ${curSecId===s.id?'selected':''}>${s.emoji} ${s.title}</option>`
     ).join('') + `<option value="other" ${curSecId==='other'?'selected':''}>🔧 Прочие работы</option>`;
-    const statusBadge = w.status==='done'
+    const badge = w.status==='done'
       ? '<span style="background:rgba(22,163,74,0.2);color:#4ade80;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700">✅ Выполнено</span>'
       : w.status==='in_progress'
       ? '<span style="background:rgba(217,119,6,0.2);color:#fbbf24;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700">🔄 В работе</span>' : '';
-    const safeTitle = (w.title||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    const added = w.quarterlyInclude ? '<span style="font-size:9px;color:#60a5fa;margin-left:4px">+добавлено</span>' : '';
     return `<div class="qe-work" id="qe-w-${w.id}" data-id="${w.id}" style="background:rgba(255,255,255,0.03);border-radius:10px;margin-bottom:7px;border:1px solid rgba(255,255,255,0.06);overflow:hidden">
       <div onclick="qeToggle('${w.id}')" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer">
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:600;color:#f8fafc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${w.title||'—'}</div>
+          <div style="font-size:13px;font-weight:600;color:#f8fafc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${w.title||'—'}${added}</div>
           <div style="font-size:10px;color:rgba(248,250,252,0.35);margin-top:2px">📅 ${fmtD(w.date)}${w.cost?` · 💰 ${Number(w.cost).toLocaleString('ru')} ₽`:''}</div>
         </div>
         <span id="qe-arr-${w.id}" style="color:rgba(255,255,255,0.25);font-size:11px;flex-shrink:0">▼</span>
       </div>
       <div id="qe-det-${w.id}" style="display:none;padding:10px 14px 14px;border-top:1px solid rgba(255,255,255,0.06)">
-        ${w.description ? `<div style="font-size:12px;color:rgba(248,250,252,0.5);line-height:1.55;margin-bottom:10px">${w.description}</div>` : ''}
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          ${statusBadge}
+        ${w.description?`<div style="font-size:12px;color:rgba(248,250,252,0.5);line-height:1.55;margin-bottom:10px">${w.description}</div>`:''}
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          ${badge}
           <div style="flex:1"></div>
-          <label style="font-size:11px;color:rgba(248,250,252,0.5);white-space:nowrap">Раздел:</label>
-          <select onchange="qeMoveWork('${w.id}',this.value);event.stopPropagation()" style="background:#111827;color:#f8fafc;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:7px 10px;font-size:12px;min-width:200px;cursor:pointer">${opts}</select>
+          <label style="font-size:11px;color:rgba(248,250,252,0.4)">Раздел:</label>
+          <select onchange="qeMoveWork('${w.id}',this.value)" style="background:#111827;color:#f8fafc;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:6px 10px;font-size:12px;min-width:190px;cursor:pointer">${opts}</select>
+          <button onclick="qeRemoveWork('${w.id}')" style="background:rgba(220,38,38,0.12);border:1px solid rgba(220,38,38,0.2);color:#f87171;padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">🗑 Убрать</button>
         </div>
       </div>
     </div>`;
   }
 
   function secHTML(s, works) {
+    const isCustom = _qeCustomSections.some(cs => cs.id === s.id);
+    const safeTitle = (s.title||'').replace(/'/g,"\\'");
     return `<div id="qe-sec-${s.id}" style="margin-bottom:28px">
-      <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(255,255,255,0.04);border-radius:10px;border-left:3px solid rgba(200,214,0,0.4);margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(255,255,255,0.04);border-radius:10px;border-left:3px solid ${isCustom?'rgba(96,165,250,0.5)':'rgba(200,214,0,0.4)'};margin-bottom:8px">
         <span style="font-size:20px">${s.emoji}</span>
-        <div style="flex:1">
+        <div style="flex:1;min-width:0">
           <div style="font-size:13px;font-weight:700;color:#f8fafc">${s.title}</div>
           <div id="qe-cnt-${s.id}" style="font-size:10px;color:rgba(248,250,252,0.3);margin-top:1px">${works.length} записей</div>
         </div>
+        <button onclick="qeRemoveSection('${s.id}','${safeTitle}')" style="background:rgba(220,38,38,0.1);border:1px solid rgba(220,38,38,0.15);color:rgba(248,113,113,0.8);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;flex-shrink:0">✕ Убрать раздел</button>
       </div>
       <div id="qe-works-${s.id}">${works.map(w => workRowHTML(w, s.id)).join('')}</div>
     </div>`;
   }
 
   const otherWorks = sectionedWorks['other'];
-  const otherHTML = otherWorks.length ? `<div id="qe-sec-other" style="margin-bottom:28px">
-    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(220,38,38,0.06);border-radius:10px;border-left:3px solid rgba(220,38,38,0.3);margin-bottom:8px">
-      <span style="font-size:20px">🔧</span>
-      <div style="flex:1">
-        <div style="font-size:13px;font-weight:700;color:#f8fafc">Прочие работы (не распознаны)</div>
-        <div id="qe-cnt-other" style="font-size:10px;color:rgba(248,250,252,0.3);margin-top:1px">${otherWorks.length} записей</div>
+  const html = [
+    ...allSections.map(s => secHTML(s, sectionedWorks[s.id] || [])),
+    otherWorks.length ? `<div id="qe-sec-other" style="margin-bottom:28px">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(220,38,38,0.05);border-radius:10px;border-left:3px solid rgba(220,38,38,0.3);margin-bottom:8px">
+        <span style="font-size:20px">🔧</span>
+        <div style="flex:1"><div style="font-size:13px;font-weight:700;color:#f8fafc">Прочие работы</div>
+          <div id="qe-cnt-other" style="font-size:10px;color:rgba(248,250,252,0.3);margin-top:1px">${otherWorks.length} записей</div>
+        </div>
       </div>
-    </div>
-    <div id="qe-works-other">${otherWorks.map(w => workRowHTML(w, 'other')).join('')}</div>
-  </div>` : '';
+      <div id="qe-works-other">${otherWorks.map(w => workRowHTML(w, 'other')).join('')}</div>
+    </div>` : ''
+  ].join('');
 
-  const overlay = document.createElement('div');
-  overlay.id = 'quarterly-editor-overlay';
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#08080d;overflow-y:auto';
-  overlay.innerHTML = `<div style="max-width:860px;margin:0 auto;padding:0 16px 60px">
-    <div style="display:flex;align-items:center;gap:12px;padding:14px 0 16px;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:24px;position:sticky;top:0;background:#08080d;z-index:10">
-      <button onclick="document.getElementById('quarterly-editor-overlay').remove()" style="background:rgba(255,255,255,0.07);border:none;color:#f8fafc;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;flex-shrink:0">← Назад</button>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:14px;font-weight:800;color:#f8fafc">📋 Квартальный отчёт — Редактор</div>
-        <div style="font-size:10px;color:rgba(248,250,252,0.4);margin-top:2px">${allWorks.length} работ · выберите раздел в списке, затем нажмите «Поделиться»</div>
-      </div>
-      <button onclick="qeSaveAndShare()" style="background:#c8d600;color:#000;border:none;padding:10px 20px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0">📤 Поделиться</button>
-    </div>
-    ${_QR_SECTIONS.map(s => secHTML(s, sectionedWorks[s.id])).join('')}
-    ${otherHTML}
-  </div>`;
-  document.body.appendChild(overlay);
+  const content = document.getElementById('qe-content');
+  if (content) content.innerHTML = html;
+
+  expanded.forEach(id => {
+    const det = document.getElementById('qe-det-' + id);
+    const arr = document.getElementById('qe-arr-' + id);
+    if (det) det.style.display = 'block';
+    if (arr) arr.textContent = '▲';
+  });
 }
 
 function qeToggle(workId) {
@@ -4864,6 +4899,8 @@ function qeToggle(workId) {
 }
 
 function qeMoveWork(workId, newSecId) {
+  const w = _qeWorks.find(w => w.id === workId);
+  if (w) w.quarterlySection = newSecId;
   const workEl = document.getElementById('qe-w-' + workId);
   if (!workEl) return;
   const curContainer = workEl.parentElement;
@@ -4881,16 +4918,83 @@ function qeMoveWork(workId, newSecId) {
   }
 }
 
+function qeRemoveWork(workId) {
+  _qeWorks = _qeWorks.filter(w => w.id !== workId);
+  _qeRender();
+}
+
+function qeRemoveSection(secId, title) {
+  const count = _qeWorks.filter(w => _qrMatchSection(w) === secId).length;
+  if (count > 0 && !confirm(`Убрать раздел «${title}» и ${count} записей из отчёта?`)) return;
+  _qeWorks = _qeWorks.filter(w => _qrMatchSection(w) !== secId);
+  _qeCustomSections = _qeCustomSections.filter(s => s.id !== secId);
+  _qeRender();
+}
+
+function qeAddSection() {
+  const title = prompt('Название нового раздела:');
+  if (!title || !title.trim()) return;
+  _qeCustomSections.push({ id: 'custom_' + Date.now(), title: title.trim(), emoji: '📌' });
+  _qeRender();
+}
+
+function qeShowAddWork() {
+  const editorIds = new Set(_qeWorks.map(w => w.id));
+  const available = getMaintWorks().filter(w => !editorIds.has(w.id))
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+  function fmtD(dt) {
+    if (!dt) return '—';
+    const p = dt.split('-');
+    return p.length === 3 ? p[2]+'.'+p[1]+'.'+p[0] : dt;
+  }
+  const rows = available.map(w =>
+    `<div onclick="qeAddWorkFromSystem('${w.id}')" data-title="${(w.title||'').toLowerCase()}" style="padding:11px 14px;background:rgba(255,255,255,0.04);border-radius:10px;margin-bottom:6px;cursor:pointer;border:1px solid rgba(255,255,255,0.06)" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='rgba(255,255,255,0.04)'">
+      <div style="font-size:13px;font-weight:600;color:#f8fafc">${w.title||'—'}</div>
+      <div style="font-size:10px;color:rgba(248,250,252,0.35);margin-top:2px">📅 ${fmtD(w.date)}${w.cost?` · 💰 ${Number(w.cost).toLocaleString('ru')} ₽`:''}</div>
+    </div>`
+  ).join('');
+  const panel = document.createElement('div');
+  panel.id = 'qe-add-panel';
+  panel.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;padding:20px';
+  panel.innerHTML = `<div style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.08);border-radius:16px;width:100%;max-width:600px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;gap:12px">
+      <div style="flex:1;font-size:14px;font-weight:700;color:#f8fafc">➕ Добавить работу из системы</div>
+      <button onclick="document.getElementById('qe-add-panel').remove()" style="background:none;border:none;color:rgba(255,255,255,0.4);font-size:22px;cursor:pointer;line-height:1;padding:0">&times;</button>
+    </div>
+    <div style="padding:12px 20px;border-bottom:1px solid rgba(255,255,255,0.06)">
+      <input type="text" oninput="qeFilterAddWork(this.value)" placeholder="🔍 Поиск..." style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);color:#f8fafc;padding:8px 12px;border-radius:8px;font-size:13px;outline:none">
+    </div>
+    <div id="qe-add-list" style="overflow-y:auto;padding:12px 20px;flex:1">
+      ${rows || '<div style="color:rgba(255,255,255,0.3);text-align:center;padding:24px">Все работы уже в редакторе</div>'}
+    </div>
+  </div>`;
+  document.body.appendChild(panel);
+}
+
+function qeFilterAddWork(q) {
+  const lq = q.toLowerCase();
+  document.querySelectorAll('#qe-add-list > div[data-title]').forEach(el => {
+    el.style.display = (!lq || el.dataset.title.includes(lq)) ? '' : 'none';
+  });
+}
+
+function qeAddWorkFromSystem(workId) {
+  const work = getMaintWorks().find(w => w.id === workId);
+  if (!work) return;
+  _qeWorks.push({...work, quarterlyInclude: true});
+  document.getElementById('qe-add-panel').remove();
+  _qeRender();
+}
+
 function qeSaveAndShare() {
   const list = getMaintWorks();
-  document.querySelectorAll('.qe-work').forEach(el => {
-    const workId = el.dataset.id;
-    const sel = el.querySelector('select');
-    if (!workId || !sel) return;
-    const idx = list.findIndex(w => w.id === workId);
+  _qeWorks.forEach(edWork => {
+    const idx = list.findIndex(w => w.id === edWork.id);
     if (idx >= 0) {
-      if (sel.value) list[idx].quarterlySection = sel.value;
+      if (edWork.quarterlySection) list[idx].quarterlySection = edWork.quarterlySection;
       else delete list[idx].quarterlySection;
+      if (edWork.quarterlyInclude) list[idx].quarterlyInclude = true;
+      else delete list[idx].quarterlyInclude;
     }
   });
   setLS('maint_works', list);
@@ -4899,8 +5003,9 @@ function qeSaveAndShare() {
   if (overlay) overlay.remove();
 
   if (!_firestoreDB) { _showToast('❌ Firebase недоступен', false); return; }
-  _showToast('⏳ Формируем квартальный отчёт…', true);
-  const html = _buildQuarterlyReportHTML();
+  _showToast('⧗ Формируем квартальный отчёт…', true);
+  const allSections = [..._QR_SECTIONS, ..._qeCustomSections];
+  const html = _buildQuarterlyReportHTML(_qeWorks, allSections);
   const token = Math.random().toString(36).slice(2,9) + Math.random().toString(36).slice(2,9);
   const win = window.open('', '_blank');
   if (win) {
