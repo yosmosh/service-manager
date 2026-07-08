@@ -427,6 +427,7 @@ img{max-width:100%;height:auto}
     <div class="nav-item" id="nav-contacts" onclick="showView('contacts')">📞 Контакты поставщиков</div>
     <div class="nav-item admin-or-owner" id="nav-settings" onclick="openSettingsModal()">⚙️ Настройки доступа</div>
     <div class="nav-item owner-only" id="nav-report" onclick="shareMonthlyReport()" style="color:#7c3aed;font-weight:600">📊 Отчёт онлайн</div>
+    <div class="nav-item owner-only" id="nav-quarterly" onclick="shareQuarterlyReport()" style="color:#16a34a;font-weight:600">📋 Квартальный отчёт</div>
     <div class="nav-item owner-only" id="nav-export" onclick="exportCSV()">📊 Экспорт данных (CSV)</div>
     <div class="nav-item owner-only" id="recompress-btn" onclick="recompressExistingImages()" style="color:#f59e0b">🗜️ דחוס תמונות קיימות</div>
   </div>
@@ -4600,12 +4601,154 @@ async function loadSharePage(token) {
       return;
     }
     const d = doc.data();
-    if (d.type === 'monthly_report') renderSharePageMonthlyReport(d);
+    if (d.type === 'monthly_report' || d.type === 'quarterly_report') renderSharePageMonthlyReport(d);
     else if (d.type === 'maint' || d.type === 'sos') renderSharePageWork(d);
     else renderSharePage(d);
   } catch(e) {
     document.body.innerHTML = `<div style="font-family:sans-serif;text-align:center;padding:80px 24px;color:#dc2626"><h2>Ошибка загрузки</h2><p>${e.message}</p></div>`;
   }
+}
+
+// ── QUARTERLY REPORT ──────────────────────────────────────────────────────────
+function _buildQuarterlyReportHTML() {
+  const fc = getLS('files') || {};
+  const today = new Date();
+  const todayStr = `${String(today.getDate()).padStart(2,'0')}.${String(today.getMonth()+1).padStart(2,'0')}.${today.getFullYear()}`;
+
+  // Last 4 months
+  const cutoff = new Date(today.getFullYear(), today.getMonth() - 3, 1);
+  const allWorks = getMaintWorks().filter(w => w.date && new Date(w.date) >= cutoff)
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  const SECTIONS = [
+    { id:'territory', title:'Благоустройство и технические работы на территории', emoji:'🌿',
+      keywords:['уборк','очистк','камн','газон','чернозем','грунт','семена','трав','дерев','посадк','скамейк','анкер','вандал','фонар','освещен','электр','гидроизол','колодец','покра','краск','ржав','ворот','асфальт','дорожк','мусор','вывоз','спанбонд','лесн','территор','яма','прокладк','улич','срез','бриг'] },
+    { id:'main_building', title:'Главный корпус', emoji:'🏛️',
+      keywords:['главн корпус','синагог','проектор','стул для синаг','пожарн лестниц','лестниц крыш','шкаф проектор','главн'] },
+    { id:'pool', title:'Бассейн', emoji:'🏊',
+      keywords:['бассейн','тренаж','ковр покрыт','ограждени техн','техническ зон бассейн'] },
+    { id:'residential', title:'Жилые корпуса', emoji:'🏠',
+      keywords:['жилой','жилые','коридор','led','светодиодн','платяной','жалюзи','синий корпус','перегор лампа','мебел корпус','общежит'] },
+    { id:'football', title:'Малое футбольное поле', emoji:'⚽',
+      keywords:['футбол','резин покрыт','резиновое покрыт','спортивн поле'] },
+    { id:'guest_houses', title:'Гостевые дома', emoji:'🏡',
+      keywords:['гостев','книжн шкаф','детск площадк','игровая площадк','игровая','новая литерат','извещател гостев'] },
+    { id:'bbq', title:'Зона барбекю и большая беседка', emoji:'🔥',
+      keywords:['барбекю','беседк','мангал','брусчатк','кровл','сварк','прожектор замен','зон отдых'] },
+    { id:'fire_alarm', title:'Система пожарной сигнализации', emoji:'🚒',
+      keywords:['пожарн сигнализ','арм','автоматизир рабоч','пожарн извещ','алгоритм пб','соуэ','противопожарн систем','шлейф датч'] },
+    { id:'cctv', title:'Система видеонаблюдения', emoji:'📹',
+      keywords:['камер','видеонабл','сервер','жестк диск','ip адрес','сетев адрес','nvr','dvr','183'] },
+    { id:'capital', title:'Капитальные работы и инфраструктурные проекты', emoji:'🏗️',
+      keywords:['котельн','миква','скважин','разрешен','лицензи','теплообменник','гидравлич','тепловой расч','фасад котельн'] }
+  ];
+
+  function matchSection(w) {
+    const text = ((w.title||'') + ' ' + (w.description||'')).toLowerCase();
+    for (const sec of SECTIONS) {
+      if (sec.keywords.some(kw => text.includes(kw))) return sec.id;
+    }
+    return 'other';
+  }
+
+  const sectionWorks = {};
+  SECTIONS.forEach(s => { sectionWorks[s.id] = []; });
+  sectionWorks['other'] = [];
+  allWorks.forEach(w => { sectionWorks[matchSection(w)].push(w); });
+
+  function fmtD(dt) {
+    if (!dt) return '—';
+    const p = dt.split('-');
+    return p.length === 3 ? p[2]+'.'+p[1]+'.'+p[0] : dt;
+  }
+
+  function workHTML(w) {
+    const imgs = (w.fileIds||[]).map((fid,i) => {
+      const ft = (w.fileTypes||[])[i]||'';
+      const fn = (w.fileNames||[])[i]||'';
+      const url = (fc[fid]||{}).url||'';
+      if (!url || !ft.startsWith('image/')) return '';
+      return `<img src="${url}" alt="${fn}" loading="lazy" style="width:200px;height:150px;object-fit:cover;border-radius:10px;border:1px solid rgba(255,255,255,0.1);cursor:pointer" onclick="this.style.width=this.style.width==='100%'?'200px':'100%';this.style.height=this.style.height==='auto'?'150px':'auto'">`;
+    }).filter(Boolean).join('');
+    const statusBadge = w.status === 'done'
+      ? '<span style="background:rgba(22,163,74,0.2);color:#4ade80;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:700;white-space:nowrap">✅ Выполнено</span>'
+      : w.status === 'in_progress'
+      ? '<span style="background:rgba(217,119,6,0.2);color:#fbbf24;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:700;white-space:nowrap">🔄 В работе</span>' : '';
+    return `<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:16px 18px;margin-bottom:14px">
+      <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:700;color:#f8fafc;flex:1;min-width:200px">${w.title||'—'}</span>
+        ${statusBadge}
+        <span style="font-size:10px;color:rgba(248,250,252,0.35);white-space:nowrap">📅 ${fmtD(w.date)}</span>
+        ${w.cost?`<span style="font-size:10px;color:#c8d600;white-space:nowrap">💰 ${Number(w.cost).toLocaleString('ru')} ₽</span>`:''}
+      </div>
+      ${w.description?`<div style="font-size:11px;color:rgba(248,250,252,0.45);margin-bottom:12px;line-height:1.6">${w.description}</div>`:''}
+      ${imgs?`<div style="display:flex;flex-wrap:wrap;gap:8px">${imgs}</div>`:''}
+    </div>`;
+  }
+
+  function sectionHTML(sec, works) {
+    if (!works.length) return '';
+    const worksCount = works.length;
+    const photoCount = works.reduce((s,w) => s + (w.fileIds||[]).filter((_,i) => ((w.fileTypes||[])[i]||'').startsWith('image/')).length, 0);
+    return `<div style="margin-bottom:48px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding:14px 18px;background:rgba(255,255,255,0.03);border-radius:12px;border-left:3px solid rgba(200,214,0,0.5)">
+        <span style="font-size:26px">${sec.emoji}</span>
+        <div style="flex:1">
+          <h2 style="font-size:16px;font-weight:800;color:#f8fafc;letter-spacing:-0.3px">${sec.title}</h2>
+          <div style="font-size:10px;color:rgba(248,250,252,0.3);margin-top:2px">${worksCount} ${worksCount===1?'запись':worksCount<5?'записи':'записей'} · ${photoCount} фото</div>
+        </div>
+      </div>
+      ${works.map(workHTML).join('')}
+    </div>`;
+  }
+
+  const totalWorks = allWorks.length;
+  const totalPhotos = allWorks.reduce((s,w) => s + (w.fileIds||[]).filter((_,i) => ((w.fileTypes||[])[i]||'').startsWith('image/')).length, 0);
+  const activeSections = SECTIONS.filter(s => sectionWorks[s.id].length).length;
+
+  const bodyHTML = [
+    ...SECTIONS.map(s => sectionHTML(s, sectionWorks[s.id])),
+    sectionWorks['other'].length ? sectionHTML({id:'other',title:'Прочие работы',emoji:'🔧'}, sectionWorks['other']) : ''
+  ].join('');
+
+  return `<!DOCTYPE html><html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Квартальный отчёт — Подготовка к лагерному сезону 2026</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Segoe UI',Arial,sans-serif;background:#08080d;color:#f8fafc;padding:32px 20px;max-width:940px;margin:0 auto}</style>
+</head><body>
+<div style="text-align:center;padding:56px 32px;margin-bottom:48px;background:linear-gradient(135deg,rgba(37,99,235,0.08),rgba(200,214,0,0.04));border-radius:20px;border:1px solid rgba(255,255,255,0.06)">
+  <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:rgba(200,214,0,0.65);margin-bottom:14px">КВАРТАЛЬНЫЙ ОТЧЁТ</div>
+  <h1 style="font-size:28px;font-weight:900;letter-spacing:-1px;color:#f8fafc;margin-bottom:8px">Подготовка к лагерному сезону</h1>
+  <div style="font-size:13px;color:rgba(248,250,252,0.4);margin-bottom:28px">Апрель — Июль 2026 г.</div>
+  <div style="display:inline-flex;gap:0;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:14px;overflow:hidden">
+    <div style="padding:14px 28px;text-align:center;border-right:1px solid rgba(255,255,255,0.08)"><div style="font-size:26px;font-weight:900;color:#c8d600">${totalWorks}</div><div style="font-size:9px;color:rgba(248,250,252,0.3);margin-top:3px;text-transform:uppercase;letter-spacing:.5px">работ</div></div>
+    <div style="padding:14px 28px;text-align:center;border-right:1px solid rgba(255,255,255,0.08)"><div style="font-size:26px;font-weight:900;color:#c8d600">${totalPhotos}</div><div style="font-size:9px;color:rgba(248,250,252,0.3);margin-top:3px;text-transform:uppercase;letter-spacing:.5px">фото</div></div>
+    <div style="padding:14px 28px;text-align:center"><div style="font-size:26px;font-weight:900;color:#c8d600">${activeSections}</div><div style="font-size:9px;color:rgba(248,250,252,0.3);margin-top:3px;text-transform:uppercase;letter-spacing:.5px">разделов</div></div>
+  </div>
+  <div style="font-size:10px;color:rgba(248,250,252,0.15);margin-top:18px">Сформировано ${todayStr}</div>
+</div>
+${bodyHTML}
+</body></html>`;
+}
+
+async function shareQuarterlyReport() {
+  if (!_firestoreDB) { _showToast('❌ Firebase недоступен', false); return; }
+  _showToast('⏳ Формируем квартальный отчёт…', true);
+  const html = _buildQuarterlyReportHTML();
+  const token = Math.random().toString(36).slice(2,9) + Math.random().toString(36).slice(2,9);
+  const win = window.open('', '_blank');
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+    const t = win.document.createElement('div');
+    t.style.cssText = 'position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#c8d600;color:#000;padding:11px 28px;border-radius:100px;font-family:sans-serif;font-size:13px;font-weight:700;z-index:99999;white-space:nowrap;box-shadow:0 4px 24px rgba(0,0,0,0.6);pointer-events:none';
+    t.textContent = '✅ Ссылка на отчёт скопирована в буфер обмена!';
+    win.document.body.appendChild(t);
+    win.setTimeout(() => t.remove(), 5000);
+  } else {
+    _showToast('❌ Разрешите всплывающие окна в браузере', false);
+  }
+  await _doShare(token, { type: 'quarterly_report', html, createdAt: Date.now() }, null);
 }
 
 async function shareMonthlyReport() {
