@@ -5175,13 +5175,34 @@ function qeSaveAndShare() {
   const allSections = [..._QR_SECTIONS, ..._qeCustomSections];
   const html = _buildQuarterlyReportHTML(_qeWorks, allSections);
   const token = Math.random().toString(36).slice(2,9) + Math.random().toString(36).slice(2,9);
+  const shareUrl = location.origin + location.pathname + '?share=' + token;
+
+  // Copy URL BEFORE window.open — opening a new window steals focus and breaks execCommand
+  let copied = false;
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = shareUrl; ta.style.cssText = 'position:fixed;opacity:0;top:-9999px;left:-9999px';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    copied = document.execCommand('copy');
+    document.body.removeChild(ta);
+  } catch(e) {}
+
   const win = window.open('', '_blank');
   if (win) {
     win.document.write(html); win.document.close();
     const t = win.document.createElement('div');
-    t.style.cssText = 'position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#c8d600;color:#000;padding:11px 28px;border-radius:100px;font-family:sans-serif;font-size:13px;font-weight:700;z-index:99999;white-space:nowrap;box-shadow:0 4px 24px rgba(0,0,0,0.6);pointer-events:none';
-    t.textContent = '✅ Ссылка на отчёт скопирована в буфер обмена!';
-    win.document.body.appendChild(t); win.setTimeout(() => t.remove(), 5000);
+    t.style.cssText = 'position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#c8d600;color:#000;padding:11px 28px;border-radius:100px;font-family:sans-serif;font-size:13px;font-weight:700;z-index:99999;white-space:nowrap;box-shadow:0 4px 24px rgba(0,0,0,0.6)';
+    if (copied) {
+      t.textContent = '✅ Ссылка на отчёт скопирована в буфер обмена!';
+      win.document.body.appendChild(t); win.setTimeout(() => t.remove(), 5000);
+    } else {
+      t.style.pointerEvents = 'auto';
+      t.style.cursor = 'pointer';
+      t.style.display = 'flex'; t.style.flexDirection = 'column'; t.style.gap = '6px';
+      t.innerHTML = `<span style="font-size:13px;font-weight:700">🔗 Ссылка на отчёт (нажмите, чтобы скопировать):</span><span style="font-size:11px;font-weight:400;word-break:break-all;opacity:0.75">${shareUrl}</span>`;
+      t.onclick = () => { navigator.clipboard.writeText(shareUrl).then(() => { t.innerHTML = '<span>✅ Скопировано!</span>'; win.setTimeout(() => t.remove(), 3000); }); };
+      win.document.body.appendChild(t);
+    }
   } else {
     _showToast('❌ Разрешите всплывающие окна в браузере', false);
   }
