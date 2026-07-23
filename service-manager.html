@@ -3223,15 +3223,15 @@ function _buildReportHTML() {
   const html = `<!DOCTYPE html>
 <html lang="ru"><head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=794">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Отчёт — ${moName} ${yr}</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-html{width:794px;overflow-x:hidden}
+html{overflow-x:hidden}
 body{
   font-family:'Inter',system-ui,sans-serif;
-  width:794px;overflow-x:hidden;
+  overflow-x:hidden;
   background:#08080d;
   -webkit-print-color-adjust:exact;print-color-adjust:exact;
   background-image:
@@ -3534,6 +3534,17 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
   function t(){if(++k>=n||!n){if(s)s.textContent='✅ Готово к печати';if(b){b.disabled=false;b.style.opacity='1';b.style.cursor='pointer';}}else if(s)s.textContent=k+' / '+n+' фото'}
   if(!n){t();return;}
   imgs.forEach(function(i){if(i.complete)t();else{i.addEventListener('load',t);i.addEventListener('error',t);}});
+})();
+(function(){
+  var rc=document.getElementById('report-content');
+  if(!rc)return;
+  function fit(){
+    if(window.matchMedia('print').matches)return;
+    var vw=window.innerWidth;
+    rc.style.zoom=(vw<794)?String(vw/794):'';
+  }
+  fit();
+  window.addEventListener('resize',fit);
 })();
 <\/script>
 </body></html>`;
