@@ -5154,7 +5154,7 @@ function qeAddVisitFromSystem(pid, yr, mo, vi) {
   _qeRender();
 }
 
-function qeSaveAndShare() {
+async function qeSaveAndShare() {
   const list = getMaintWorks();
   _qeWorks.forEach(edWork => {
     const idx = list.findIndex(w => w.id === edWork.id);
@@ -5171,42 +5171,54 @@ function qeSaveAndShare() {
   if (overlay) overlay.remove();
 
   if (!_firestoreDB) { _showToast('❌ Firebase недоступен', false); return; }
-  _showToast('⧗ Формируем квартальный отчёт…', true);
+
   const allSections = [..._QR_SECTIONS, ..._qeCustomSections];
   const html = _buildQuarterlyReportHTML(_qeWorks, allSections);
   const token = Math.random().toString(36).slice(2,9) + Math.random().toString(36).slice(2,9);
   const shareUrl = location.origin + location.pathname + '?share=' + token;
 
-  // Copy URL BEFORE window.open — opening a new window steals focus and breaks execCommand
-  let copied = false;
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = shareUrl; ta.style.cssText = 'position:fixed;opacity:0;top:-9999px;left:-9999px';
-    document.body.appendChild(ta); ta.focus(); ta.select();
-    copied = document.execCommand('copy');
-    document.body.removeChild(ta);
-  } catch(e) {}
-
+  // Open preview window synchronously (must stay before any await to avoid popup blocker)
   const win = window.open('', '_blank');
-  if (win) {
-    win.document.write(html); win.document.close();
-    const t = win.document.createElement('div');
-    t.style.cssText = 'position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#c8d600;color:#000;padding:11px 28px;border-radius:100px;font-family:sans-serif;font-size:13px;font-weight:700;z-index:99999;white-space:nowrap;box-shadow:0 4px 24px rgba(0,0,0,0.6)';
-    if (copied) {
-      t.textContent = '✅ Ссылка на отчёт скопирована в буфер обмена!';
-      win.document.body.appendChild(t); win.setTimeout(() => t.remove(), 5000);
-    } else {
-      t.style.pointerEvents = 'auto';
-      t.style.cursor = 'pointer';
-      t.style.display = 'flex'; t.style.flexDirection = 'column'; t.style.gap = '6px';
-      t.innerHTML = `<span style="font-size:13px;font-weight:700">🔗 Ссылка на отчёт (нажмите, чтобы скопировать):</span><span style="font-size:11px;font-weight:400;word-break:break-all;opacity:0.75">${shareUrl}</span>`;
-      t.onclick = () => { navigator.clipboard.writeText(shareUrl).then(() => { t.innerHTML = '<span>✅ Скопировано!</span>'; win.setTimeout(() => t.remove(), 3000); }); };
-      win.document.body.appendChild(t);
-    }
-  } else {
-    _showToast('❌ Разрешите всплывающие окна в браузере', false);
+  if (win) { win.document.write(html); win.document.close(); }
+
+  _showToast('⧗ Сохраняем отчёт в облаке…', true);
+  try {
+    await _firestoreDB.collection('appdata').doc('share_' + token).set({ type: 'quarterly_report', html, createdAt: Date.now() });
+    _qeShowShareLink(shareUrl);
+  } catch(e) {
+    _showToast('❌ Ошибка сохранения: ' + e.message, false);
   }
-  _doShare(token, { type: 'quarterly_report', html, createdAt: Date.now() }, null);
+}
+
+function _qeShowShareLink(url) {
+  const el = document.createElement('div');
+  el.id = 'qe-share-result';
+  el.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;padding:20px';
+  el.innerHTML = `
+    <div style="background:#1a1f2e;border-radius:16px;padding:28px;max-width:540px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.8)">
+      <div style="font-size:17px;font-weight:800;color:#f8fafc;margin-bottom:6px">✅ Квартальный отчёт сохранён</div>
+      <div style="font-size:12px;color:rgba(248,250,252,0.45);margin-bottom:20px">Ссылку можно отправить руководству — открывается без входа в систему.</div>
+      <div id="qe-sr-url" style="background:rgba(255,255,255,0.05);border:1px solid rgba(200,214,0,0.25);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-family:monospace;font-size:11px;color:#c8d600;word-break:break-all;line-height:1.6;user-select:all">${url}</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button id="qe-sr-copy" style="flex:1;min-width:160px;background:#c8d600;color:#000;border:none;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer">📋 Копировать ссылку</button>
+        <button onclick="document.getElementById('qe-share-result').remove()" style="flex-shrink:0;background:rgba(255,255,255,0.07);color:#f8fafc;border:none;padding:12px 20px;border-radius:10px;font-size:13px;cursor:pointer">Закрыть</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  el.addEventListener('click', e => { if (e.target === el) el.remove(); });
+  document.getElementById('qe-sr-copy').onclick = () => {
+    const btn = document.getElementById('qe-sr-copy');
+    navigator.clipboard.writeText(url).then(() => {
+      btn.textContent = '✅ Скопировано!';
+      setTimeout(() => { if (btn) btn.textContent = '📋 Копировать ссылку'; }, 2500);
+    }).catch(() => {
+      const r = document.createRange();
+      r.selectNodeContents(document.getElementById('qe-sr-url'));
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(r);
+      btn.textContent = '☝️ Выделено — скопируйте вручную (Ctrl+C)';
+    });
+  };
 }
 
 async function shareMonthlyReport() {
