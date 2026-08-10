@@ -3841,13 +3841,16 @@ async function saveMaint(editId) {
       const ei = visits2.findIndex(v => v._maintWorkId === workId);
       if (ei >= 0) visits2[ei] = visitEntry; else visits2.push(visitEntry);
       allR[key2] = { visits: visits2 }; setLS('svc_records', allR);
+      // Move: remove from maint_works (it now lives in the provider journal)
+      setLS('maint_works', getMaintWorks().filter(w => w.id !== workId));
     }
     if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
     const _maintDetail = title + (description ? ' — ' + description.slice(0,120) : '') + ' · ' + date;
     _notifyOwner('🏗️ Обслуживание территории', _getFromName(), _maintDetail);
     addActivity('maint', _getFromName(), title, _maintDetail);
+    const prov = linkedProviderId ? PROVIDERS.find(p => p.id === linkedProviderId) : null;
     closeModal(); render(); loadMaintImages();
-    _showToast('✅ Сохранено', false);
+    _showToast(prov ? `✅ Перенесено в журнал: ${prov.emoji} ${prov.name}` : '✅ Сохранено', false);
   } catch(e) {
     alert('Ошибка сохранения:\n' + e.message);
   }
