@@ -5345,9 +5345,12 @@ function renderSharePageMonthlyReport(d) {
     document.body.innerHTML = '<p style="font-family:sans-serif;padding:40px;color:#dc2626">Ошибка: отчёт не найден</p>';
     return;
   }
-  // Write the report HTML directly into the current document — avoids iframe scroll issues
+  // Patch legacy HTML: remove fixed 794px width from html/body so scroll container is full-width
+  let html = d.html;
+  const patch = '<style>html,body{width:100%!important;max-width:100%!important;overflow-x:hidden!important}</style>';
+  html = html.includes('</head>') ? html.replace('</head>', patch + '</head>') : patch + html;
   document.open();
-  document.write(d.html);
+  document.write(html);
   document.close();
 }
 
