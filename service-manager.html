@@ -3740,6 +3740,13 @@ function openMaintModal(editId) {
       </select>
     </div>
     <div class="form-group">
+      <label>📌 Добавить в журнал визитов поставщика</label>
+      <select class="form-control" id="maint-provider">
+        <option value="">— Не привязывать —</option>
+        ${PROVIDERS.map(p => `<option value="${p.id}" ${ex?.linkedProviderId===p.id?'selected':''}>${p.emoji} ${p.name}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group">
       <label>Фото / документы</label>
       ${existFiles ? `<div class="file-list" style="margin-bottom:8px">${existFiles}</div>` : ''}
       <div class="upload-zone" onclick="document.getElementById('maint-fi').click()" id="maint-drop">
@@ -3775,6 +3782,7 @@ async function saveMaint(editId) {
     const status           = document.getElementById('maint-status').value;
     const description      = document.getElementById('maint-desc').value.trim();
     const quarterlySection = document.getElementById('maint-qsec').value || undefined;
+    const linkedProviderId = document.getElementById('maint-provider').value || undefined;
 
     // Upload files first (synchronous, like SOS)
     const fileIds=[], fileNames=[], fileTypes=[];
@@ -3795,14 +3803,45 @@ async function saveMaint(editId) {
         };
         if (quarterlySection) updated.quarterlySection = quarterlySection;
         else delete updated.quarterlySection;
+        if (linkedProviderId) updated.linkedProviderId = linkedProviderId;
+        else delete updated.linkedProviderId;
         list[idx] = updated;
       }
     } else {
       const item = { id: Date.now().toString(), title, date, cost, category, status, description, fileIds, fileNames, fileTypes };
       if (quarterlySection) item.quarterlySection = quarterlySection;
+      if (linkedProviderId) item.linkedProviderId = linkedProviderId;
       list.push(item);
     }
     setLS('maint_works', list);
+
+    // Sync with provider visit journal
+    const workId = editId || list[list.length - 1].id;
+    const ex2 = editId ? (getMaintWorks().find(w => w.id === editId) || {}) : {};
+    // Remove old visit if provider changed or removed
+    if (editId && ex2.linkedProviderId && ex2.linkedProviderId !== (linkedProviderId || '')) {
+      const od = new Date(ex2.date || date); const oyr = od.getFullYear(), omo = od.getMonth()+1;
+      const allR = getRecords(); const okey = `${ex2.linkedProviderId}_${oyr}_${omo}`;
+      const orec = allR[okey] || {};
+      if (orec.visits) { orec.visits = orec.visits.filter(v => v._maintWorkId !== editId); allR[okey] = orec; setLS('svc_records', allR); }
+    }
+    // Create/update visit for selected provider
+    if (linkedProviderId) {
+      const wObj = getMaintWorks().find(w => w.id === workId) || {};
+      const d2 = new Date(date); const yr2 = d2.getFullYear(), mo2 = d2.getMonth()+1;
+      const allR = getRecords(); const key2 = `${linkedProviderId}_${yr2}_${mo2}`;
+      const rec2 = allR[key2] || {};
+      const visits2 = rec2.visits ? [...rec2.visits] : (rec2.completed !== undefined ? [{...rec2, _legacy:true}] : []);
+      const visitEntry = {
+        completed: true, date,
+        notes: [title, description].filter(Boolean).join('\n'),
+        fileIds: [...(wObj.fileIds||[])], fileTypes: [...(wObj.fileTypes||[])], fileNames: [...(wObj.fileNames||[])],
+        _maintWorkId: workId
+      };
+      const ei = visits2.findIndex(v => v._maintWorkId === workId);
+      if (ei >= 0) visits2[ei] = visitEntry; else visits2.push(visitEntry);
+      allR[key2] = { visits: visits2 }; setLS('svc_records', allR);
+    }
     if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
     const _maintDetail = title + (description ? ' — ' + description.slice(0,120) : '') + ' · ' + date;
     _notifyOwner('🏗️ Обслуживание территории', _getFromName(), _maintDetail);
