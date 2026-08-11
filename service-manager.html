@@ -5431,8 +5431,7 @@ function _renderSharePageMonthlyReportLEGACY(d) {
         </div>`).join('')}
     </div>` : '';
 
-  document.body.style.margin = '0';
-  document.body.style.background = '#f8fafc';
+  document.body.style.cssText = 'margin:0;padding:0;background:#f8fafc;height:auto;min-height:100vh;overflow:visible;display:block';
   document.body.innerHTML = `
     <div style="min-height:100vh;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
       <div style="position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #e2e8f0;padding:10px 14px;display:flex;align-items:center;gap:10px;box-shadow:0 1px 4px rgba(0,0,0,.06)">
@@ -5471,8 +5470,7 @@ function renderSharePageWork(d) {
     : `📅 ${d.date} · Приоритет: ${d.priorityLabel||'—'}`;
   const typeLabel = isMaint ? '🏗️ Обслуживание территории' : '🚨 Экстренное ТО (SOS)';
 
-  document.body.style.margin = '0';
-  document.body.style.background = '#f8fafc';
+  document.body.style.cssText = 'margin:0;padding:0;background:#f8fafc;height:auto;min-height:100vh;overflow:visible;display:block';
   document.body.innerHTML = `
     <div style="min-height:100vh;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
       <div style="max-width:600px;margin:0 auto;padding:12px 12px 32px">
@@ -5540,8 +5538,7 @@ function renderSharePage(d) {
           </div>`;
       }).join('');
 
-  document.body.style.margin = '0';
-  document.body.style.background = '#f8fafc';
+  document.body.style.cssText = 'margin:0;padding:0;background:#f8fafc;height:auto;min-height:100vh;overflow:visible;display:block';
   document.body.innerHTML = `
     <div style="min-height:100vh;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
       <div style="max-width:600px;margin:0 auto;padding:12px 12px 32px">
