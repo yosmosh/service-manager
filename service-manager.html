@@ -2209,6 +2209,7 @@ async function _galShow(index) {
   const fn  = f.name || name;
   const isFirebase = _useFirebase && !!f.url;
   const url = isFirebase ? f.url : URL.createObjectURL(dataURLtoBlob(f.data));
+  _gal.cur = { url, ft, fn };
   const isMobile = window.innerWidth <= 640;
 
   let media;
@@ -2238,10 +2239,10 @@ async function _galShow(index) {
     media = `<div style="background:white;border-radius:14px;padding:28px 24px;text-align:center;margin:16px">
       <div style="font-size:52px;margin-bottom:12px">${fileEmoji(ft)}</div>
       <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:6px;word-break:break-word">${fn}</div>
-      <a href="${url}" download="${fn}"
-         style="background:#2563eb;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;display:inline-block;margin-top:8px">
+      <button onclick="_galDl()"
+         style="background:#2563eb;color:white;padding:12px 28px;border-radius:8px;border:none;cursor:pointer;font-size:14px;font-weight:600;display:inline-block;margin-top:8px">
         ⬇ Скачать
-      </a>
+      </button>
     </div>`;
   }
 
@@ -2268,9 +2269,8 @@ async function _galShow(index) {
       <span style="color:white;font-size:${isMobile?12:13}px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:58%">${fn}</span>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         ${total > 1 ? `<span style="color:rgba(255,255,255,.7);font-size:12px">${index+1} / ${total}</span>` : ''}
-        <a href="${url}" ${ft.startsWith('image/')||ft.startsWith('video/')?`download="${fn}"`:`target="_blank" rel="noopener"`}
-           style="color:white;background:rgba(255,255,255,.18);padding:${isMobile?'7px 12px':'5px 12px'};border-radius:6px;font-size:13px;text-decoration:none;-webkit-tap-highlight-color:transparent"
-           onclick="event.stopPropagation()">⬇</a>
+        <button onclick="event.stopPropagation();_galDl()"
+           style="color:white;background:rgba(255,255,255,.18);padding:${isMobile?'7px 12px':'5px 12px'};border-radius:6px;font-size:13px;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent">⬇</button>
         <button onclick="event.stopPropagation();_galClose()"
           style="color:white;background:rgba(255,255,255,.18);border:none;padding:${isMobile?'7px 14px':'5px 12px'};border-radius:6px;font-size:${isMobile?16:13}px;cursor:pointer;-webkit-tap-highlight-color:transparent">✕</button>
       </div>
@@ -2292,6 +2292,57 @@ function _galNav(dir) {
 function _galClose() {
   document.getElementById('file-preview-overlay')?.remove();
   _gal = null;
+}
+
+function _makePDFFromJPEG(jpegBytes, w, h) {
+  const enc = new TextEncoder();
+  const parts = [];
+  const off = {};
+  const str = s => parts.push(enc.encode(s));
+  const bin = b => parts.push(b);
+  const sz = () => parts.reduce((s, p) => s + p.length, 0);
+  str('%PDF-1.4\n');
+  off[1] = sz(); str('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+  off[2] = sz(); str('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n');
+  off[3] = sz(); str(`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] /Contents 4 0 R /Resources << /XObject << /I 5 0 R >> >> >>\nendobj\n`);
+  const cs = enc.encode(`q ${w} 0 0 ${h} 0 0 cm /I Do Q\n`);
+  off[4] = sz(); str(`4 0 obj\n<< /Length ${cs.length} >>\nstream\n`); bin(cs); str('\nendstream\nendobj\n');
+  off[5] = sz(); str(`5 0 obj\n<< /Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpegBytes.length} >>\nstream\n`); bin(jpegBytes); str('\nendstream\nendobj\n');
+  const xr = sz();
+  str('xref\n0 6\n0000000000 65535 f \r\n');
+  for (let i = 1; i <= 5; i++) str(off[i].toString().padStart(10,'0') + ' 00000 n \r\n');
+  str(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xr}\n%%EOF\n`);
+  const total = sz(), out = new Uint8Array(total); let pos = 0;
+  for (const p of parts) { out.set(p, pos); pos += p.length; }
+  return out;
+}
+
+async function _galDl() {
+  if (!_gal || !_gal.cur) return;
+  const { url, ft, fn } = _gal.cur;
+  try {
+    if (ft && ft.startsWith('image/')) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+      const cv = document.createElement('canvas');
+      cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+      cv.getContext('2d').drawImage(img, 0, 0);
+      const jb = Uint8Array.from(atob(cv.toDataURL('image/jpeg', 0.92).split(',')[1]), c => c.charCodeAt(0));
+      const pdf = _makePDFFromJPEG(jb, img.naturalWidth, img.naturalHeight);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
+      a.download = fn.replace(/\.[^.]+$/, '') + '.pdf';
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } else {
+      const resp = await fetch(url);
+      const blob = await resp.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = fn;
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    }
+  } catch(e) { window.open(url, '_blank'); }
 }
 
 document.addEventListener('keydown', e => {
