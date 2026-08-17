@@ -3691,7 +3691,8 @@ function renderMaintenance() {
   const canEdit = currentUser === 'admin' || currentUser === 'owner';
 
   const cards = items.length ? items.map(w => {
-    const _mSorted = (w.fileIds||[]).map((_,i)=>i).sort((a,b)=>((w.fileTypes||[])[a]||'').startsWith('video/')?1:((w.fileTypes||[])[b]||'').startsWith('video/')?-1:0);
+    const _fp=ft=>ft.startsWith('video/')?0:ft.startsWith('image/')?1:2;
+    const _mSorted = (w.fileIds||[]).map((_,i)=>i).sort((a,b)=>_fp((w.fileTypes||[])[a]||'')-_fp((w.fileTypes||[])[b]||''));
     const _sIds=[],_sTypes=[],_sNames=[];
     _mSorted.forEach(i=>{_sIds.push((w.fileIds||[])[i]);_sTypes.push((w.fileTypes||[])[i]||'');_sNames.push((w.fileNames||[])[i]||'Файл');});
     const _mIds   = JSON.stringify(_sIds).replace(/'/g,'&#39;');
@@ -3767,12 +3768,12 @@ function openMaintModal(editId) {
 
   const existFiles = (ex?.fileIds||[])
     .map((fid,i) => ({ fid, i, ft:(ex.fileTypes||[])[i]||'', fn:(ex.fileNames||[])[i]||'Файл' }))
-    .sort((a,b) => (a.ft.startsWith('video/')?1:0) - (b.ft.startsWith('video/')?1:0))
+    .sort((a,b)=>{const p=ft=>ft.startsWith('video/')?0:ft.startsWith('image/')?1:2;return p(a.ft)-p(b.ft);})
     .map(({fid,i,ft,fn}) => `<div class="file-item">
       <span>${fileEmoji(ft)}</span>
       <span class="fn">${fn}</span>
       <button onclick="previewFile('${fid}','${ft}','${fn.replace(/'/g,"\\'")}'")" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button>
-      <button onclick="delMaintFile('${ex.id}',${i})" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Удалить файл">✕</button>
+      <button onclick="delMaintFile('${ex.id}',${i})" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Удалить файל">✕</button>
     </div>`).join('');
 
   const defaultDate = ex?.date || `${maintYear}-${String(maintMonth).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
@@ -3987,7 +3988,8 @@ function renderSOS() {
 
   return chipsHtml + [...list].sort((a,b) => new Date(b.date)-new Date(a.date)).map(s => {
     const canEdit = currentUser === 'admin' || currentUser === 'owner';
-    const _sSorted = (s.fileIds||[]).map((_,i)=>i).sort((a,b)=>((s.fileTypes||[])[a]||'').startsWith('video/')?1:((s.fileTypes||[])[b]||'').startsWith('video/')?-1:0);
+    const _fp2=ft=>ft.startsWith('video/')?0:ft.startsWith('image/')?1:2;
+    const _sSorted = (s.fileIds||[]).map((_,i)=>i).sort((a,b)=>_fp2((s.fileTypes||[])[a]||'')-_fp2((s.fileTypes||[])[b]||''));
     const _ssIds=[],_ssTypes=[],_ssNames=[];
     _sSorted.forEach(i=>{_ssIds.push((s.fileIds||[])[i]);_ssTypes.push((s.fileTypes||[])[i]||'');_ssNames.push((s.fileNames||[])[i]||'Файл');});
     const _sIds   = JSON.stringify(_ssIds).replace(/'/g,'&#39;');
@@ -4085,7 +4087,8 @@ function renderJournal() {
       const hasFiles = (v.fileIds || []).length > 0;
       if (!v.completed && !hasFiles && !v.notes && !isReq) return ''; // hide empty reserve slots
 
-      const _jSorted = (v.fileIds||[]).map((_,i)=>i).sort((a,b)=>((v.fileTypes||[])[a]||'').startsWith('video/')?1:((v.fileTypes||[])[b]||'').startsWith('video/')?-1:0);
+      const _fp3=ft=>ft.startsWith('video/')?0:ft.startsWith('image/')?1:2;
+      const _jSorted = (v.fileIds||[]).map((_,i)=>i).sort((a,b)=>_fp3((v.fileTypes||[])[a]||'')-_fp3((v.fileTypes||[])[b]||''));
       const _jjIds=[],_jjTypes=[],_jjNames=[];
       _jSorted.forEach(i=>{_jjIds.push((v.fileIds||[])[i]);_jjTypes.push((v.fileTypes||[])[i]||'');_jjNames.push((v.fileNames||[])[i]||'Файл');});
       const _jIds   = JSON.stringify(_jjIds).replace(/'/g,'&#39;');
@@ -4466,7 +4469,7 @@ function openSosModal(editId) {
 
   const existFiles = (ex?.fileIds||[])
     .map((fid,i) => ({ fid, i, ft:(ex.fileTypes||[])[i]||'', fn:(ex.fileNames||[])[i]||'Файл' }))
-    .sort((a,b) => (a.ft.startsWith('video/')?1:0) - (b.ft.startsWith('video/')?1:0))
+    .sort((a,b)=>{const p=ft=>ft.startsWith('video/')?0:ft.startsWith('image/')?1:2;return p(a.ft)-p(b.ft);})
     .map(({fid,i,ft,fn}) => `<div class="file-item">
       <span>${fileEmoji(ft)}</span>
       <span class="fn">${fn}</span>
