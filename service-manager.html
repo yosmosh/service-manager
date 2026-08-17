@@ -3691,22 +3691,25 @@ function renderMaintenance() {
   const canEdit = currentUser === 'admin' || currentUser === 'owner';
 
   const cards = items.length ? items.map(w => {
-    const _mIds   = JSON.stringify(w.fileIds||[]).replace(/'/g,'&#39;');
-    const _mTypes = JSON.stringify(w.fileTypes||[]).replace(/'/g,'&#39;');
-    const _mNames = JSON.stringify(w.fileNames||[]).replace(/'/g,'&#39;');
-    const filesHtml = (w.fileIds||[]).length ? `
+    const _mSorted = (w.fileIds||[]).map((_,i)=>i).sort((a,b)=>((w.fileTypes||[])[a]||'').startsWith('video/')?1:((w.fileTypes||[])[b]||'').startsWith('video/')?-1:0);
+    const _sIds=[],_sTypes=[],_sNames=[];
+    _mSorted.forEach(i=>{_sIds.push((w.fileIds||[])[i]);_sTypes.push((w.fileTypes||[])[i]||'');_sNames.push((w.fileNames||[])[i]||'Файл');});
+    const _mIds   = JSON.stringify(_sIds).replace(/'/g,'&#39;');
+    const _mTypes = JSON.stringify(_sTypes).replace(/'/g,'&#39;');
+    const _mNames = JSON.stringify(_sNames).replace(/'/g,'&#39;');
+    const filesHtml = _sIds.length ? `
       <div data-gids='${_mIds}' data-gtypes='${_mTypes}' data-gnames='${_mNames}'
            style="display:flex;gap:8px;flex-wrap:wrap">
-        ${(w.fileIds||[]).map((fid, i) => {
-          const ft = (w.fileTypes||[])[i]||'';
-          const fn = (w.fileNames||[])[i]||'Файл';
+        ${_sIds.map((fid, si) => {
+          const ft = _sTypes[si];
+          const fn = _sNames[si];
           const _murl = (_FC[fid]||{}).url || '';
           return ft.startsWith('image/')
             ? `<img class="mthumb" ${_murl ? `src="${_murl}"` : ''} loading="lazy" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}" title="${fn}"
                  style="width:72px;height:72px;object-fit:cover;border-radius:10px;cursor:pointer;background:#e2e8f0;flex-shrink:0;border:2px solid transparent;transition:.15s"
                  onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'"
-                 onclick="openGalleryEl(this,${i})">`
-            : `<div onclick="openGalleryEl(this,${i})" title="${fn}"
+                 onclick="openGalleryEl(this,${si})">`
+            : `<div onclick="openGalleryEl(this,${si})" title="${fn}"
                  style="width:72px;height:72px;border-radius:10px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:3px;border:2px solid transparent;transition:.15s"
                  onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'">
                  <span style="font-size:24px">${fileEmoji(ft)}</span>
@@ -3984,22 +3987,25 @@ function renderSOS() {
 
   return chipsHtml + [...list].sort((a,b) => new Date(b.date)-new Date(a.date)).map(s => {
     const canEdit = currentUser === 'admin' || currentUser === 'owner';
-    const _sIds   = JSON.stringify(s.fileIds||[]).replace(/'/g,'&#39;');
-    const _sTypes = JSON.stringify(s.fileTypes||[]).replace(/'/g,'&#39;');
-    const _sNames = JSON.stringify(s.fileNames||[]).replace(/'/g,'&#39;');
-    const filesHtml = (s.fileIds||[]).length ? `
+    const _sSorted = (s.fileIds||[]).map((_,i)=>i).sort((a,b)=>((s.fileTypes||[])[a]||'').startsWith('video/')?1:((s.fileTypes||[])[b]||'').startsWith('video/')?-1:0);
+    const _ssIds=[],_ssTypes=[],_ssNames=[];
+    _sSorted.forEach(i=>{_ssIds.push((s.fileIds||[])[i]);_ssTypes.push((s.fileTypes||[])[i]||'');_ssNames.push((s.fileNames||[])[i]||'Файл');});
+    const _sIds   = JSON.stringify(_ssIds).replace(/'/g,'&#39;');
+    const _sTypes = JSON.stringify(_ssTypes).replace(/'/g,'&#39;');
+    const _sNames = JSON.stringify(_ssNames).replace(/'/g,'&#39;');
+    const filesHtml = _ssIds.length ? `
       <div data-gids='${_sIds}' data-gtypes='${_sTypes}' data-gnames='${_sNames}'
            style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-        ${(s.fileIds||[]).map((fid, i) => {
-          const ft = (s.fileTypes||[])[i]||'';
-          const fn = (s.fileNames||[])[i]||'Файл';
+        ${_ssIds.map((fid, si) => {
+          const ft = _ssTypes[si];
+          const fn = _ssNames[si];
           const _surl = (_FC[fid]||{}).url || '';
           return ft.startsWith('image/')
             ? `<img class="sthumb" ${_surl ? `src="${_surl}"` : ''} loading="lazy" data-fid="${fid}" data-ftype="${ft}" data-fname="${fn}" title="${fn}"
                  style="width:72px;height:72px;object-fit:cover;border-radius:10px;cursor:pointer;background:#e2e8f0;flex-shrink:0;border:2px solid transparent;transition:.15s"
                  onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'"
-                 onclick="openGalleryEl(this,${i})">`
-            : `<div onclick="openGalleryEl(this,${i})" title="${fn}"
+                 onclick="openGalleryEl(this,${si})">`
+            : `<div onclick="openGalleryEl(this,${si})" title="${fn}"
                  style="width:72px;height:72px;border-radius:10px;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;gap:3px;border:2px solid transparent;transition:.15s"
                  onmouseover="this.style.borderColor='#2563eb'" onmouseout="this.style.borderColor='transparent'">
                  <span style="font-size:24px">${fileEmoji(ft)}</span>
@@ -4079,19 +4085,22 @@ function renderJournal() {
       const hasFiles = (v.fileIds || []).length > 0;
       if (!v.completed && !hasFiles && !v.notes && !isReq) return ''; // hide empty reserve slots
 
-      const _jIds   = JSON.stringify(v.fileIds||[]).replace(/'/g,'&#39;');
-      const _jTypes = JSON.stringify(v.fileTypes||[]).replace(/'/g,'&#39;');
-      const _jNames = JSON.stringify(v.fileNames||[]).replace(/'/g,'&#39;');
+      const _jSorted = (v.fileIds||[]).map((_,i)=>i).sort((a,b)=>((v.fileTypes||[])[a]||'').startsWith('video/')?1:((v.fileTypes||[])[b]||'').startsWith('video/')?-1:0);
+      const _jjIds=[],_jjTypes=[],_jjNames=[];
+      _jSorted.forEach(i=>{_jjIds.push((v.fileIds||[])[i]);_jjTypes.push((v.fileTypes||[])[i]||'');_jjNames.push((v.fileNames||[])[i]||'Файл');});
+      const _jIds   = JSON.stringify(_jjIds).replace(/'/g,'&#39;');
+      const _jTypes = JSON.stringify(_jjTypes).replace(/'/g,'&#39;');
+      const _jNames = JSON.stringify(_jjNames).replace(/'/g,'&#39;');
       const MAX_THUMBS = 8;
-      const allFids = v.fileIds || [];
+      const allFids = _jjIds;
       const shownFids = allFids.slice(0, MAX_THUMBS);
       const hiddenCount = allFids.length - shownFids.length;
       const fileThumbsHtml = allFids.length ? `
         <div class="jthumb-wrap" data-gids='${_jIds}' data-gtypes='${_jTypes}' data-gnames='${_jNames}'
              style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           ${shownFids.map((fid, fi) => {
-            const fname = (v.fileNames||[])[fi] || 'Файл';
-            const ftype = (v.fileTypes||[])[fi] || '';
+            const fname = _jjNames[fi];
+            const ftype = _jjTypes[fi];
             const _jurl = (_FC[fid]||{}).url || '';
             return ftype.startsWith('image/')
               ? `<img class="jthumb" ${_jurl ? `src="${_jurl}"` : ''} loading="lazy" data-fid="${fid}" data-ftype="${ftype}" data-fname="${fname}"
