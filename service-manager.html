@@ -3762,16 +3762,15 @@ function openMaintModal(editId) {
   pendingFiles = [];
   document.getElementById('modal-title').textContent = ex ? '✏️ Редактировать работу' : '➕ Добавить работу';
 
-  const existFiles = (ex?.fileIds||[]).map((fid,i) => {
-    const ft = (ex.fileTypes||[])[i]||'';
-    const fn = (ex.fileNames||[])[i]||'Файл';
-    return `<div class="file-item">
+  const existFiles = (ex?.fileIds||[])
+    .map((fid,i) => ({ fid, i, ft:(ex.fileTypes||[])[i]||'', fn:(ex.fileNames||[])[i]||'Файл' }))
+    .sort((a,b) => (a.ft.startsWith('video/')?1:0) - (b.ft.startsWith('video/')?1:0))
+    .map(({fid,i,ft,fn}) => `<div class="file-item">
       <span>${fileEmoji(ft)}</span>
       <span class="fn">${fn}</span>
       <button onclick="previewFile('${fid}','${ft}','${fn.replace(/'/g,"\\'")}'")" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button>
       <button onclick="delMaintFile('${ex.id}',${i})" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Удалить файл">✕</button>
-    </div>`;
-  }).join('');
+    </div>`).join('');
 
   const defaultDate = ex?.date || `${maintYear}-${String(maintMonth).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
   const catOptions = MAINT_CATS.map(c =>
@@ -4456,16 +4455,15 @@ function openSosModal(editId) {
   pendingFiles = [];
   document.getElementById('modal-title').textContent = ex ? 'Редактировать событие SOS' : 'Добавить событие SOS';
 
-  const existFiles = (ex?.fileIds||[]).map((fid,i) => {
-    const ft = (ex.fileTypes||[])[i]||'';
-    const fn = (ex.fileNames||[])[i]||'Файл';
-    return `<div class="file-item">
+  const existFiles = (ex?.fileIds||[])
+    .map((fid,i) => ({ fid, i, ft:(ex.fileTypes||[])[i]||'', fn:(ex.fileNames||[])[i]||'Файл' }))
+    .sort((a,b) => (a.ft.startsWith('video/')?1:0) - (b.ft.startsWith('video/')?1:0))
+    .map(({fid,i,ft,fn}) => `<div class="file-item">
       <span>${fileEmoji(ft)}</span>
       <span class="fn">${fn}</span>
       <button onclick="previewFile('${fid}','${ft}','${fn.replace(/'/g,"\\'")}'")" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button>
       <button onclick="delSosFile('${ex.id}',${i})" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Удалить файл">✕</button>
-    </div>`;
-  }).join('');
+    </div>`).join('');
 
   document.getElementById('modal-body').innerHTML = `
     <div class="form-group">
