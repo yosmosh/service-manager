@@ -1348,7 +1348,7 @@ async function dbSave(fileData, fileIdx, totalFiles) {
     const ref = _storageRoot.child(`files/${id}`);
     _showUploadBar(fileData.name, 0, fileIdx, totalFiles);
     await new Promise((resolve, reject) => {
-      const task = ref.put(blob, { contentType: fileData.type });
+      const task = ref.put(blob, { contentType: fileData.type, contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(fileData.name)}` });
       task.on('state_changed',
         snap => _showUploadBar(null, snap.bytesTransferred / snap.totalBytes * 100),
         reject,
@@ -2209,7 +2209,7 @@ async function _galShow(index) {
   const fn  = f.name || name;
   const isFirebase = _useFirebase && !!f.url;
   const url = isFirebase ? f.url : URL.createObjectURL(dataURLtoBlob(f.data));
-  _gal.cur = { url, ft, fn };
+  _gal.cur = { url, ft, fn, id };
   const isMobile = window.innerWidth <= 640;
 
   let media;
@@ -2320,6 +2320,13 @@ function _makePDFFromJPEG(jpegBytes, w, h) {
 async function _galDl() {
   if (!_gal || !_gal.cur) return;
   const { url, ft, fn } = _gal.cur;
+  const _dlBlob = (blob, name) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
   try {
     if (ft && ft.startsWith('image/')) {
       const img = new Image();
@@ -2330,19 +2337,21 @@ async function _galDl() {
       cv.getContext('2d').drawImage(img, 0, 0);
       const jb = Uint8Array.from(atob(cv.toDataURL('image/jpeg', 0.92).split(',')[1]), c => c.charCodeAt(0));
       const pdf = _makePDFFromJPEG(jb, img.naturalWidth, img.naturalHeight);
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
-      a.download = fn.replace(/\.[^.]+$/, '') + '.pdf';
-      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      _dlBlob(new Blob([pdf], { type: 'application/pdf' }), fn.replace(/\.[^.]+$/, '') + '.pdf');
     } else {
       const resp = await fetch(url);
-      const blob = await resp.blob();
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = fn;
-      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      if (!resp.ok) throw new Error('fetch ' + resp.status);
+      _dlBlob(await resp.blob(), fn);
     }
-  } catch(e) { window.open(url, '_blank'); }
+  } catch(e) {
+    // CORS or network failure — open via URL with response-content-disposition hint so browser uses correct filename
+    let dlUrl = url;
+    if (fn && url.includes('googleapis.com')) {
+      const d = `attachment; filename*=UTF-8''${encodeURIComponent(fn)}`;
+      dlUrl = url + (url.includes('?') ? '&' : '?') + 'response-content-disposition=' + encodeURIComponent(d);
+    }
+    window.open(dlUrl, '_blank');
+  }
 }
 
 document.addEventListener('keydown', e => {
