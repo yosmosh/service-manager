@@ -2403,7 +2403,7 @@ async function delMaintFile(maintId, fi) {
   if (fid) await dbDel(fid);
   ['fileIds','fileNames','fileTypes'].forEach(k => { if (list[idx][k]) list[idx][k].splice(fi,1); });
   setLS('maint_works', list);
-  if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
+  if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
   openMaintModal(maintId);
 }
 
@@ -5666,7 +5666,7 @@ async function renderSharePageCustomReport(d) {
     document.body.style.cssText = 'margin:0;padding:0;background:#f8fafc;height:auto;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif';
     document.body.innerHTML = '<div style="text-align:center;color:#6b7280;font-size:15px">⏳ Загружаем актуальные данные…</div>';
     try {
-      const stateDoc = await _firestoreDB.collection('appdata').doc('state').get();
+      const stateDoc = await _firestoreDB.collection('appdata').doc('state').get({ source: 'server' });
       const st = stateDoc.exists ? stateDoc.data() : {};
       const allWorks = st.maint_works || [];
       const allFiles = st.files || {};
