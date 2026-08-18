@@ -5558,8 +5558,9 @@ function _renderSharePageMonthlyReportLEGACY(d) {
 function renderSharePageWork(d) {
   const files = d.files || {};
   const fids = Object.keys(files);
-  const photos = fids.filter(fid => (files[fid].type||'').startsWith('image/'));
-  const docs   = fids.filter(fid => !(files[fid].type||'').startsWith('image/'));
+  const photos  = fids.filter(fid => (files[fid].type||'').startsWith('image/'));
+  const videos  = fids.filter(fid => (files[fid].type||'').startsWith('video/'));
+  const docs    = fids.filter(fid => !(files[fid].type||'').startsWith('image/') && !(files[fid].type||'').startsWith('video/'));
   const isMaint = d.type === 'maint';
   const statusLabel = (d.status==='done'||d.status==='resolved') ? '✅ Выполнено' : d.status==='in_progress' ? '🔄 В работе' : isMaint ? '📋 Запланировано' : '⚠️ Ожидает';
   const statusColor = (d.status==='done'||d.status==='resolved') ? '#16a34a' : d.status==='in_progress' ? '#d97706' : isMaint ? '#64748b' : '#dc2626';
@@ -5585,6 +5586,16 @@ function renderSharePageWork(d) {
 
         ${d.description ? `<div style="background:#fff;border-radius:12px;padding:12px 14px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:10px;border-left:3px solid #2563eb">
           <div style="font-size:13px;color:#374151;line-height:1.55">${d.description}</div>
+        </div>` : ''}
+
+        ${videos.length ? `<div style="background:#fff;border-radius:12px;padding:12px 14px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:10px">
+          <div style="font-size:11px;font-weight:600;color:#6b7280;margin-bottom:8px">🎥 Видео (${videos.length})</div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            ${videos.map(fid => `<div>
+              <div style="font-size:10px;color:#9ca3af;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${files[fid].name}</div>
+              <video src="${files[fid].url}" controls playsinline style="width:100%;max-height:320px;border-radius:8px;background:#000;display:block"></video>
+            </div>`).join('')}
+          </div>
         </div>` : ''}
 
         ${photos.length ? `<div style="background:#fff;border-radius:12px;padding:12px 14px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:10px">
