@@ -428,6 +428,7 @@ img{max-width:100%;height:auto}
     <div class="nav-item admin-or-owner" id="nav-settings" onclick="openSettingsModal()">⚙️ Настройки доступа</div>
     <div class="nav-item owner-only" id="nav-report" onclick="shareMonthlyReport()" style="color:#7c3aed;font-weight:600">📊 Отчёт онлайн</div>
     <div class="nav-item owner-only" id="nav-quarterly" onclick="shareQuarterlyReport()" style="color:#16a34a;font-weight:600">📋 Квартальный отчёт</div>
+    <div class="nav-item owner-only" id="nav-custom-report" onclick="openCustomReportModal()" style="color:#0891b2;font-weight:600">📑 Выборочный отчёт</div>
     <div class="nav-item owner-only" id="nav-export" onclick="exportCSV()">📊 Экспорт данных (CSV)</div>
     <div class="nav-item owner-only" id="recompress-btn" onclick="recompressExistingImages()" style="color:#f59e0b">🗜️ דחוס תמונות קיימות</div>
   </div>
@@ -4699,6 +4700,113 @@ async function shareMaintWork(id, evt) {
   }, btn);
 }
 
+// ==============================
+// ВЫБОРОЧНЫЙ ОТЧЁТ
+// ==============================
+function openCustomReportModal() {
+  if (currentUser !== 'owner') return;
+  const works = getMaintWorks().slice().sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  let ov = document.getElementById('crp-ov');
+  if (ov) ov.remove();
+  ov = document.createElement('div');
+  ov.id = 'crp-ov';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:9998;background:#f8fafc;display:flex;flex-direction:column;overflow:hidden;font-family:inherit';
+  ov.innerHTML = `
+    <div style="background:#1e293b;padding:12px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <div style="flex:1">
+        <div style="color:white;font-size:15px;font-weight:700">📑 Выборочный отчёт</div>
+        <div style="color:#94a3b8;font-size:11px;margin-top:2px">Выберите работы из любых месяцев</div>
+      </div>
+      <button id="crp-gen" onclick="shareCustomReport()"
+        style="background:#0891b2;color:white;border:none;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">
+        ✅ Создать (<span id="crp-cnt">0</span>)
+      </button>
+      <button onclick="document.getElementById('crp-ov').remove()"
+        style="background:rgba(255,255,255,.12);color:white;border:none;border-radius:6px;padding:8px 13px;font-size:16px;cursor:pointer">✕</button>
+    </div>
+    <div style="background:white;padding:8px 12px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid #e2e8f0;flex-shrink:0;align-items:center">
+      <input id="crp-q" type="text" placeholder="🔍 Поиск..." oninput="_crpFilter()"
+        style="flex:1;min-width:120px;border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px;font-size:12px;font-family:inherit">
+      <select id="crp-cat" onchange="_crpFilter()" style="border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">
+        <option value="">Все категории</option>
+        ${MAINT_CATS.map(c=>`<option value="${c.id}">${c.label}</option>`).join('')}
+      </select>
+      <select id="crp-st" onchange="_crpFilter()" style="border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">
+        <option value="">Все статусы</option>
+        <option value="done">✅ Выполнено</option>
+        <option value="in_progress">🔄 В работе</option>
+        <option value="planned">📋 Запланировано</option>
+      </select>
+      <button onclick="_crpAll(true)" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;font-family:inherit">☑ Все</button>
+      <button onclick="_crpAll(false)" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;font-family:inherit">☐ Снять</button>
+    </div>
+    <div id="crp-list" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:5px">
+      ${works.map(w => {
+        const sc = w.status==='done'?'#16a34a':w.status==='in_progress'?'#d97706':'#64748b';
+        const sb = w.status==='done'?'#dcfce7':w.status==='in_progress'?'#fef3c7':'#f1f5f9';
+        const sl = w.status==='done'?'✅ Выполнено':w.status==='in_progress'?'🔄 В работе':'📋 Запланировано';
+        const fc = (w.fileIds||[]).length;
+        return `<label id="crp-lbl-${w.id}" data-id="${w.id}" data-title="${(w.title||'').toLowerCase()}" data-cat="${w.category||'other'}" data-st="${w.status||'done'}"
+          style="display:flex;align-items:flex-start;gap:10px;background:white;border:2px solid #e2e8f0;border-radius:8px;padding:10px 12px;cursor:pointer;transition:.12s">
+          <input type="checkbox" id="crp-cb-${w.id}" value="${w.id}" style="margin-top:2px;width:16px;height:16px;cursor:pointer;flex-shrink:0;accent-color:#0891b2"
+            onchange="_crpChk(this)">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:600;color:#1e293b;margin-bottom:3px">${w.title||'—'}</div>
+            <div style="font-size:11px;color:#6b7280;display:flex;gap:8px;flex-wrap:wrap">
+              <span>📅 ${fmtDate(w.date)}</span>
+              <span>${maintCatLabel(w.category||'other')}</span>
+              ${w.cost?`<span>💰 ${Number(w.cost).toLocaleString('ru')} ₽</span>`:''}
+              ${fc?`<span>📎 ${fc} файл(а)</span>`:''}
+            </div>
+          </div>
+          <span style="background:${sb};color:${sc};border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;flex-shrink:0;white-space:nowrap">${sl}</span>
+        </label>`;
+      }).join('')}
+    </div>`;
+  document.body.appendChild(ov);
+}
+
+function _crpChk(cb) {
+  const lbl = document.getElementById('crp-lbl-' + cb.value);
+  if (lbl) { lbl.style.borderColor = cb.checked ? '#0891b2' : '#e2e8f0'; lbl.style.background = cb.checked ? '#f0f9ff' : 'white'; }
+  _crpCnt();
+}
+function _crpCnt() {
+  const n = document.querySelectorAll('#crp-list input[type=checkbox]:checked').length;
+  const el = document.getElementById('crp-cnt'); if (el) el.textContent = n;
+  const btn = document.getElementById('crp-gen'); if (btn) btn.style.background = n > 0 ? '#0891b2' : '#94a3b8';
+}
+function _crpAll(on) {
+  document.querySelectorAll('#crp-list label[data-id]:not([style*="display:none"]) input[type=checkbox]').forEach(cb => { cb.checked = on; _crpChk(cb); });
+}
+function _crpFilter() {
+  const q = (document.getElementById('crp-q')?.value||'').toLowerCase().trim();
+  const cat = document.getElementById('crp-cat')?.value||'';
+  const st  = document.getElementById('crp-st')?.value||'';
+  document.querySelectorAll('#crp-list label[data-id]').forEach(l => {
+    const ok = (!q || l.dataset.title.includes(q)) && (!cat || l.dataset.cat===cat) && (!st || l.dataset.st===st);
+    l.style.display = ok ? '' : 'none';
+  });
+}
+
+async function shareCustomReport() {
+  const ids = [...document.querySelectorAll('#crp-list input[type=checkbox]:checked')].map(cb => cb.value);
+  if (!ids.length) { _showToast('❌ Выберите хотя бы одну работу', false); return; }
+  if (!_firestoreDB) { _showToast('❌ Firebase недоступен', false); return; }
+  const btn = document.getElementById('crp-gen');
+  if (btn) { btn.textContent = '⏳ Создаём...'; btn.disabled = true; }
+  const allWorks = getMaintWorks(), allFiles = getLS('files') || {};
+  const works = ids.map(id => {
+    const w = allWorks.find(x => x.id === id); if (!w) return null;
+    const files = {};
+    (w.fileIds||[]).forEach((fid,fi) => { if (allFiles[fid]) files[fid] = { url:allFiles[fid].url, name:(w.fileNames||[])[fi]||allFiles[fid].name, type:(w.fileTypes||[])[fi]||allFiles[fid].type||'' }; });
+    return { id:w.id, title:w.title, date:w.date, categoryLabel:maintCatLabel(w.category||'other'), status:w.status, description:w.description||'', cost:w.cost||'', files };
+  }).filter(Boolean).sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  const token = Math.random().toString(36).slice(2,9) + Math.random().toString(36).slice(2,9);
+  await _doShare(token, { type:'custom_report', works, createdAt:Date.now() }, null);
+  document.getElementById('crp-ov')?.remove();
+}
+
 async function shareSOSItem(id, evt) {
   evt && evt.stopPropagation();
   if (!_firestoreDB) { _showToast('❌ Firebase недоступен', false); return; }
@@ -4777,6 +4885,7 @@ async function loadSharePage(token) {
     }
     const d = doc.data();
     if (d.type === 'monthly_report' || d.type === 'quarterly_report') renderSharePageMonthlyReport(d);
+    else if (d.type === 'custom_report') renderSharePageCustomReport(d);
     else if (d.type === 'maint' || d.type === 'sos') renderSharePageWork(d);
     else renderSharePage(d);
   } catch(e) {
@@ -5551,6 +5660,80 @@ function _renderSharePageMonthlyReportLEGACY(d) {
         <div style="text-align:center;font-size:10px;color:#cbd5e1;padding:8px 0">
           Отчёт сформирован системой управления ТО · Открывается без входа в систему
         </div>
+      </div>
+    </div>`;
+}
+
+function renderSharePageCustomReport(d) {
+  const works = d.works || [];
+  const MO = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const _renderWork = w => {
+    const files = w.files || {}, fids = Object.keys(files);
+    const photos = fids.filter(fid => (files[fid].type||'').startsWith('image/'));
+    const videos = fids.filter(fid => (files[fid].type||'').startsWith('video/'));
+    const docs   = fids.filter(fid => !(files[fid].type||'').startsWith('image/') && !(files[fid].type||'').startsWith('video/'));
+    const sc = w.status==='done'?'#16a34a':w.status==='in_progress'?'#d97706':'#64748b';
+    const sb = w.status==='done'?'#dcfce7':w.status==='in_progress'?'#fef3c7':'#f1f5f9';
+    const sl = w.status==='done'?'✅ Выполнено':w.status==='in_progress'?'🔄 В работе':'📋 Запланировано';
+    return `<div style="background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:12px;overflow:hidden;border-left:4px solid ${sc}">
+      <div style="padding:12px 14px${(w.description||videos.length||photos.length||docs.length)?';border-bottom:1px solid #f1f5f9':''}">
+        <div style="display:flex;align-items:flex-start;gap:8px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:700;color:#1e293b;margin-bottom:4px">${w.title}</div>
+            <div style="font-size:11px;color:#6b7280;display:flex;gap:8px;flex-wrap:wrap">
+              <span>📅 ${w.date}</span><span>${w.categoryLabel||''}</span>${w.cost?`<span>💰 ${Number(w.cost).toLocaleString('ru')} ₽</span>`:''}
+            </div>
+          </div>
+          <span style="background:${sb};color:${sc};border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;flex-shrink:0">${sl}</span>
+        </div>
+        ${w.description?`<div style="font-size:12px;color:#374151;margin-top:8px;padding:7px 10px;background:#f8fafc;border-radius:6px;border-left:3px solid #2563eb;line-height:1.5">${w.description}</div>`:''}
+      </div>
+      ${videos.length?`<div style="padding:10px 14px;border-bottom:1px solid #f1f5f9">
+        <div style="font-size:10px;font-weight:600;color:#6b7280;margin-bottom:6px">🎥 ВИДЕО (${videos.length})</div>
+        ${videos.map(fid=>`<div style="margin-bottom:6px"><div style="font-size:9px;color:#9ca3af;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${files[fid].name}</div>
+          <video src="${files[fid].url}" controls playsinline style="width:100%;max-height:280px;border-radius:6px;background:#000;display:block"></video></div>`).join('')}
+      </div>`:''}
+      ${photos.length?`<div style="padding:10px 14px${docs.length?';border-bottom:1px solid #f1f5f9':''}">
+        <div style="font-size:10px;font-weight:600;color:#6b7280;margin-bottom:6px">📷 ФОТО (${photos.length})</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">${photos.map(fid=>`<img src="${files[fid].url}" alt="" loading="lazy" style="width:72px;height:72px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;cursor:pointer" onclick="this.style.width=this.style.width==='100%'?'72px':'100%';this.style.height=this.style.height==='auto'?'72px':'auto'">`).join('')}</div>
+      </div>`:''}
+      ${docs.length?`<div style="padding:10px 14px">
+        <div style="font-size:10px;font-weight:600;color:#6b7280;margin-bottom:6px">📎 ДОКУМЕНТЫ</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">${docs.map(fid=>`<a href="${files[fid].url}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;background:#f1f5f9;border-radius:5px;padding:4px 10px;text-decoration:none;color:#2563eb;font-size:11px;border:1px solid #e2e8f0">📎 ${files[fid].name}</a>`).join('')}</div>
+      </div>`:''}
+    </div>`;
+  };
+  // Group by month
+  const byMonth = {};
+  works.forEach(w => {
+    const dt = new Date(w.date||''), yr = dt.getFullYear(), mo = dt.getMonth()+1;
+    const k = `${yr}-${String(mo).padStart(2,'0')}`;
+    if (!byMonth[k]) byMonth[k] = { yr, mo, works:[] };
+    byMonth[k].works.push(w);
+  });
+  const keys = Object.keys(byMonth).sort((a,b) => b.localeCompare(a));
+  document.body.style.cssText = 'margin:0;padding:0;background:#f8fafc;height:auto;min-height:100vh;overflow:visible;display:block';
+  document.body.innerHTML = `
+    <div style="min-height:100vh;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+      <div style="background:#1e293b;padding:12px 16px;position:sticky;top:0;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,.2)">
+        <div style="max-width:680px;margin:0 auto">
+          <div style="color:white;font-size:14px;font-weight:700">📑 Выборочный отчёт</div>
+          <div style="color:#94a3b8;font-size:10px;margin-top:1px">${works.length} ${works.length===1?'работа':works.length<5?'работы':'работ'} · ${keys.length} ${keys.length===1?'период':'периода'}</div>
+        </div>
+      </div>
+      <div style="max-width:680px;margin:0 auto;padding:12px 12px 40px">
+        ${keys.map(k => {
+          const g = byMonth[k];
+          return `<div>
+            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px;padding:10px 2px 6px;display:flex;align-items:center;gap:8px">
+              <div style="flex:1;height:1px;background:#e2e8f0"></div>
+              📅 ${MO[g.mo-1]} ${g.yr} · ${g.works.length} раб.
+              <div style="flex:1;height:1px;background:#e2e8f0"></div>
+            </div>
+            ${g.works.map(_renderWork).join('')}
+          </div>`;
+        }).join('')}
+        <div style="text-align:center;padding:8px 0 0;font-size:10px;color:#cbd5e1">Отчёт сформирован системой управления ТО · Открывается без входа в систему</div>
       </div>
     </div>`;
 }
