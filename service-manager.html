@@ -4795,15 +4795,9 @@ async function shareCustomReport() {
   if (!_firestoreDB) { _showToast('❌ Firebase недоступен', false); return; }
   const btn = document.getElementById('crp-gen');
   if (btn) { btn.textContent = '⏳ Создаём...'; btn.disabled = true; }
-  const allWorks = getMaintWorks(), allFiles = getLS('files') || {};
-  const works = ids.map(id => {
-    const w = allWorks.find(x => x.id === id); if (!w) return null;
-    const files = {};
-    (w.fileIds||[]).forEach((fid,fi) => { if (allFiles[fid]) files[fid] = { url:allFiles[fid].url, name:(w.fileNames||[])[fi]||allFiles[fid].name, type:(w.fileTypes||[])[fi]||allFiles[fid].type||'' }; });
-    return { id:w.id, title:w.title, date:w.date, categoryLabel:maintCatLabel(w.category||'other'), status:w.status, description:w.description||'', cost:w.cost||'', files };
-  }).filter(Boolean).sort((a,b) => (b.date||'').localeCompare(a.date||''));
   const token = Math.random().toString(36).slice(2,9) + Math.random().toString(36).slice(2,9);
-  await _doShare(token, { type:'custom_report', works, createdAt:Date.now() }, null);
+  // Store only IDs — share page reads live data from appdata/state on every open
+  await _doShare(token, { type:'custom_report', workIds:ids, createdAt:Date.now() }, null);
   document.getElementById('crp-ov')?.remove();
 }
 
@@ -4885,7 +4879,7 @@ async function loadSharePage(token) {
     }
     const d = doc.data();
     if (d.type === 'monthly_report' || d.type === 'quarterly_report') renderSharePageMonthlyReport(d);
-    else if (d.type === 'custom_report') renderSharePageCustomReport(d);
+    else if (d.type === 'custom_report') await renderSharePageCustomReport(d);
     else if (d.type === 'maint' || d.type === 'sos') renderSharePageWork(d);
     else renderSharePage(d);
   } catch(e) {
@@ -5664,9 +5658,32 @@ function _renderSharePageMonthlyReportLEGACY(d) {
     </div>`;
 }
 
-function renderSharePageCustomReport(d) {
-  const works = d.works || [];
+async function renderSharePageCustomReport(d) {
   const MO = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  let works;
+  if (d.workIds) {
+    // Live mode: fetch current state from Firestore so every refresh shows latest data
+    document.body.style.cssText = 'margin:0;padding:0;background:#f8fafc;height:auto;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif';
+    document.body.innerHTML = '<div style="text-align:center;color:#6b7280;font-size:15px">⏳ Загружаем актуальные данные…</div>';
+    try {
+      const stateDoc = await _firestoreDB.collection('appdata').doc('state').get();
+      const st = stateDoc.exists ? stateDoc.data() : {};
+      const allWorks = st.maint_works || [];
+      const allFiles = st.files || {};
+      works = d.workIds.map(id => {
+        const w = allWorks.find(x => x.id === id); if (!w) return null;
+        const files = {};
+        (w.fileIds||[]).forEach((fid,fi) => { if (allFiles[fid]) files[fid] = { url:allFiles[fid].url, name:(w.fileNames||[])[fi]||allFiles[fid].name, type:(w.fileTypes||[])[fi]||allFiles[fid].type||'' }; });
+        const cats = {'territory':'🌿 Благоустройство','buildings':'🏛️ Корпуса','pool':'🏊 Бассейн','electrical':'⚡ Электрика','plumbing':'🔧 Сантехника','other':'🔩 Прочее'};
+        return { id:w.id, title:w.title, date:w.date, categoryLabel:cats[w.category]||w.category||'', status:w.status, description:w.description||'', cost:w.cost||'', files };
+      }).filter(Boolean).sort((a,b) => (b.date||'').localeCompare(a.date||''));
+    } catch(e) {
+      document.body.innerHTML = `<div style="text-align:center;color:#dc2626;padding:40px">❌ Ошибка загрузки данных</div>`;
+      return;
+    }
+  } else {
+    works = d.works || []; // backwards compat for old snapshot links
+  }
   const _renderWork = w => {
     const files = w.files || {}, fids = Object.keys(files);
     const photos = fids.filter(fid => (files[fid].type||'').startsWith('image/'));
