@@ -4705,7 +4705,74 @@ async function shareMaintWork(id, evt) {
 // ==============================
 function openCustomReportModal() {
   if (currentUser !== 'owner') return;
-  const works = getMaintWorks().slice().sort((a,b) => (b.date||'').localeCompare(a.date||''));
+
+  // Collect all items from all 3 sources
+  const allItems = [];
+
+  // 1. Maintenance works
+  getMaintWorks().forEach(w => {
+    const fc = (w.fileIds||[]).length;
+    const sc = w.status==='done'?'#16a34a':w.status==='in_progress'?'#d97706':'#64748b';
+    const sb = w.status==='done'?'#dcfce7':w.status==='in_progress'?'#fef3c7':'#f1f5f9';
+    const sl = w.status==='done'?'✅ Выполнено':w.status==='in_progress'?'🔄 В работе':'📋 Запланировано';
+    allItems.push({
+      prefId: `maint:${w.id}`, type: 'maint', date: w.date||'',
+      title: w.title||'—',
+      meta: `${maintCatLabel(w.category||'other')}${w.cost?` · 💰 ${Number(w.cost).toLocaleString('ru')} ₽`:''}${fc?` · 📎 ${fc} файл(а)`:''}`,
+      badge: sl, badgeBg: sb, badgeColor: sc,
+      searchText: (w.title||'').toLowerCase(),
+      dataCat: w.category||'other', dataSt: w.status||'planned',
+      typeTag: '<span style="font-size:9px;background:#f1f5f9;color:#475569;border-radius:3px;padding:1px 5px;font-weight:700;flex-shrink:0">🏗️ ТО</span>'
+    });
+  });
+
+  // 2. SOS / Экстренное ТО
+  getSOS().forEach(s => {
+    const fc = (s.fileIds||[]).length;
+    const sc = s.status==='resolved'?'#16a34a':'#dc2626';
+    const sb = s.status==='resolved'?'#dcfce7':'#fef2f2';
+    const sl = s.status==='resolved'?'✅ Решено':'🚨 Открыто';
+    const pri = s.priority==='high'?'🔴 Высокий':s.priority==='medium'?'🟡 Средний':'🟢 Низкий';
+    const mappedSt = s.status==='resolved'?'done':'in_progress';
+    allItems.push({
+      prefId: `sos:${s.id}`, type: 'sos', date: s.date||'',
+      title: s.title||'—',
+      meta: `${pri}${fc?` · 📎 ${fc} файл(а)`:''}`,
+      badge: sl, badgeBg: sb, badgeColor: sc,
+      searchText: (s.title||'').toLowerCase(),
+      dataCat: 'sos', dataSt: mappedSt,
+      typeTag: '<span style="font-size:9px;background:#fef2f2;color:#dc2626;border-radius:3px;padding:1px 5px;font-weight:700;flex-shrink:0">🚨 СОС</span>'
+    });
+  });
+
+  // 3. Provider visits (журнал визитов)
+  const records = getRecords();
+  Object.keys(records).forEach(key => {
+    const parts = key.split('_'); if (parts.length < 3) return;
+    const pid = parts[0], yr = parseInt(parts[1]), mo = parseInt(parts[2]);
+    const prov = PROVIDERS.find(p => p.id === pid); if (!prov) return;
+    (records[key].visits || []).forEach((visit, vi) => {
+      if (!visit) return;
+      const fc = (visit.fileIds||[]).length;
+      const date = visit.completedDate || `${yr}-${String(mo).padStart(2,'0')}-01`;
+      const sc = visit.completed?'#16a34a':'#d97706';
+      const sb = visit.completed?'#dcfce7':'#fef3c7';
+      const sl = visit.completed?'✅ Выполнено':'🔄 В работе';
+      const notesP = (visit.notes||'').slice(0,45) + ((visit.notes||'').length>45?'…':'');
+      allItems.push({
+        prefId: `visit:${pid}_${yr}_${mo}_${vi}`, type: 'visit', date,
+        title: `${prov.emoji} ${prov.name}`,
+        meta: `${MONTHS[mo-1]} ${yr}${notesP?' · '+notesP:''}${fc?` · 📎 ${fc} файл(а)`:''}`,
+        badge: sl, badgeBg: sb, badgeColor: sc,
+        searchText: (prov.name+' '+(visit.notes||'')).toLowerCase(),
+        dataCat: 'visit', dataSt: visit.completed?'done':'in_progress',
+        typeTag: `<span style="font-size:9px;background:#ecfeff;color:#0891b2;border-radius:3px;padding:1px 5px;font-weight:700;flex-shrink:0">📋 Визит</span>`
+      });
+    });
+  });
+
+  allItems.sort((a,b) => (b.date||'').localeCompare(a.date||''));
+
   let ov = document.getElementById('crp-ov');
   if (ov) ov.remove();
   ov = document.createElement('div');
@@ -4715,10 +4782,10 @@ function openCustomReportModal() {
     <div style="background:#1e293b;padding:12px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0">
       <div style="flex:1">
         <div style="color:white;font-size:15px;font-weight:700">📑 Выборочный отчёт</div>
-        <div style="color:#94a3b8;font-size:11px;margin-top:2px">Выберите работы из любых месяцев</div>
+        <div style="color:#94a3b8;font-size:11px;margin-top:2px">Обслуживание · Экстренное ТО · Журнал визитов</div>
       </div>
       <button id="crp-gen" onclick="shareCustomReport()"
-        style="background:#0891b2;color:white;border:none;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">
+        style="background:#94a3b8;color:white;border:none;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">
         ✅ Создать (<span id="crp-cnt">0</span>)
       </button>
       <button onclick="document.getElementById('crp-ov').remove()"
@@ -4727,6 +4794,12 @@ function openCustomReportModal() {
     <div style="background:white;padding:8px 12px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid #e2e8f0;flex-shrink:0;align-items:center">
       <input id="crp-q" type="text" placeholder="🔍 Поиск..." oninput="_crpFilter()"
         style="flex:1;min-width:120px;border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px;font-size:12px;font-family:inherit">
+      <select id="crp-type" onchange="_crpFilter()" style="border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">
+        <option value="">Все типы</option>
+        <option value="maint">🏗️ Обслуживание</option>
+        <option value="sos">🚨 Экстренное ТО</option>
+        <option value="visit">📋 Визиты</option>
+      </select>
       <select id="crp-cat" onchange="_crpFilter()" style="border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">
         <option value="">Все категории</option>
         ${MAINT_CATS.map(c=>`<option value="${c.id}">${c.label}</option>`).join('')}
@@ -4741,33 +4814,27 @@ function openCustomReportModal() {
       <button onclick="_crpAll(false)" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;font-family:inherit">☐ Снять</button>
     </div>
     <div id="crp-list" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:5px">
-      ${works.map(w => {
-        const sc = w.status==='done'?'#16a34a':w.status==='in_progress'?'#d97706':'#64748b';
-        const sb = w.status==='done'?'#dcfce7':w.status==='in_progress'?'#fef3c7':'#f1f5f9';
-        const sl = w.status==='done'?'✅ Выполнено':w.status==='in_progress'?'🔄 В работе':'📋 Запланировано';
-        const fc = (w.fileIds||[]).length;
-        return `<label id="crp-lbl-${w.id}" data-id="${w.id}" data-title="${(w.title||'').toLowerCase()}" data-cat="${w.category||'other'}" data-st="${w.status||'done'}"
+      ${allItems.map(item => `
+        <label data-id="${item.prefId}" data-title="${item.searchText}" data-cat="${item.dataCat}" data-st="${item.dataSt}" data-type="${item.type}"
           style="display:flex;align-items:flex-start;gap:10px;background:white;border:2px solid #e2e8f0;border-radius:8px;padding:10px 12px;cursor:pointer;transition:.12s">
-          <input type="checkbox" id="crp-cb-${w.id}" value="${w.id}" style="margin-top:2px;width:16px;height:16px;cursor:pointer;flex-shrink:0;accent-color:#0891b2"
+          <input type="checkbox" value="${item.prefId}" style="margin-top:2px;width:16px;height:16px;cursor:pointer;flex-shrink:0;accent-color:#0891b2"
             onchange="_crpChk(this)">
           <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:600;color:#1e293b;margin-bottom:3px">${w.title||'—'}</div>
+            <div style="font-size:13px;font-weight:600;color:#1e293b;margin-bottom:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              ${item.typeTag}<span>${item.title}</span>
+            </div>
             <div style="font-size:11px;color:#6b7280;display:flex;gap:8px;flex-wrap:wrap">
-              <span>📅 ${fmtDate(w.date)}</span>
-              <span>${maintCatLabel(w.category||'other')}</span>
-              ${w.cost?`<span>💰 ${Number(w.cost).toLocaleString('ru')} ₽</span>`:''}
-              ${fc?`<span>📎 ${fc} файл(а)</span>`:''}
+              <span>📅 ${fmtDate(item.date)}</span><span style="overflow:hidden;text-overflow:ellipsis">${item.meta}</span>
             </div>
           </div>
-          <span style="background:${sb};color:${sc};border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;flex-shrink:0;white-space:nowrap">${sl}</span>
-        </label>`;
-      }).join('')}
+          <span style="background:${item.badgeBg};color:${item.badgeColor};border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;flex-shrink:0;white-space:nowrap">${item.badge}</span>
+        </label>`).join('')}
     </div>`;
   document.body.appendChild(ov);
 }
 
 function _crpChk(cb) {
-  const lbl = document.getElementById('crp-lbl-' + cb.value);
+  const lbl = cb.closest('label');
   if (lbl) { lbl.style.borderColor = cb.checked ? '#0891b2' : '#e2e8f0'; lbl.style.background = cb.checked ? '#f0f9ff' : 'white'; }
   _crpCnt();
 }
@@ -4781,10 +4848,15 @@ function _crpAll(on) {
 }
 function _crpFilter() {
   const q = (document.getElementById('crp-q')?.value||'').toLowerCase().trim();
+  const tp = document.getElementById('crp-type')?.value||'';
   const cat = document.getElementById('crp-cat')?.value||'';
   const st  = document.getElementById('crp-st')?.value||'';
   document.querySelectorAll('#crp-list label[data-id]').forEach(l => {
-    const ok = (!q || l.dataset.title.includes(q)) && (!cat || l.dataset.cat===cat) && (!st || l.dataset.st===st);
+    const type = l.dataset.type||'maint';
+    const ok = (!tp || type===tp)
+      && (!cat || type!=='maint' || l.dataset.cat===cat)
+      && (!st || l.dataset.st===st)
+      && (!q || l.dataset.title.includes(q));
     l.style.display = ok ? '' : 'none';
   });
 }
@@ -5662,38 +5734,79 @@ async function renderSharePageCustomReport(d) {
   const MO = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   let works;
   if (d.workIds) {
-    // Live mode: fetch current state from Firestore so every refresh shows latest data
     document.body.style.cssText = 'margin:0;padding:0;background:#f8fafc;height:auto;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif';
     document.body.innerHTML = '<div style="text-align:center;color:#6b7280;font-size:15px">⏳ Загружаем актуальные данные…</div>';
     try {
       const stateDoc = await _firestoreDB.collection('appdata').doc('state').get({ source: 'server' });
       const st = stateDoc.exists ? stateDoc.data() : {};
       const allWorks = st.maint_works || [];
-      const allFiles = st.files || {};
-      works = d.workIds.map(id => {
-        const w = allWorks.find(x => x.id === id); if (!w) return null;
-        const files = {};
-        (w.fileIds||[]).forEach((fid,fi) => { if (allFiles[fid]) files[fid] = { url:allFiles[fid].url, name:(w.fileNames||[])[fi]||allFiles[fid].name, type:(w.fileTypes||[])[fi]||allFiles[fid].type||'' }; });
-        const cats = {'territory':'🌿 Благоустройство','buildings':'🏛️ Корпуса','pool':'🏊 Бассейн','electrical':'⚡ Электрика','plumbing':'🔧 Сантехника','other':'🔩 Прочее'};
-        return { id:w.id, title:w.title, date:w.date, categoryLabel:cats[w.category]||w.category||'', status:w.status, description:w.description||'', cost:w.cost||'', files };
-      }).filter(Boolean).sort((a,b) => (b.date||'').localeCompare(a.date||''));
+      const allSOS   = st.sos_items   || [];
+      const allRecs  = st.svc_records  || {};
+      const allFiles = st.files        || {};
+      const CATS = {'territory':'🌿 Благоустройство','buildings':'🏛️ Корпуса','pool':'🏊 Бассейн','electrical':'⚡ Электрика','plumbing':'🔧 Сантехника','other':'🔩 Прочее'};
+      works = [];
+      d.workIds.forEach(prefixedId => {
+        let type, rawId;
+        if      (prefixedId.startsWith('maint:'))  { type='maint';  rawId=prefixedId.slice(6); }
+        else if (prefixedId.startsWith('sos:'))    { type='sos';    rawId=prefixedId.slice(4); }
+        else if (prefixedId.startsWith('visit:'))  { type='visit';  rawId=prefixedId.slice(6); }
+        else                                       { type='maint';  rawId=prefixedId; } // backwards compat
+        if (type==='maint') {
+          const w = allWorks.find(x => x.id===rawId); if (!w) return;
+          const files={};
+          (w.fileIds||[]).forEach((fid,fi)=>{ if(allFiles[fid]) files[fid]={url:allFiles[fid].url,name:(w.fileNames||[])[fi]||allFiles[fid].name,type:(w.fileTypes||[])[fi]||allFiles[fid].type||''}; });
+          works.push({_type:'maint',id:w.id,title:w.title,date:w.date,categoryLabel:CATS[w.category]||w.category||'',status:w.status,description:w.description||'',cost:w.cost||'',files});
+        } else if (type==='sos') {
+          const s = allSOS.find(x => x.id===rawId); if (!s) return;
+          const files={};
+          (s.fileIds||[]).forEach((fid,fi)=>{ if(allFiles[fid]) files[fid]={url:allFiles[fid].url,name:(s.fileNames||[])[fi]||allFiles[fid].name,type:(s.fileTypes||[])[fi]||allFiles[fid].type||''}; });
+          works.push({_type:'sos',id:s.id,title:s.title,date:s.date,priority:s.priority,status:s.status,description:s.description||'',files});
+        } else if (type==='visit') {
+          const parts=rawId.split('_'); if(parts.length<4) return;
+          const pid=parts[0],yr=parseInt(parts[1]),mo=parseInt(parts[2]),vi=parseInt(parts[3]);
+          const rec=(allRecs[`${pid}_${yr}_${mo}`]||{}); const visit=(rec.visits||[])[vi]; if(!visit) return;
+          const prov=PROVIDERS.find(p=>p.id===pid);
+          const files={};
+          (visit.fileIds||[]).forEach((fid,fi)=>{ if(allFiles[fid]) files[fid]={url:allFiles[fid].url,name:(visit.fileNames||[])[fi]||allFiles[fid].name,type:(visit.fileTypes||[])[fi]||allFiles[fid].type||''}; });
+          works.push({_type:'visit',date:visit.completedDate||`${yr}-${String(mo).padStart(2,'0')}-01`,providerName:prov?prov.name:pid,providerEmoji:prov?prov.emoji:'🏢',providerColor:prov?prov.color:'#0891b2',monthLabel:`${MO[mo-1]} ${yr}`,notes:visit.notes||'',files});
+        }
+      });
+      works.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
     } catch(e) {
       document.body.innerHTML = `<div style="text-align:center;color:#dc2626;padding:40px">❌ Ошибка загрузки данных</div>`;
       return;
     }
   } else {
-    works = d.works || []; // backwards compat for old snapshot links
+    works = (d.works||[]).map(w=>({...w,_type:'maint'})); // backwards compat for old snapshot links
   }
+
+  const _fileSections = files => {
+    const fids=Object.keys(files);
+    const photos=fids.filter(fid=>(files[fid].type||'').startsWith('image/'));
+    const videos=fids.filter(fid=>(files[fid].type||'').startsWith('video/'));
+    const docs  =fids.filter(fid=>!(files[fid].type||'').startsWith('image/')&&!(files[fid].type||'').startsWith('video/'));
+    return (videos.length?`<div style="padding:10px 14px;border-bottom:1px solid #f1f5f9">
+      <div style="font-size:10px;font-weight:600;color:#6b7280;margin-bottom:6px">🎥 ВИДЕО (${videos.length})</div>
+      ${videos.map(fid=>`<div style="margin-bottom:6px"><div style="font-size:9px;color:#9ca3af;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${files[fid].name}</div>
+        <video src="${files[fid].url}" controls playsinline style="width:100%;max-height:280px;border-radius:6px;background:#000;display:block"></video></div>`).join('')}
+    </div>`:'')+
+    (photos.length?`<div style="padding:10px 14px${docs.length?';border-bottom:1px solid #f1f5f9':''}">
+      <div style="font-size:10px;font-weight:600;color:#6b7280;margin-bottom:6px">📷 ФОТО (${photos.length})</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">${photos.map(fid=>`<img src="${files[fid].url}" alt="" loading="lazy" style="width:72px;height:72px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;cursor:pointer" onclick="this.style.width=this.style.width==='100%'?'72px':'100%';this.style.height=this.style.height==='auto'?'72px':'auto'">`).join('')}</div>
+    </div>`:'')+
+    (docs.length?`<div style="padding:10px 14px">
+      <div style="font-size:10px;font-weight:600;color:#6b7280;margin-bottom:6px">📎 ДОКУМЕНТЫ</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">${docs.map(fid=>`<a href="${files[fid].url}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;background:#f1f5f9;border-radius:5px;padding:4px 10px;text-decoration:none;color:#2563eb;font-size:11px;border:1px solid #e2e8f0">📎 ${files[fid].name}</a>`).join('')}</div>
+    </div>`:'');
+  };
   const _renderWork = w => {
-    const files = w.files || {}, fids = Object.keys(files);
-    const photos = fids.filter(fid => (files[fid].type||'').startsWith('image/'));
-    const videos = fids.filter(fid => (files[fid].type||'').startsWith('video/'));
-    const docs   = fids.filter(fid => !(files[fid].type||'').startsWith('image/') && !(files[fid].type||'').startsWith('video/'));
-    const sc = w.status==='done'?'#16a34a':w.status==='in_progress'?'#d97706':'#64748b';
-    const sb = w.status==='done'?'#dcfce7':w.status==='in_progress'?'#fef3c7':'#f1f5f9';
-    const sl = w.status==='done'?'✅ Выполнено':w.status==='in_progress'?'🔄 В работе':'📋 Запланировано';
+    const sc=w.status==='done'?'#16a34a':w.status==='in_progress'?'#d97706':'#64748b';
+    const sb=w.status==='done'?'#dcfce7':w.status==='in_progress'?'#fef3c7':'#f1f5f9';
+    const sl=w.status==='done'?'✅ Выполнено':w.status==='in_progress'?'🔄 В работе':'📋 Запланировано';
+    const fs=_fileSections(w.files||{});
     return `<div style="background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:12px;overflow:hidden;border-left:4px solid ${sc}">
-      <div style="padding:12px 14px${(w.description||videos.length||photos.length||docs.length)?';border-bottom:1px solid #f1f5f9':''}">
+      <div style="padding:12px 14px${fs?';border-bottom:1px solid #f1f5f9':''}">
+        <div style="font-size:9px;font-weight:600;color:#64748b;margin-bottom:2px">🏗️ ОБСЛУЖИВАНИЕ</div>
         <div style="display:flex;align-items:flex-start;gap:8px">
           <div style="flex:1;min-width:0">
             <div style="font-size:14px;font-weight:700;color:#1e293b;margin-bottom:4px">${w.title}</div>
@@ -5704,50 +5817,73 @@ async function renderSharePageCustomReport(d) {
           <span style="background:${sb};color:${sc};border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;flex-shrink:0">${sl}</span>
         </div>
         ${w.description?`<div style="font-size:12px;color:#374151;margin-top:8px;padding:7px 10px;background:#f8fafc;border-radius:6px;border-left:3px solid #2563eb;line-height:1.5">${w.description}</div>`:''}
-      </div>
-      ${videos.length?`<div style="padding:10px 14px;border-bottom:1px solid #f1f5f9">
-        <div style="font-size:10px;font-weight:600;color:#6b7280;margin-bottom:6px">🎥 ВИДЕО (${videos.length})</div>
-        ${videos.map(fid=>`<div style="margin-bottom:6px"><div style="font-size:9px;color:#9ca3af;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${files[fid].name}</div>
-          <video src="${files[fid].url}" controls playsinline style="width:100%;max-height:280px;border-radius:6px;background:#000;display:block"></video></div>`).join('')}
-      </div>`:''}
-      ${photos.length?`<div style="padding:10px 14px${docs.length?';border-bottom:1px solid #f1f5f9':''}">
-        <div style="font-size:10px;font-weight:600;color:#6b7280;margin-bottom:6px">📷 ФОТО (${photos.length})</div>
-        <div style="display:flex;flex-wrap:wrap;gap:4px">${photos.map(fid=>`<img src="${files[fid].url}" alt="" loading="lazy" style="width:72px;height:72px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;cursor:pointer" onclick="this.style.width=this.style.width==='100%'?'72px':'100%';this.style.height=this.style.height==='auto'?'72px':'auto'">`).join('')}</div>
-      </div>`:''}
-      ${docs.length?`<div style="padding:10px 14px">
-        <div style="font-size:10px;font-weight:600;color:#6b7280;margin-bottom:6px">📎 ДОКУМЕНТЫ</div>
-        <div style="display:flex;flex-wrap:wrap;gap:4px">${docs.map(fid=>`<a href="${files[fid].url}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;background:#f1f5f9;border-radius:5px;padding:4px 10px;text-decoration:none;color:#2563eb;font-size:11px;border:1px solid #e2e8f0">📎 ${files[fid].name}</a>`).join('')}</div>
-      </div>`:''}
-    </div>`;
+      </div>${fs}</div>`;
   };
+  const _renderSOS = s => {
+    const sc=s.status==='resolved'?'#16a34a':'#dc2626';
+    const sb=s.status==='resolved'?'#dcfce7':'#fef2f2';
+    const sl=s.status==='resolved'?'✅ Решено':'🚨 Открыто';
+    const pri=s.priority==='high'?'🔴 Высокий':s.priority==='medium'?'🟡 Средний':'🟢 Низкий';
+    const fs=_fileSections(s.files||{});
+    return `<div style="background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:12px;overflow:hidden;border-left:4px solid ${sc}">
+      <div style="padding:12px 14px${fs?';border-bottom:1px solid #f1f5f9':''}">
+        <div style="font-size:9px;font-weight:600;color:#dc2626;margin-bottom:2px">🚨 ЭКСТРЕННОЕ ТО</div>
+        <div style="display:flex;align-items:flex-start;gap:8px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:700;color:#1e293b;margin-bottom:4px">${s.title}</div>
+            <div style="font-size:11px;color:#6b7280;display:flex;gap:8px;flex-wrap:wrap"><span>📅 ${s.date}</span><span>${pri}</span></div>
+          </div>
+          <span style="background:${sb};color:${sc};border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;flex-shrink:0">${sl}</span>
+        </div>
+        ${s.description?`<div style="font-size:12px;color:#374151;margin-top:8px;padding:7px 10px;background:#f8fafc;border-radius:6px;border-left:3px solid #dc2626;line-height:1.5">${s.description}</div>`:''}
+      </div>${fs}</div>`;
+  };
+  const _renderVisit = v => {
+    const col=v.providerColor||'#0891b2';
+    const fs=_fileSections(v.files||{});
+    return `<div style="background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:12px;overflow:hidden;border-left:4px solid ${col}">
+      <div style="padding:12px 14px${fs?';border-bottom:1px solid #f1f5f9':''}">
+        <div style="font-size:9px;font-weight:600;color:${col};margin-bottom:2px">📋 ЖУРНАЛ ВИЗИТОВ</div>
+        <div style="display:flex;align-items:flex-start;gap:8px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:700;color:#1e293b;margin-bottom:4px">${v.providerEmoji} ${v.providerName}</div>
+            <div style="font-size:11px;color:#6b7280">📅 ${v.date} · ${v.monthLabel}</div>
+          </div>
+          <span style="background:#dcfce7;color:#16a34a;border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;flex-shrink:0">✅ Выполнено</span>
+        </div>
+        ${v.notes?`<div style="font-size:12px;color:#374151;margin-top:8px;padding:7px 10px;background:#f8fafc;border-radius:6px;border-left:3px solid ${col};line-height:1.5">${v.notes}</div>`:''}
+      </div>${fs}</div>`;
+  };
+  const _renderItem = item => item._type==='sos'?_renderSOS(item):item._type==='visit'?_renderVisit(item):_renderWork(item);
+
   // Group by month
   const byMonth = {};
   works.forEach(w => {
-    const dt = new Date(w.date||''), yr = dt.getFullYear(), mo = dt.getMonth()+1;
-    const k = `${yr}-${String(mo).padStart(2,'0')}`;
-    if (!byMonth[k]) byMonth[k] = { yr, mo, works:[] };
+    const dt=new Date(w.date||''),yr=dt.getFullYear(),mo=dt.getMonth()+1;
+    const k=`${yr}-${String(mo).padStart(2,'0')}`;
+    if (!byMonth[k]) byMonth[k]={yr,mo,works:[]};
     byMonth[k].works.push(w);
   });
-  const keys = Object.keys(byMonth).sort((a,b) => b.localeCompare(a));
+  const keys = Object.keys(byMonth).sort((a,b)=>b.localeCompare(a));
   document.body.style.cssText = 'margin:0;padding:0;background:#f8fafc;height:auto;min-height:100vh;overflow:visible;display:block';
   document.body.innerHTML = `
     <div style="min-height:100vh;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
       <div style="background:#1e293b;padding:12px 16px;position:sticky;top:0;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,.2)">
         <div style="max-width:680px;margin:0 auto">
           <div style="color:white;font-size:14px;font-weight:700">📑 Выборочный отчёт</div>
-          <div style="color:#94a3b8;font-size:10px;margin-top:1px">${works.length} ${works.length===1?'работа':works.length<5?'работы':'работ'} · ${keys.length} ${keys.length===1?'период':'периода'}</div>
+          <div style="color:#94a3b8;font-size:10px;margin-top:1px">${works.length} ${works.length===1?'запись':works.length<5?'записи':'записей'} · ${keys.length} ${keys.length===1?'период':'периода'}</div>
         </div>
       </div>
       <div style="max-width:680px;margin:0 auto;padding:12px 12px 40px">
         ${keys.map(k => {
-          const g = byMonth[k];
+          const g=byMonth[k];
           return `<div>
             <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px;padding:10px 2px 6px;display:flex;align-items:center;gap:8px">
               <div style="flex:1;height:1px;background:#e2e8f0"></div>
-              📅 ${MO[g.mo-1]} ${g.yr} · ${g.works.length} раб.
+              📅 ${MO[g.mo-1]} ${g.yr} · ${g.works.length} зап.
               <div style="flex:1;height:1px;background:#e2e8f0"></div>
             </div>
-            ${g.works.map(_renderWork).join('')}
+            ${g.works.map(_renderItem).join('')}
           </div>`;
         }).join('')}
         <div style="text-align:center;padding:8px 0 0;font-size:10px;color:#cbd5e1">Отчёт сформирован системой управления ТО · Открывается без входа в систему</div>
