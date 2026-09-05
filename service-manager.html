@@ -6610,6 +6610,9 @@ function showOwnerNewsFeed() {
 // КУХНЯ (KITCHEN MODULE)
 // ==============================
 let kitchenTab = 'deliveries';
+const _know = new Date();
+let kitchenYear  = _know.getFullYear();
+let kitchenMonth = _know.getMonth() + 1;
 let _kitchenTruckPhoto = null;
 let _kitchenDeliveryItems = [];
 let _kitchenInvoiceItems = [];
@@ -6640,7 +6643,19 @@ function renderKitchen() {
   ];
   if (isOwner) tabs.push({id:'analytics', label:'💰 Аналитика'});
 
-  const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0">
+  const realNow = new Date();
+  const isCurrent = kitchenMonth === (realNow.getMonth()+1) && kitchenYear === realNow.getFullYear();
+  const showMonthNav = kitchenTab === 'deliveries' || kitchenTab === 'invoices' || kitchenTab === 'analytics';
+
+  const monthNav = showMonthNav ? `
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:white;border-radius:12px;border:1px solid #e2e8f0;margin-bottom:10px">
+      <button class="year-btn" onclick="kitchenMonth--;if(kitchenMonth<1){kitchenMonth=12;kitchenYear--}render()">◄</button>
+      <div style="font-size:16px;font-weight:700;color:#1e293b;min-width:160px;text-align:center">${MONTHS[kitchenMonth-1]} ${kitchenYear}</div>
+      <button class="year-btn" onclick="kitchenMonth++;if(kitchenMonth>12){kitchenMonth=1;kitchenYear++}render()">►</button>
+      ${isCurrent ? '<span class="badge badge-blue" style="margin-left:4px">Текущий месяц</span>' : ''}
+    </div>` : '';
+
+  const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0">
     ${tabs.map(t => `<button class="kitchen-tab-btn${kitchenTab===t.id?' active':''}" onclick="switchKitchenTab('${t.id}')">${t.label}</button>`).join('')}
   </div>`;
 
@@ -6651,7 +6666,7 @@ function renderKitchen() {
   else if (kitchenTab==='invoices') body = renderKitchenInvoices();
   else if (kitchenTab==='analytics' && isOwner) body = renderKitchenAnalytics();
 
-  return tabBar + body;
+  return tabBar + monthNav + body;
 }
 
 // ---------- SUPPLIERS ----------
@@ -6746,7 +6761,10 @@ function delKitchenSupplier(id) {
 // ---------- DELIVERIES ----------
 
 function renderKitchenDeliveries() {
-  const deliveries = getKitchenDeliveries().slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const mk = `${kitchenYear}-${String(kitchenMonth).padStart(2,'0')}`;
+  const deliveries = getKitchenDeliveries()
+    .filter(d => (d.date||'').startsWith(mk))
+    .sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const canEdit = currentUser==='owner'||currentUser==='kitchen';
   const addBtn = canEdit ? `<button class="btn btn-primary" onclick="openKitchenDeliveryModal()">+ Новая доставка</button>` : '';
   const suppliers = getKitchenSuppliers();
@@ -6754,7 +6772,7 @@ function renderKitchenDeliveries() {
   if (!deliveries.length) {
     return `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
       <div style="font-size:48px;margin-bottom:12px">🚚</div>
-      <div style="font-size:14px;margin-bottom:12px">Записей о доставках нет</div>${addBtn}</div></div>`;
+      <div style="font-size:14px;margin-bottom:12px">Нет доставок за ${MONTHS[kitchenMonth-1]} ${kitchenYear}</div>${addBtn}</div></div>`;
   }
 
   const stColor = {received:'#16a34a', pending:'#d97706', cancelled:'#dc2626'};
@@ -7028,7 +7046,10 @@ function delKitchenInventoryItem(id) {
 // ---------- INVOICES ----------
 
 function renderKitchenInvoices() {
-  const invoices = getKitchenInvoices().slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const mk = `${kitchenYear}-${String(kitchenMonth).padStart(2,'0')}`;
+  const invoices = getKitchenInvoices()
+    .filter(i => (i.date||'').startsWith(mk))
+    .sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const canEdit = currentUser==='owner'||currentUser==='kitchen';
   const addBtn = canEdit ? `<button class="btn btn-primary" onclick="openKitchenInvoiceModal()">+ Добавить счёт</button>` : '';
   const suppliers = getKitchenSuppliers();
@@ -7036,13 +7057,11 @@ function renderKitchenInvoices() {
   if (!invoices.length) {
     return `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
       <div style="font-size:48px;margin-bottom:12px">🧾</div>
-      <div style="font-size:14px;margin-bottom:12px">Счетов нет</div>${addBtn}</div></div>`;
+      <div style="font-size:14px;margin-bottom:12px">Счетов нет за ${MONTHS[kitchenMonth-1]} ${kitchenYear}</div>${addBtn}</div></div>`;
   }
 
-  const totalAll = invoices.reduce((s,i)=>s+Number(i.total||0),0);
-  const now = new Date();
-  const mk = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  const totalMonth = invoices.filter(i=>(i.date||'').startsWith(mk)).reduce((s,i)=>s+Number(i.total||0),0);
+  const totalAll = getKitchenInvoices().reduce((s,i)=>s+Number(i.total||0),0);
+  const totalMonth = invoices.reduce((s,i)=>s+Number(i.total||0),0);
 
   const cards = invoices.map(inv => {
     const sup = suppliers.find(s=>s.id===inv.supplier_id);
@@ -7070,7 +7089,7 @@ function renderKitchenInvoices() {
 
   return `
     <div class="stats-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:12px">
-      <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:20px">₪${totalMonth.toFixed(0)}</div><div class="stat-label">Счета этого месяца</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:20px">₪${totalMonth.toFixed(0)}</div><div class="stat-label">Счета за ${MONTHS[kitchenMonth-1]}</div></div>
       <div class="stat-card"><div class="stat-value" style="color:#7c3aed;font-size:20px">₪${totalAll.toFixed(0)}</div><div class="stat-label">Счета всего</div></div>
     </div>
     <div style="display:flex;justify-content:flex-end;margin-bottom:10px">${addBtn}</div>${cards}`;
@@ -7224,16 +7243,16 @@ function renderKitchenAnalytics() {
   const topSup = Object.entries(bySupplier).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const maxSup = Math.max(...topSup.map(x=>x[1]),1);
 
-  const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const thisMonthKey = `${kitchenYear}-${String(kitchenMonth).padStart(2,'0')}`;
   const thisMonthTotal = invoices.filter(i=>(i.date||'').startsWith(thisMonthKey)).reduce((s,i)=>s+Number(i.total||0),0);
   const allTotal = invoices.reduce((s,i)=>s+Number(i.total||0),0);
-  const rcvCount = deliveries.filter(d=>d.status==='received').length;
+  const rcvCount = deliveries.filter(d=>d.status==='received'&&(d.date||'').startsWith(thisMonthKey)).length;
 
   return `
     <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
-      <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:22px">₪${thisMonthTotal.toFixed(0)}</div><div class="stat-label">Расходы этого месяца</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:22px">₪${thisMonthTotal.toFixed(0)}</div><div class="stat-label">Расходы за ${MONTHS[kitchenMonth-1]}</div></div>
       <div class="stat-card"><div class="stat-value" style="color:#7c3aed;font-size:22px">₪${allTotal.toFixed(0)}</div><div class="stat-label">Расходы всего</div></div>
-      <div class="stat-card"><div class="stat-value" style="color:#16a34a">${rcvCount}</div><div class="stat-label">Доставок получено</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:#16a34a">${rcvCount}</div><div class="stat-label">Доставок за ${MONTHS[kitchenMonth-1]}</div></div>
     </div>
     <div class="card">
       <div class="card-header"><h3>📊 Расходы по месяцам (по счетам)</h3></div>
