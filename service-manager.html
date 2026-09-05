@@ -352,6 +352,24 @@ img{max-width:100%;height:auto}
   /* Maintenance thumbnails */
   [data-gids] img,[data-gids]>div{width:64px !important;height:64px !important}
 }
+/* KITCHEN MODULE */
+.kitchen-tab-btn{padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;font-family:inherit;transition:.15s}
+.kitchen-tab-btn.active{background:#2563eb;color:white}
+.kitchen-tab-btn:not(.active){background:#f1f5f9;color:#374151}
+.kitchen-tab-btn:not(.active):hover{background:#e2e8f0}
+.kitch-card{background:white;border:1px solid #e2e8f0;border-radius:12px;padding:14px 18px;margin-bottom:10px}
+.kitch-table{width:100%;border-collapse:collapse;font-size:13px}
+.kitch-table th{background:#f8fafc;padding:9px 12px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;border-bottom:2px solid #e2e8f0}
+.kitch-table td{padding:9px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.kitch-table tr:last-child td{border-bottom:none}
+.kitch-table tr:hover td{background:#fafafa}
+.kitch-table td.low{color:#dc2626;font-weight:700}
+[data-theme="dark"] .kitch-card{background:#1e293b;border-color:#334155}
+[data-theme="dark"] .kitch-table th{background:#334155;color:#94a3b8}
+[data-theme="dark"] .kitch-table td{border-color:#334155;color:#e2e8f0}
+[data-theme="dark"] .kitch-table tr:hover td{background:#0f172a}
+[data-theme="dark"] .kitchen-tab-btn:not(.active){background:#334155;color:#cbd5e1}
+[data-theme="dark"] .kitchen-tab-btn:not(.active):hover{background:#475569}
 </style>
 </head>
 <body>
@@ -431,6 +449,10 @@ img{max-width:100%;height:auto}
     <div class="nav-item owner-only" id="nav-custom-report" onclick="openCustomReportModal()" style="color:#0891b2;font-weight:600">📑 Выборочный отчёт</div>
     <div class="nav-item owner-only" id="nav-export" onclick="exportCSV()">📊 Экспорт данных (CSV)</div>
     <div class="nav-item owner-only" id="recompress-btn" onclick="recompressExistingImages()" style="color:#f59e0b">🗜️ דחוס תמונות קיימות</div>
+  </div>
+  <div>
+    <div class="sidebar-section-title owner-only">Кухня</div>
+    <div class="nav-item owner-only" id="nav-kitchen" onclick="showView('kitchen')">🍽️ Управление кухней</div>
   </div>
   <div>
     <div class="sidebar-section-title">Поставщики услуг</div>
@@ -752,6 +774,8 @@ function getProviderPins() { return getLS('provider_pins') || {}; }
 function getProviderPin(pid) { const pins = getProviderPins(); return pins[pid] || '1234'; }
 function getProviderUsernames() { return getLS('provider_usernames') || {}; }
 function getProviderUsername(pid) { const u = getProviderUsernames(); return u[pid] || pid; }
+function getKitchenUser() { return getLS('kitchen_username') || 'kitchen'; }
+function getKitchenPwd()  { return getLS('kitchen_pwd')      || 'kitchen123'; }
 
 function doLogin() {
   const username = (document.getElementById('login-username').value || '').trim().toLowerCase();
@@ -774,6 +798,15 @@ function doLogin() {
     document.getElementById('login-screen').style.display = 'none';
     applyUserLayout();
     showView('dashboard');
+    return;
+  }
+
+  // Check kitchen manager
+  if (username === getKitchenUser().toLowerCase() && pwd === getKitchenPwd()) {
+    currentUser = 'kitchen';
+    document.getElementById('login-screen').style.display = 'none';
+    applyUserLayout();
+    showView('kitchen');
     return;
   }
 
@@ -831,6 +864,9 @@ function applyUserLayout() {
   } else if (currentUser === 'admin') {
     sidebar.style.display = '';
     document.getElementById('user-label').textContent = '👑 Администратор';
+  } else if (currentUser === 'kitchen') {
+    sidebar.style.display = 'none';
+    document.getElementById('user-label').textContent = '🍽️ Менеджер кухни';
   } else {
     sidebar.style.display = 'none';
     if (provReqBtn) provReqBtn.style.display = '';
@@ -911,6 +947,22 @@ function openSettingsModal() {
       <button class="btn btn-danger" onclick="clearAllData()">🗑️ Сбросить все данные о визитах</button>
     </div>` : '';
 
+  const kitchenCredsHtml = isOwner ? `
+    <div style="margin-bottom:16px;padding:12px 14px;background:#f0fdf4;border:1px solid #86efac;border-radius:10px">
+      <div style="font-size:12px;font-weight:700;color:#166534;margin-bottom:8px">🍽️ Учётная запись менеджера кухни</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
+          <input type="text" class="form-control" id="kitchen-cred-user" value="${getKitchenUser()}" placeholder="kitchen">
+        </div>
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
+          <input type="text" class="form-control" id="kitchen-cred-pwd" value="${getKitchenPwd()}" placeholder="Пароль...">
+        </div>
+      </div>
+      <button class="btn btn-success" style="width:100%;justify-content:center" onclick="saveKitchenCreds()">💾 Сохранить данные менеджера кухни</button>
+    </div>` : '';
+
   const nc = getNotifyCfg();
   const notifyHtml = isOwner ? `
     <div style="margin-top:20px;padding:14px 16px;background:#f0fdf4;border:1px solid #86efac;border-radius:10px">
@@ -962,6 +1014,7 @@ function openSettingsModal() {
   document.getElementById('modal-body').innerHTML = `
     ${ownerCredsHtml}
     ${adminCredsHtml}
+    ${kitchenCredsHtml}
     ${notifyHtml}
     <div style="font-size:13px;font-weight:600;margin-bottom:6px;color:#374151;border-top:1px solid #f1f5f9;padding-top:14px">
       Учётные записи поставщиков
@@ -1050,6 +1103,16 @@ function saveAdminCreds() {
   setLS('admin_username', u);
   setLS('admin_pwd', p);
   alert('Данные администратора сохранены');
+}
+
+function saveKitchenCreds() {
+  const u = (document.getElementById('kitchen-cred-user').value||'').trim();
+  const p = (document.getElementById('kitchen-cred-pwd').value||'').trim();
+  if (!u) { alert('Введите имя пользователя'); return; }
+  if (!p) { alert('Введите пароль'); return; }
+  setLS('kitchen_username', u);
+  setLS('kitchen_pwd', p);
+  alert('Данные менеджера кухни сохранены');
 }
 
 function debugRecords() {
@@ -1544,6 +1607,10 @@ function render() {
       actions.innerHTML = `<button class="btn btn-outline" onclick="openAddSchedule('${p.id}')">+ Добавить услугу</button>`;
     }
     content.innerHTML = renderProvider(p);
+  } else if (view === 'kitchen') {
+    if (currentUser !== 'owner' && currentUser !== 'kitchen') { showView('dashboard'); return; }
+    title.textContent = '🍽️ Управление кухней';
+    content.innerHTML = renderKitchen();
   }
 }
 
@@ -6505,6 +6572,654 @@ function showOwnerNewsFeed() {
       </div>
     </div>`;
   document.body.appendChild(ov);
+}
+
+// ==============================
+// КУХНЯ (KITCHEN MODULE)
+// ==============================
+let kitchenTab = 'deliveries';
+let _kitchenTruckPhoto = null;
+let _kitchenDeliveryItems = [];
+let _kitchenInvoiceItems = [];
+let _kitchenInvoiceFile = null;
+let _editingKitchenDelivery = null;
+let _editingKitchenSupplier = null;
+let _editingKitchenInventory = null;
+let _editingKitchenInvoice = null;
+
+const getKitchenSuppliers  = () => getLS('kitchen_suppliers')  || [];
+const getKitchenDeliveries = () => getLS('kitchen_deliveries') || [];
+const getKitchenInventory  = () => getLS('kitchen_inventory')  || [];
+const getKitchenInvoices   = () => getLS('kitchen_invoices')   || [];
+
+const KITCHEN_SUP_CATS = ['Овощи/Фрукты','Молочные','Мясо/Рыба','Бакалея','Напитки','Заморозка','Прочее'];
+const KITCHEN_INV_CATS = ['Овощи','Фрукты','Молочные','Мясо','Рыба','Бакалея','Напитки','Заморозка','Специи','Прочее'];
+const DAYS_RU = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+
+function switchKitchenTab(t) { kitchenTab = t; render(); }
+
+function renderKitchen() {
+  const isOwner = currentUser === 'owner';
+  const tabs = [
+    {id:'deliveries', label:'🚚 Доставки'},
+    {id:'suppliers',  label:'🏪 Поставщики'},
+    {id:'inventory',  label:'📦 Склад'},
+    {id:'invoices',   label:'🧾 Счета'},
+  ];
+  if (isOwner) tabs.push({id:'analytics', label:'💰 Аналитика'});
+
+  const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0">
+    ${tabs.map(t => `<button class="kitchen-tab-btn${kitchenTab===t.id?' active':''}" onclick="switchKitchenTab('${t.id}')">${t.label}</button>`).join('')}
+  </div>`;
+
+  let body = '';
+  if (kitchenTab==='deliveries') body = renderKitchenDeliveries();
+  else if (kitchenTab==='suppliers') body = renderKitchenSuppliers();
+  else if (kitchenTab==='inventory') body = renderKitchenInventory();
+  else if (kitchenTab==='invoices') body = renderKitchenInvoices();
+  else if (kitchenTab==='analytics' && isOwner) body = renderKitchenAnalytics();
+
+  return tabBar + body;
+}
+
+// ---------- SUPPLIERS ----------
+
+function renderKitchenSuppliers() {
+  const suppliers = getKitchenSuppliers();
+  const canEdit = currentUser==='owner'||currentUser==='kitchen';
+  const addBtn = canEdit ? `<button class="btn btn-primary" onclick="openKitchenSupplierModal()">+ Добавить поставщика</button>` : '';
+
+  if (!suppliers.length) {
+    return `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
+      <div style="font-size:48px;margin-bottom:12px">🏪</div>
+      <div style="font-size:14px;margin-bottom:12px">Поставщики кухни не добавлены</div>${addBtn}</div></div>`;
+  }
+
+  const cards = suppliers.map(s => {
+    const days = (s.delivery_days||[]).map(i=>DAYS_RU[i]).join(', ') || '—';
+    return `<div class="kitch-card" style="display:flex;gap:14px;align-items:flex-start">
+      <div style="font-size:32px;flex-shrink:0">🏪</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+          <span style="font-weight:700;font-size:15px">${s.name}</span>
+          <span class="badge badge-blue" style="font-size:10px">${s.category||'—'}</span>
+        </div>
+        <div style="font-size:12px;color:#6b7280;display:flex;flex-wrap:wrap;gap:12px">
+          ${s.phone ? `<span>📞 ${s.phone}</span>` : ''}
+          ${s.contact ? `<span>👤 ${s.contact}</span>` : ''}
+          <span>🗓 ${days}</span>
+        </div>
+        ${s.notes ? `<div style="font-size:12px;color:#374151;margin-top:4px">${s.notes}</div>` : ''}
+      </div>
+      ${canEdit ? `<div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn btn-outline" style="padding:5px 10px;font-size:12px" onclick="openKitchenSupplierModal('${s.id}')">✏️</button>
+        <button class="btn btn-outline" style="padding:5px 10px;font-size:12px;color:#dc2626" onclick="delKitchenSupplier('${s.id}')">🗑</button>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+
+  return `<div style="display:flex;justify-content:flex-end;margin-bottom:10px">${addBtn}</div>${cards}`;
+}
+
+function openKitchenSupplierModal(id) {
+  const sup = id ? (getKitchenSuppliers().find(s=>s.id===id)||{}) : {};
+  _editingKitchenSupplier = id||null;
+  const dayChecks = DAYS_RU.map((d,i) => `
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;user-select:none">
+      <input type="checkbox" name="kday" value="${i}" ${(sup.delivery_days||[]).includes(i)?'checked':''}> ${d}
+    </label>`).join('');
+  const catOptions = KITCHEN_SUP_CATS.map(c=>`<option value="${c}" ${sup.category===c?'selected':''}>${c}</option>`).join('');
+  document.getElementById('modal-title').textContent = id ? '✏️ Редактировать поставщика' : '🏪 Новый поставщик';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>Название *</label><input class="form-control" id="ks-name" value="${(sup.name||'').replace(/"/g,'&quot;')}"></div>
+    <div class="form-group"><label>Категория</label><select class="form-control" id="ks-cat"><option value="">— Выберите —</option>${catOptions}</select></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Телефон</label><input class="form-control" id="ks-phone" value="${(sup.phone||'').replace(/"/g,'&quot;')}"></div>
+      <div class="form-group"><label>Контактное лицо</label><input class="form-control" id="ks-contact" value="${(sup.contact||'').replace(/"/g,'&quot;')}"></div>
+    </div>
+    <div class="form-group"><label>Дни доставки</label><div style="display:flex;gap:6px;flex-wrap:wrap">${dayChecks}</div></div>
+    <div class="form-group"><label>Примечание</label><textarea class="form-control" id="ks-notes">${sup.notes||''}</textarea></div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveKitchenSupplier()">💾 Сохранить</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function saveKitchenSupplier() {
+  const name = (document.getElementById('ks-name').value||'').trim();
+  if (!name) { alert('Введите название'); return; }
+  const delivery_days = Array.from(document.querySelectorAll('input[name="kday"]:checked')).map(el=>Number(el.value));
+  const sup = {
+    id: _editingKitchenSupplier || Date.now().toString(36),
+    name,
+    category: document.getElementById('ks-cat').value,
+    phone: document.getElementById('ks-phone').value.trim(),
+    contact: document.getElementById('ks-contact').value.trim(),
+    delivery_days,
+    notes: document.getElementById('ks-notes').value.trim(),
+  };
+  const list = getKitchenSuppliers();
+  if (_editingKitchenSupplier) { const idx=list.findIndex(s=>s.id===_editingKitchenSupplier); if(idx>=0)list[idx]=sup;else list.push(sup); }
+  else list.push(sup);
+  setLS('kitchen_suppliers', list);
+  closeModal(); _showToast('✅ Поставщик сохранён', true); render();
+}
+
+function delKitchenSupplier(id) {
+  if (!confirm('Удалить поставщика?')) return;
+  setLS('kitchen_suppliers', getKitchenSuppliers().filter(s=>s.id!==id));
+  render();
+}
+
+// ---------- DELIVERIES ----------
+
+function renderKitchenDeliveries() {
+  const deliveries = getKitchenDeliveries().slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const canEdit = currentUser==='owner'||currentUser==='kitchen';
+  const addBtn = canEdit ? `<button class="btn btn-primary" onclick="openKitchenDeliveryModal()">+ Новая доставка</button>` : '';
+  const suppliers = getKitchenSuppliers();
+
+  if (!deliveries.length) {
+    return `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
+      <div style="font-size:48px;margin-bottom:12px">🚚</div>
+      <div style="font-size:14px;margin-bottom:12px">Записей о доставках нет</div>${addBtn}</div></div>`;
+  }
+
+  const stColor = {received:'#16a34a', pending:'#d97706', cancelled:'#dc2626'};
+  const stLabel = {received:'✅ Получено', pending:'⏳ Ожидается', cancelled:'❌ Отменено'};
+
+  const cards = deliveries.map(d => {
+    const sup = suppliers.find(s=>s.id===d.supplier_id);
+    const total = (d.items||[]).reduce((acc,it)=>acc+(Number(it.qty||0)*Number(it.price||0)),0);
+    const hasPhoto = d.truck_photo && d.truck_photo.data;
+    const itemsTable = (d.items||[]).length ? `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9">
+        <table style="width:100%;font-size:12px;border-collapse:collapse">
+          <tr style="color:#6b7280"><th style="text-align:left;padding:2px 6px;font-weight:600">Наименование</th><th style="padding:2px 6px;font-weight:600">Кол-во</th><th style="padding:2px 6px;font-weight:600">Ед.</th><th style="text-align:right;padding:2px 6px;font-weight:600">Цена</th></tr>
+          ${(d.items||[]).map(it=>`<tr><td style="padding:2px 6px">${it.name||''}</td><td style="text-align:center;padding:2px 6px">${it.qty||''}</td><td style="text-align:center;padding:2px 6px">${it.unit||''}</td><td style="text-align:right;padding:2px 6px">${it.price?'₪'+Number(it.price).toFixed(2):''}</td></tr>`).join('')}
+        </table>
+      </div>` : '';
+    return `<div class="kitch-card" style="border-left:4px solid ${stColor[d.status]||'#94a3b8'}">
+      <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+        ${hasPhoto
+          ? `<img src="${d.truck_photo.data}" style="width:80px;height:60px;object-fit:cover;border-radius:8px;flex-shrink:0;cursor:pointer" onclick="window.open('${d.truck_photo.data}','_blank')">`
+          : `<div style="width:80px;height:60px;background:#f1f5f9;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">🚚</div>`}
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+            <span style="font-weight:700">${fmtDate(d.date)}</span>
+            ${sup?`<span style="font-weight:600">${sup.name}</span>`:''}
+            <span style="font-size:11px;font-weight:700;color:${stColor[d.status]||'#6b7280'}">${stLabel[d.status]||d.status}</span>
+          </div>
+          <div style="font-size:12px;color:#6b7280">${(d.items||[]).length} позиций${total>0?' · ₪'+total.toFixed(2):''}</div>
+          ${d.notes?`<div style="font-size:12px;color:#374151;margin-top:3px">${d.notes}</div>`:''}
+        </div>
+        ${canEdit?`<div style="display:flex;gap:6px;flex-shrink:0">
+          <button class="btn btn-outline" style="padding:5px 10px;font-size:12px" onclick="openKitchenDeliveryModal('${d.id}')">✏️</button>
+          <button class="btn btn-outline" style="padding:5px 10px;font-size:12px;color:#dc2626" onclick="delKitchenDelivery('${d.id}')">🗑</button>
+        </div>`:''}
+      </div>${itemsTable}
+    </div>`;
+  }).join('');
+
+  return `<div style="display:flex;justify-content:flex-end;margin-bottom:10px">${addBtn}</div>${cards}`;
+}
+
+function openKitchenDeliveryModal(id) {
+  const del = id ? (getKitchenDeliveries().find(d=>d.id===id)||{}) : {};
+  _editingKitchenDelivery = id||null;
+  _kitchenTruckPhoto = del.truck_photo || null;
+  _kitchenDeliveryItems = (del.items||[]).map(it=>({...it}));
+  if (!_kitchenDeliveryItems.length) _kitchenDeliveryItems = [{name:'',qty:'',unit:'',price:''}];
+  const suppliers = getKitchenSuppliers();
+  const supOpts = suppliers.map(s=>`<option value="${s.id}" ${del.supplier_id===s.id?'selected':''}>${s.name}</option>`).join('');
+  const stOpts = [['pending','⏳ Ожидается'],['received','✅ Получено'],['cancelled','❌ Отменено']]
+    .map(([v,l])=>`<option value="${v}" ${(del.status||'pending')===v?'selected':''}>${l}</option>`).join('');
+  const today = new Date().toISOString().slice(0,10);
+
+  document.getElementById('modal-title').textContent = id?'✏️ Редактировать доставку':'🚚 Новая доставка';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="kd-date" value="${del.date||today}"></div>
+      <div class="form-group"><label>Статус</label><select class="form-control" id="kd-status">${stOpts}</select></div>
+    </div>
+    <div class="form-group"><label>Поставщик</label>
+      <select class="form-control" id="kd-sup"><option value="">— Выберите —</option>${supOpts}</select>
+    </div>
+    <div class="form-group">
+      <label>📸 Фото грузовика доставки</label>
+      <div style="font-size:11px;color:#6b7280;margin-bottom:6px">Фото должно быть сделано не более 1 часа назад</div>
+      <input type="file" id="kd-truck-photo" accept="image/*" capture="environment" style="display:none" onchange="onTruckPhotoSelect(this)">
+      <button type="button" class="btn btn-outline" style="width:100%;justify-content:center" onclick="document.getElementById('kd-truck-photo').click()">📷 Сфотографировать грузовик</button>
+      <div id="truck-photo-preview">${_kitchenTruckPhoto
+        ? `<div style="margin-top:8px"><img src="${_kitchenTruckPhoto.data}" style="max-height:120px;border-radius:8px;border:1px solid #e2e8f0"><div style="font-size:11px;color:#16a34a;margin-top:4px">✅ Фото загружено</div></div>`
+        : ''}</div>
+    </div>
+    <div class="form-group">
+      <label>Позиции доставки</label>
+      <table style="width:100%;font-size:12px;border-collapse:collapse;margin-bottom:6px">
+        <tr style="background:#f8fafc"><th style="padding:5px 6px;text-align:left;font-weight:600;color:#6b7280">Наименование</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Кол-во</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Ед.</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Цена ₪</th><th></th></tr>
+        <tbody id="kd-items-body"></tbody>
+      </table>
+      <button type="button" class="btn btn-outline" style="font-size:12px;width:100%;justify-content:center" onclick="addKitchenDeliveryItemRow()">+ Добавить позицию</button>
+    </div>
+    <div class="form-group"><label>Примечание</label><textarea class="form-control" id="kd-notes">${del.notes||''}</textarea></div>`;
+  _renderKitchenDeliveryItems();
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveKitchenDelivery()">💾 Сохранить</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function _renderKitchenDeliveryItems() {
+  const tbody = document.getElementById('kd-items-body');
+  if (!tbody) return;
+  tbody.innerHTML = _kitchenDeliveryItems.map((it,i) => `
+    <tr>
+      <td style="padding:3px"><input class="form-control" style="padding:5px 7px;font-size:12px" value="${(it.name||'').replace(/"/g,'&quot;')}" oninput="_kitchenDeliveryItems[${i}].name=this.value" placeholder="Название"></td>
+      <td style="padding:3px;width:70px"><input class="form-control" type="number" style="padding:5px 7px;font-size:12px" value="${it.qty||''}" oninput="_kitchenDeliveryItems[${i}].qty=this.value" min="0" placeholder="0"></td>
+      <td style="padding:3px;width:60px"><input class="form-control" style="padding:5px 7px;font-size:12px" value="${(it.unit||'').replace(/"/g,'&quot;')}" oninput="_kitchenDeliveryItems[${i}].unit=this.value" placeholder="кг"></td>
+      <td style="padding:3px;width:80px"><input class="form-control" type="number" style="padding:5px 7px;font-size:12px" value="${it.price||''}" oninput="_kitchenDeliveryItems[${i}].price=this.value" min="0" placeholder="0.00"></td>
+      <td style="padding:3px;width:30px"><button type="button" onclick="removeKitchenDeliveryItemRow(${i})" style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:14px;padding:2px;min-height:0">✕</button></td>
+    </tr>`).join('');
+}
+
+function addKitchenDeliveryItemRow() {
+  _kitchenDeliveryItems.push({name:'',qty:'',unit:'',price:''});
+  _renderKitchenDeliveryItems();
+}
+
+function removeKitchenDeliveryItemRow(i) {
+  _kitchenDeliveryItems.splice(i,1);
+  if (!_kitchenDeliveryItems.length) _kitchenDeliveryItems.push({name:'',qty:'',unit:'',price:''});
+  _renderKitchenDeliveryItems();
+}
+
+function onTruckPhotoSelect(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const ageMs = Date.now() - file.lastModified;
+  if (ageMs > 60*60*1000) {
+    alert('⚠️ Фото слишком старое!\n\nСделайте свежую фотографию грузовика доставки.\nФото должно быть сделано не более 1 часа назад.');
+    input.value = '';
+    return;
+  }
+  _compressImage(file).then(function(res) {
+    _kitchenTruckPhoto = {data:res.data, ts:file.lastModified, name:file.name};
+    const t = new Date(file.lastModified).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+    document.getElementById('truck-photo-preview').innerHTML = `
+      <div style="margin-top:8px">
+        <img src="${res.data}" style="max-height:120px;border-radius:8px;border:1px solid #e2e8f0">
+        <div style="font-size:11px;color:#16a34a;margin-top:4px">✅ Фото принято · снято в ${t}</div>
+      </div>`;
+  });
+}
+
+function saveKitchenDelivery() {
+  const date = document.getElementById('kd-date').value;
+  if (!date) { alert('Укажите дату'); return; }
+  const status = document.getElementById('kd-status').value;
+  const items = _kitchenDeliveryItems.filter(it=>(it.name||'').trim());
+  const delivery = {
+    id: _editingKitchenDelivery || Date.now().toString(36),
+    date,
+    status,
+    supplier_id: document.getElementById('kd-sup').value,
+    items,
+    truck_photo: _kitchenTruckPhoto || null,
+    notes: (document.getElementById('kd-notes').value||'').trim(),
+  };
+  const list = getKitchenDeliveries();
+  if (_editingKitchenDelivery) { const idx=list.findIndex(d=>d.id===_editingKitchenDelivery); if(idx>=0)list[idx]=delivery;else list.push(delivery); }
+  else list.push(delivery);
+  setLS('kitchen_deliveries', list);
+  if (status==='received' && !_editingKitchenDelivery) _applyDeliveryToInventory(items);
+  closeModal(); _showToast('✅ Доставка сохранена', true); render();
+}
+
+function _applyDeliveryToInventory(items) {
+  const inv = getKitchenInventory();
+  items.forEach(it => {
+    if (!it.name) return;
+    const existing = inv.find(p=>p.name.toLowerCase()===it.name.toLowerCase());
+    if (existing) {
+      existing.qty = (Number(existing.qty)||0) + (Number(it.qty)||0);
+      existing.updated = new Date().toISOString().slice(0,10);
+    }
+  });
+  setLS('kitchen_inventory', inv);
+}
+
+function delKitchenDelivery(id) {
+  if (!confirm('Удалить запись о доставке?')) return;
+  setLS('kitchen_deliveries', getKitchenDeliveries().filter(d=>d.id!==id));
+  render();
+}
+
+// ---------- INVENTORY ----------
+
+function renderKitchenInventory() {
+  const inv = getKitchenInventory().slice().sort((a,b)=>((a.category||'')+a.name).localeCompare((b.category||'')+b.name));
+  const canEdit = currentUser==='owner'||currentUser==='kitchen';
+  const addBtn = canEdit ? `<button class="btn btn-primary" onclick="openKitchenInventoryModal()">+ Добавить позицию</button>` : '';
+
+  if (!inv.length) {
+    return `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
+      <div style="font-size:48px;margin-bottom:12px">📦</div>
+      <div style="font-size:14px;margin-bottom:12px">Склад пустой</div>${addBtn}</div></div>`;
+  }
+
+  const today = new Date().toISOString().slice(0,10);
+  const rows = inv.map(it => {
+    const low = it.min_qty!=='' && it.min_qty!==undefined && Number(it.qty||0)<=Number(it.min_qty||0);
+    const expired = it.expiry && it.expiry < today;
+    const expiryCell = it.expiry
+      ? `<span style="${expired?'color:#dc2626;font-weight:700':''}">${expired?'⚠️ ':''}${fmtDate(it.expiry)}</span>`
+      : '<span style="color:#94a3b8">—</span>';
+    return `<tr>
+      <td><span style="font-weight:600">${it.name}</span></td>
+      <td><span style="font-size:11px;background:#dbeafe;color:#1e40af;padding:2px 7px;border-radius:10px">${it.category||'—'}</span></td>
+      <td class="${low?'low':''}" style="text-align:center">
+        <span style="font-weight:${low?'700':'400'}">${it.qty||0} <span style="font-size:11px;color:#94a3b8;font-weight:400">${it.unit||''}</span></span>
+        ${low?'<div style="font-size:10px;color:#dc2626">⚠️ Мало!</div>':''}
+      </td>
+      <td style="text-align:center;color:#6b7280">${it.min_qty!==undefined&&it.min_qty!==''?it.min_qty+' '+(it.unit||''):'—'}</td>
+      <td style="text-align:center;font-size:12px">${expiryCell}</td>
+      ${canEdit?`<td style="text-align:right">
+        <div style="display:flex;gap:4px;justify-content:flex-end">
+          <button class="btn btn-outline" style="padding:3px 8px;font-size:12px" onclick="openKitchenInventoryModal('${it.id}')">✏️</button>
+          <button class="btn btn-outline" style="padding:3px 8px;font-size:12px;color:#dc2626" onclick="delKitchenInventoryItem('${it.id}')">🗑</button>
+        </div>
+      </td>`:''}
+    </tr>`;
+  }).join('');
+
+  const lowCount = inv.filter(it=>it.min_qty!==undefined&&it.min_qty!==''&&Number(it.qty||0)<=Number(it.min_qty||0)).length;
+  const alertBanner = lowCount ? `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#dc2626;font-weight:600">⚠️ ${lowCount} позиц${lowCount===1?'ия':lowCount<5?'ии':'ий'} ниже минимального остатка</div>` : '';
+
+  return `${alertBanner}<div style="display:flex;justify-content:flex-end;margin-bottom:10px">${addBtn}</div>
+  <div class="card"><div style="overflow-x:auto"><table class="kitch-table">
+    <thead><tr>
+      <th>Наименование</th><th>Категория</th><th style="text-align:center">Остаток</th>
+      <th style="text-align:center">Минимум</th><th style="text-align:center">Срок годности</th>
+      ${canEdit?'<th></th>':''}
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div></div>`;
+}
+
+function openKitchenInventoryModal(id) {
+  const item = id ? (getKitchenInventory().find(i=>i.id===id)||{}) : {};
+  _editingKitchenInventory = id||null;
+  const catOpts = KITCHEN_INV_CATS.map(c=>`<option value="${c}" ${item.category===c?'selected':''}>${c}</option>`).join('');
+  document.getElementById('modal-title').textContent = id?'✏️ Редактировать позицию':'📦 Новая позиция';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>Наименование *</label><input class="form-control" id="ki-name" value="${(item.name||'').replace(/"/g,'&quot;')}"></div>
+    <div class="form-group"><label>Категория</label><select class="form-control" id="ki-cat"><option value="">—</option>${catOpts}</select></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+      <div class="form-group"><label>Остаток *</label><input type="number" class="form-control" id="ki-qty" value="${item.qty||0}" min="0" step="0.01"></div>
+      <div class="form-group"><label>Ед. изм.</label><input class="form-control" id="ki-unit" value="${(item.unit||'').replace(/"/g,'&quot;')}" placeholder="кг, шт, л"></div>
+      <div class="form-group"><label>Минимум</label><input type="number" class="form-control" id="ki-min" value="${item.min_qty!==undefined?item.min_qty:''}" min="0" step="0.01" placeholder="0"></div>
+    </div>
+    <div class="form-group"><label>Срок годности</label><input type="date" class="form-control" id="ki-expiry" value="${item.expiry||''}"></div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveKitchenInventoryItem()">💾 Сохранить</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function saveKitchenInventoryItem() {
+  const name = (document.getElementById('ki-name').value||'').trim();
+  if (!name) { alert('Введите наименование'); return; }
+  const item = {
+    id: _editingKitchenInventory || Date.now().toString(36),
+    name,
+    category: document.getElementById('ki-cat').value,
+    qty: document.getElementById('ki-qty').value,
+    unit: document.getElementById('ki-unit').value.trim(),
+    min_qty: document.getElementById('ki-min').value,
+    expiry: document.getElementById('ki-expiry').value,
+    updated: new Date().toISOString().slice(0,10),
+  };
+  const list = getKitchenInventory();
+  if (_editingKitchenInventory) { const idx=list.findIndex(i=>i.id===_editingKitchenInventory); if(idx>=0)list[idx]=item;else list.push(item); }
+  else list.push(item);
+  setLS('kitchen_inventory', list);
+  closeModal(); _showToast('✅ Позиция сохранена', true); render();
+}
+
+function delKitchenInventoryItem(id) {
+  if (!confirm('Удалить позицию?')) return;
+  setLS('kitchen_inventory', getKitchenInventory().filter(i=>i.id!==id));
+  render();
+}
+
+// ---------- INVOICES ----------
+
+function renderKitchenInvoices() {
+  const invoices = getKitchenInvoices().slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const canEdit = currentUser==='owner'||currentUser==='kitchen';
+  const addBtn = canEdit ? `<button class="btn btn-primary" onclick="openKitchenInvoiceModal()">+ Добавить счёт</button>` : '';
+  const suppliers = getKitchenSuppliers();
+
+  if (!invoices.length) {
+    return `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
+      <div style="font-size:48px;margin-bottom:12px">🧾</div>
+      <div style="font-size:14px;margin-bottom:12px">Счетов нет</div>${addBtn}</div></div>`;
+  }
+
+  const totalAll = invoices.reduce((s,i)=>s+Number(i.total||0),0);
+  const now = new Date();
+  const mk = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const totalMonth = invoices.filter(i=>(i.date||'').startsWith(mk)).reduce((s,i)=>s+Number(i.total||0),0);
+
+  const cards = invoices.map(inv => {
+    const sup = suppliers.find(s=>s.id===inv.supplier_id);
+    return `<div class="kitch-card">
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <div style="font-size:28px;flex-shrink:0">🧾</div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+            <span style="font-weight:700">${fmtDate(inv.date)}</span>
+            ${sup?`<span style="font-weight:600">${sup.name}</span>`:''}
+            ${inv.invoice_num?`<span class="badge badge-gray"># ${inv.invoice_num}</span>`:''}
+            <span style="font-weight:700;color:#16a34a;font-size:14px">₪ ${Number(inv.total||0).toFixed(2)}</span>
+          </div>
+          ${(inv.items||[]).length?`<div style="font-size:12px;color:#6b7280">${inv.items.length} позиций</div>`:''}
+          ${inv.notes?`<div style="font-size:12px;color:#374151;margin-top:3px">${inv.notes}</div>`:''}
+          ${inv.file?`<div style="margin-top:6px"><a href="${inv.file.data}" download="${inv.file.name}" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${inv.file.name} (${fmtSize(inv.file.size||0)})</a></div>`:''}
+        </div>
+        ${canEdit?`<div style="display:flex;gap:6px;flex-shrink:0">
+          <button class="btn btn-outline" style="padding:5px 10px;font-size:12px" onclick="openKitchenInvoiceModal('${inv.id}')">✏️</button>
+          <button class="btn btn-outline" style="padding:5px 10px;font-size:12px;color:#dc2626" onclick="delKitchenInvoice('${inv.id}')">🗑</button>
+        </div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+
+  return `
+    <div class="stats-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:12px">
+      <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:20px">₪${totalMonth.toFixed(0)}</div><div class="stat-label">Счета этого месяца</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:#7c3aed;font-size:20px">₪${totalAll.toFixed(0)}</div><div class="stat-label">Счета всего</div></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px">${addBtn}</div>${cards}`;
+}
+
+function openKitchenInvoiceModal(id) {
+  const inv = id ? (getKitchenInvoices().find(i=>i.id===id)||{}) : {};
+  _editingKitchenInvoice = id||null;
+  _kitchenInvoiceFile = inv.file||null;
+  _kitchenInvoiceItems = (inv.items||[]).map(it=>({...it}));
+  if (!_kitchenInvoiceItems.length) _kitchenInvoiceItems = [{name:'',qty:'',unit:'',price:''}];
+  const suppliers = getKitchenSuppliers();
+  const supOpts = suppliers.map(s=>`<option value="${s.id}" ${inv.supplier_id===s.id?'selected':''}>${s.name}</option>`).join('');
+  const today = new Date().toISOString().slice(0,10);
+
+  document.getElementById('modal-title').textContent = id?'✏️ Редактировать счёт':'🧾 Новый счёт';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="kinv-date" value="${inv.date||today}"></div>
+      <div class="form-group"><label>№ счёта</label><input class="form-control" id="kinv-num" value="${(inv.invoice_num||'').replace(/"/g,'&quot;')}"></div>
+    </div>
+    <div class="form-group"><label>Поставщик</label><select class="form-control" id="kinv-sup"><option value="">—</option>${supOpts}</select></div>
+    <div class="form-group"><label>Сумма ₪ *</label><input type="number" class="form-control" id="kinv-total" value="${inv.total||''}" min="0" step="0.01"></div>
+    <div class="form-group">
+      <label>📎 Файл счёта (фото/PDF)</label>
+      <input type="file" id="kinv-file" accept="image/*,application/pdf" style="display:none" onchange="onKitchenInvoiceFileSelect(this)">
+      <button type="button" class="btn btn-outline" style="width:100%;justify-content:center" onclick="document.getElementById('kinv-file').click()">📂 Загрузить файл</button>
+      <div id="kinv-file-preview">${_kitchenInvoiceFile?`<div style="margin-top:6px;font-size:12px;color:#2563eb">📎 ${_kitchenInvoiceFile.name}</div>`:''}</div>
+    </div>
+    <div class="form-group">
+      <label>Позиции</label>
+      <table style="width:100%;font-size:12px;border-collapse:collapse;margin-bottom:6px">
+        <tr style="background:#f8fafc"><th style="padding:5px 6px;text-align:left;font-weight:600;color:#6b7280">Наименование</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Кол-во</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Ед.</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Цена ₪</th><th></th></tr>
+        <tbody id="kinv-items-body"></tbody>
+      </table>
+      <button type="button" class="btn btn-outline" style="font-size:12px;width:100%;justify-content:center" onclick="addKitchenInvoiceItemRow()">+ Добавить позицию</button>
+    </div>
+    <div class="form-group"><label>Примечание</label><textarea class="form-control" id="kinv-notes">${inv.notes||''}</textarea></div>`;
+  _renderKitchenInvoiceItems();
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveKitchenInvoice()">💾 Сохранить</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function _renderKitchenInvoiceItems() {
+  const tbody = document.getElementById('kinv-items-body');
+  if (!tbody) return;
+  tbody.innerHTML = _kitchenInvoiceItems.map((it,i) => `
+    <tr>
+      <td style="padding:3px"><input class="form-control" style="padding:5px 7px;font-size:12px" value="${(it.name||'').replace(/"/g,'&quot;')}" oninput="_kitchenInvoiceItems[${i}].name=this.value" placeholder="Название"></td>
+      <td style="padding:3px;width:70px"><input class="form-control" type="number" style="padding:5px 7px;font-size:12px" value="${it.qty||''}" oninput="_kitchenInvoiceItems[${i}].qty=this.value" min="0"></td>
+      <td style="padding:3px;width:60px"><input class="form-control" style="padding:5px 7px;font-size:12px" value="${(it.unit||'').replace(/"/g,'&quot;')}" oninput="_kitchenInvoiceItems[${i}].unit=this.value" placeholder="кг"></td>
+      <td style="padding:3px;width:80px"><input class="form-control" type="number" style="padding:5px 7px;font-size:12px" value="${it.price||''}" oninput="_kitchenInvoiceItems[${i}].price=this.value" min="0"></td>
+      <td style="padding:3px;width:30px"><button type="button" onclick="removeKitchenInvoiceItemRow(${i})" style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:14px;padding:2px;min-height:0">✕</button></td>
+    </tr>`).join('');
+}
+
+function addKitchenInvoiceItemRow() {
+  _kitchenInvoiceItems.push({name:'',qty:'',unit:'',price:''});
+  _renderKitchenInvoiceItems();
+}
+
+function removeKitchenInvoiceItemRow(i) {
+  _kitchenInvoiceItems.splice(i,1);
+  if (!_kitchenInvoiceItems.length) _kitchenInvoiceItems.push({name:'',qty:'',unit:'',price:''});
+  _renderKitchenInvoiceItems();
+}
+
+function onKitchenInvoiceFileSelect(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  _compressImage(file).then(function(res) {
+    _kitchenInvoiceFile = {data:res.data, name:file.name, type:res.type, size:res.size};
+    document.getElementById('kinv-file-preview').innerHTML = `<div style="margin-top:6px;font-size:12px;color:#2563eb">📎 ${file.name} (${fmtSize(res.size)})</div>`;
+  });
+}
+
+function saveKitchenInvoice() {
+  const date = document.getElementById('kinv-date').value;
+  if (!date) { alert('Укажите дату'); return; }
+  const total = document.getElementById('kinv-total').value;
+  if (!total) { alert('Укажите сумму'); return; }
+  const items = _kitchenInvoiceItems.filter(it=>(it.name||'').trim());
+  const record = {
+    id: _editingKitchenInvoice || Date.now().toString(36),
+    date,
+    supplier_id: document.getElementById('kinv-sup').value,
+    invoice_num: document.getElementById('kinv-num').value.trim(),
+    total: Number(total),
+    items,
+    file: _kitchenInvoiceFile,
+    notes: (document.getElementById('kinv-notes').value||'').trim(),
+  };
+  const list = getKitchenInvoices();
+  if (_editingKitchenInvoice) { const idx=list.findIndex(i=>i.id===_editingKitchenInvoice); if(idx>=0)list[idx]=record;else list.push(record); }
+  else list.push(record);
+  setLS('kitchen_invoices', list);
+  closeModal(); _showToast('✅ Счёт сохранён', true); render();
+}
+
+function delKitchenInvoice(id) {
+  if (!confirm('Удалить счёт?')) return;
+  setLS('kitchen_invoices', getKitchenInvoices().filter(i=>i.id!==id));
+  render();
+}
+
+// ---------- ANALYTICS (owner only) ----------
+
+function renderKitchenAnalytics() {
+  const invoices = getKitchenInvoices();
+  const deliveries = getKitchenDeliveries();
+  const suppliers = getKitchenSuppliers();
+
+  if (!invoices.length && !deliveries.length) {
+    return `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
+      <div style="font-size:48px;margin-bottom:12px">💰</div>
+      <div style="font-size:14px">Нет данных для аналитики</div></div></div>`;
+  }
+
+  const now = new Date();
+  // Last 6 months
+  const months = [];
+  for (let i=5; i>=0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    months.push({key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, label:d.toLocaleDateString('ru-RU',{month:'short',year:'2-digit'})});
+  }
+
+  const monthlyTotals = {};
+  months.forEach(m=>monthlyTotals[m.key]=0);
+  invoices.forEach(inv=>{ const mk=(inv.date||'').slice(0,7); if(monthlyTotals[mk]!==undefined) monthlyTotals[mk]+=Number(inv.total||0); });
+
+  const maxMonthly = Math.max(...Object.values(monthlyTotals), 1);
+  const monthBars = months.map(m => {
+    const v = monthlyTotals[m.key]||0;
+    const pct = Math.max(Math.round(v/maxMonthly*100), v?2:0);
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
+      <div style="font-size:10px;font-weight:700;color:#1e293b">₪${Math.round(v)}</div>
+      <div style="width:100%;background:#f1f5f9;border-radius:4px;height:80px;display:flex;align-items:flex-end">
+        <div style="width:100%;background:#2563eb;border-radius:4px;height:${pct}%;transition:.3s"></div>
+      </div>
+      <div style="font-size:10px;color:#6b7280;text-align:center">${m.label}</div>
+    </div>`;
+  }).join('');
+
+  const bySupplier = {};
+  invoices.forEach(inv=>{
+    const sname = (suppliers.find(s=>s.id===inv.supplier_id)||{}).name||'Неизвестно';
+    bySupplier[sname] = (bySupplier[sname]||0) + Number(inv.total||0);
+  });
+  const topSup = Object.entries(bySupplier).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const maxSup = Math.max(...topSup.map(x=>x[1]),1);
+
+  const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const thisMonthTotal = invoices.filter(i=>(i.date||'').startsWith(thisMonthKey)).reduce((s,i)=>s+Number(i.total||0),0);
+  const allTotal = invoices.reduce((s,i)=>s+Number(i.total||0),0);
+  const rcvCount = deliveries.filter(d=>d.status==='received').length;
+
+  return `
+    <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:22px">₪${thisMonthTotal.toFixed(0)}</div><div class="stat-label">Расходы этого месяца</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:#7c3aed;font-size:22px">₪${allTotal.toFixed(0)}</div><div class="stat-label">Расходы всего</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:#16a34a">${rcvCount}</div><div class="stat-label">Доставок получено</div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>📊 Расходы по месяцам (по счетам)</h3></div>
+      <div style="padding:16px;display:flex;gap:8px;align-items:flex-end;height:130px">${monthBars}</div>
+    </div>
+    ${topSup.length?`<div class="card">
+      <div class="card-header"><h3>🏪 Расходы по поставщикам</h3></div>
+      <div style="padding:16px">${topSup.map(([name,total])=>{
+        const pct=Math.round(total/maxSup*100);
+        return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <div style="width:120px;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0">${name}</div>
+          <div style="flex:1;background:#f1f5f9;border-radius:4px;height:18px">
+            <div style="width:${pct}%;background:#7c3aed;border-radius:4px;height:100%"></div>
+          </div>
+          <div style="font-size:12px;font-weight:700;color:#7c3aed;width:65px;text-align:right;flex-shrink:0">₪${total.toFixed(0)}</div>
+        </div>`;
+      }).join('')}</div>
+    </div>`:''}`;
 }
 
 init();
