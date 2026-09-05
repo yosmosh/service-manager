@@ -6635,11 +6635,26 @@ let _editingKitchenDelivery = null;
 let _editingKitchenSupplier = null;
 let _editingKitchenInventory = null;
 let _editingKitchenInvoice = null;
+let kitchenInvView = 'current'; // 'current' | 'history'
+let _kitchenWriteoffItems = [];
+let _kitchenWriteoffPhoto = null;
 
-const getKitchenSuppliers  = () => getLS('kitchen_suppliers')  || [];
-const getKitchenDeliveries = () => getLS('kitchen_deliveries') || [];
-const getKitchenInventory  = () => getLS('kitchen_inventory')  || [];
-const getKitchenInvoices   = () => getLS('kitchen_invoices')   || [];
+const getKitchenSuppliers    = () => getLS('kitchen_suppliers')     || [];
+const getKitchenDeliveries   = () => getLS('kitchen_deliveries')    || [];
+const getKitchenInventory    = () => getLS('kitchen_inventory')     || [];
+const getKitchenInvoices     = () => getLS('kitchen_invoices')      || [];
+const getKitchenDailyUsage   = () => getLS('kitchen_daily_usage')   || [];
+const getKitchenWriteoffs    = () => getLS('kitchen_writeoffs')     || [];
+const getKitchenInvSnapshots = () => getLS('kitchen_inv_snapshots') || {};
+
+function _saveInvSnapshot() {
+  const now = new Date();
+  const mk = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const snaps = getKitchenInvSnapshots();
+  snaps[mk] = {date: now.toISOString().slice(0,10), items: getKitchenInventory().map(it=>({...it}))};
+  setLS('kitchen_inv_snapshots', snaps);
+  if (_useFirebase) _scheduleSave();
+}
 
 const KITCHEN_SUP_CATS = ['Овощи/Фрукты','Молочные','Мясо/Рыба','Бакалея','Напитки','Заморозка','Прочее'];
 const KITCHEN_INV_CATS = ['Овощи','Фрукты','Молочные','Мясо','Рыба','Бакалея','Напитки','Заморозка','Специи','Прочее'];
@@ -6654,11 +6669,13 @@ function switchKitchenTab(t) { kitchenTab = t; render(); }
 
 function renderKitchen() {
   const isOwner = currentUser === 'owner';
+  const pendingWO = getKitchenWriteoffs().filter(w=>w.status==='pending').length;
   const tabs = [
     {id:'deliveries', label:'🚚 Доставки'},
     {id:'suppliers',  label:'🏪 Поставщики'},
     {id:'inventory',  label:'📦 Склад'},
     {id:'invoices',   label:'🧾 Счета'},
+    {id:'expense',    label:`📋 Расход${pendingWO&&isOwner?` <span style="background:#dc2626;color:white;border-radius:10px;font-size:10px;padding:1px 6px">${pendingWO}</span>`:''}` },
   ];
   if (isOwner) tabs.push({id:'analytics', label:'💰 Аналитика'});
 
@@ -6683,6 +6700,7 @@ function renderKitchen() {
   else if (kitchenTab==='suppliers') body = renderKitchenSuppliers();
   else if (kitchenTab==='inventory') body = renderKitchenInventory();
   else if (kitchenTab==='invoices') body = renderKitchenInvoices();
+  else if (kitchenTab==='expense') body = renderKitchenExpense();
   else if (kitchenTab==='analytics' && isOwner) body = renderKitchenAnalytics();
 
   return tabBar + monthNav + body;
@@ -6985,6 +7003,7 @@ function _applyDeliveryToInventory(items) {
     }
   });
   setLS('kitchen_inventory', inv);
+  _saveInvSnapshot();
 }
 
 function delKitchenDelivery(id) {
@@ -6995,20 +7014,10 @@ function delKitchenDelivery(id) {
 
 // ---------- INVENTORY ----------
 
-function renderKitchenInventory() {
-  const inv = getKitchenInventory().slice().sort((a,b)=>((a.category||'')+a.name).localeCompare((b.category||'')+b.name));
-  const canEdit = currentUser==='owner'||currentUser==='kitchen';
-  const addBtn = canEdit ? `<button class="btn btn-primary" onclick="openKitchenInventoryModal()">+ Добавить позицию</button>` : '';
-
-  if (!inv.length) {
-    return `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
-      <div style="font-size:48px;margin-bottom:12px">📦</div>
-      <div style="font-size:14px;margin-bottom:12px">Склад пустой</div>${addBtn}</div></div>`;
-  }
-
+function _invTable(inv, canEdit, readonly) {
   const today = new Date().toISOString().slice(0,10);
   const rows = inv.map(it => {
-    const low = it.min_qty!=='' && it.min_qty!==undefined && Number(it.qty||0)<=Number(it.min_qty||0);
+    const low = !readonly && it.min_qty!=='' && it.min_qty!==undefined && Number(it.qty||0)<=Number(it.min_qty||0);
     const expired = it.expiry && it.expiry < today;
     const expiryCell = it.expiry
       ? `<span style="${expired?'color:#dc2626;font-weight:700':''}">${expired?'⚠️ ':''}${fmtDate(it.expiry)}</span>`
@@ -7016,38 +7025,72 @@ function renderKitchenInventory() {
     return `<tr>
       <td>
         ${it.photo?`<img src="${it.photo.data}" onclick="window.open('${it.photo.data}','_blank')"
-          style="width:36px;height:36px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-left:4px;cursor:pointer;border:1px solid #e2e8f0" title="Фото: ${it.name}">`:''
-        }
+          style="width:32px;height:32px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-right:6px;cursor:pointer;border:1px solid #e2e8f0">`:'' }
         <span style="font-weight:600">${it.name}</span>
       </td>
       <td><span style="font-size:11px;background:#dbeafe;color:#1e40af;padding:2px 7px;border-radius:10px">${it.category||'—'}</span></td>
-      <td class="${low?'low':''}" style="text-align:center">
-        <span style="font-weight:${low?'700':'400'}">${it.qty||0} <span style="font-size:11px;color:#94a3b8;font-weight:400">${it.unit||''}</span></span>
+      <td style="text-align:center">
+        <span style="font-weight:${low?'700':'400'};color:${low?'#dc2626':'inherit'}">${it.qty||0} <span style="font-size:11px;color:#94a3b8;font-weight:400">${it.unit||''}</span></span>
         ${low?'<div style="font-size:10px;color:#dc2626">⚠️ Мало!</div>':''}
       </td>
-      <td style="text-align:center;color:#6b7280">${it.min_qty!==undefined&&it.min_qty!==''?it.min_qty+' '+(it.unit||''):'—'}</td>
+      <td style="text-align:center;color:#6b7280;font-size:12px">${it.min_qty!==undefined&&it.min_qty!==''?it.min_qty+' '+(it.unit||''):'—'}</td>
       <td style="text-align:center;font-size:12px">${expiryCell}</td>
-      ${canEdit?`<td style="text-align:right">
+      ${!readonly&&canEdit?`<td style="text-align:right">
         <div style="display:flex;gap:4px;justify-content:flex-end">
           <button class="btn btn-outline" style="padding:3px 8px;font-size:12px" onclick="openKitchenInventoryModal('${it.id}')">✏️</button>
           <button class="btn btn-outline" style="padding:3px 8px;font-size:12px;color:#dc2626" onclick="delKitchenInventoryItem('${it.id}')">🗑</button>
         </div>
-      </td>`:''}
+      </td>`:'<td></td>'}
     </tr>`;
   }).join('');
-
-  const lowCount = inv.filter(it=>it.min_qty!==undefined&&it.min_qty!==''&&Number(it.qty||0)<=Number(it.min_qty||0)).length;
-  const alertBanner = lowCount ? `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#dc2626;font-weight:600">⚠️ ${lowCount} позиц${lowCount===1?'ия':lowCount<5?'ии':'ий'} ниже минимального остатка</div>` : '';
-
-  return `${alertBanner}<div style="display:flex;justify-content:flex-end;margin-bottom:10px">${addBtn}</div>
-  <div class="card"><div style="overflow-x:auto"><table class="kitch-table">
+  return `<div class="card"><div style="overflow-x:auto"><table class="kitch-table">
     <thead><tr>
       <th>Наименование</th><th>Категория</th><th style="text-align:center">Остаток</th>
-      <th style="text-align:center">Минимум</th><th style="text-align:center">Срок годности</th>
-      ${canEdit?'<th></th>':''}
+      <th style="text-align:center">Минимум</th><th style="text-align:center">Срок годности</th><th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div></div>`;
+}
+
+function renderKitchenInventory() {
+  const canEdit = currentUser==='owner'||currentUser==='kitchen';
+  const addBtn = canEdit ? `<button class="btn btn-primary" onclick="openKitchenInventoryModal()">+ Добавить позицию</button>` : '';
+
+  const viewToggle = `<div style="display:flex;gap:6px;margin-bottom:12px">
+    <button class="kitchen-tab-btn${kitchenInvView==='current'?' active':''}" onclick="kitchenInvView='current';render()">📦 Текущий остаток</button>
+    <button class="kitchen-tab-btn${kitchenInvView==='history'?' active':''}" onclick="kitchenInvView='history';render()">📅 История по месяцам</button>
+  </div>`;
+
+  if (kitchenInvView === 'history') {
+    const snaps = getKitchenInvSnapshots();
+    const mk = `${kitchenYear}-${String(kitchenMonth).padStart(2,'0')}`;
+    const snap = snaps[mk];
+    const realNow = new Date();
+    const isCurrent = kitchenMonth===(realNow.getMonth()+1) && kitchenYear===realNow.getFullYear();
+    const nav = `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:white;border-radius:12px;border:1px solid #e2e8f0;margin-bottom:10px">
+      <button class="year-btn" onclick="kitchenMonth--;if(kitchenMonth<1){kitchenMonth=12;kitchenYear--}render()">◄</button>
+      <div style="font-size:16px;font-weight:700;color:#1e293b;min-width:160px;text-align:center">${MONTHS[kitchenMonth-1]} ${kitchenYear}</div>
+      <button class="year-btn" onclick="kitchenMonth++;if(kitchenMonth>12){kitchenMonth=1;kitchenYear++}render()">►</button>
+      ${isCurrent?'<span class="badge badge-blue">Текущий месяц</span>':''}
+    </div>`;
+    if (!snap) return viewToggle + nav + `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
+      <div style="font-size:48px;margin-bottom:12px">📅</div>
+      <div style="font-size:14px">Снимок склада за ${MONTHS[kitchenMonth-1]} ${kitchenYear} не найден</div>
+      <div style="font-size:12px;margin-top:8px;color:#94a3b8">Снимки сохраняются автоматически при каждом изменении склада</div>
+    </div></div>`;
+    const snapItems = (snap.items||[]).slice().sort((a,b)=>((a.category||'')+a.name).localeCompare((b.category||'')+b.name));
+    return viewToggle + nav +
+      `<div style="font-size:12px;color:#6b7280;margin-bottom:8px">Снимок от ${fmtDate(snap.date)} · ${snapItems.length} позиций</div>` +
+      _invTable(snapItems, false, true);
+  }
+
+  const inv = getKitchenInventory().slice().sort((a,b)=>((a.category||'')+a.name).localeCompare((b.category||'')+b.name));
+  if (!inv.length) return viewToggle + `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
+    <div style="font-size:48px;margin-bottom:12px">📦</div>
+    <div style="font-size:14px;margin-bottom:12px">Склад пустой</div>${addBtn}</div></div>`;
+  const lowCount = inv.filter(it=>it.min_qty!==undefined&&it.min_qty!==''&&Number(it.qty||0)<=Number(it.min_qty||0)).length;
+  const alertBanner = lowCount ? `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#dc2626;font-weight:600">⚠️ ${lowCount} позиц${lowCount===1?'ия':lowCount<5?'ии':'ий'} ниже минимального остатка</div>` : '';
+  return viewToggle + alertBanner + `<div style="display:flex;justify-content:flex-end;margin-bottom:10px">${addBtn}</div>` + _invTable(inv, canEdit, false);
 }
 
 function openKitchenInventoryModal(id) {
@@ -7087,12 +7130,14 @@ function saveKitchenInventoryItem() {
   if (_editingKitchenInventory) { const idx=list.findIndex(i=>i.id===_editingKitchenInventory); if(idx>=0)list[idx]=item;else list.push(item); }
   else list.push(item);
   setLS('kitchen_inventory', list);
+  _saveInvSnapshot();
   closeModal(); _showToast('✅ Позиция сохранена', true); render();
 }
 
 function delKitchenInventoryItem(id) {
   if (!confirm('Удалить позицию?')) return;
   setLS('kitchen_inventory', getKitchenInventory().filter(i=>i.id!==id));
+  _saveInvSnapshot();
   render();
 }
 
@@ -7307,6 +7352,268 @@ function delKitchenInvoice(id) {
   if (!confirm('Удалить счёт?')) return;
   setLS('kitchen_invoices', getKitchenInvoices().filter(i=>i.id!==id));
   render();
+}
+
+// ---------- РАСХОД (expense / usage) ----------
+
+function renderKitchenExpense() {
+  const isOwner = currentUser==='owner';
+  const canEdit = isOwner||currentUser==='kitchen';
+  const writeoffs = getKitchenWriteoffs();
+  const daily = getKitchenDailyUsage();
+  const mk = `${kitchenYear}-${String(kitchenMonth).padStart(2,'0')}`;
+
+  const pendingWOs = writeoffs.filter(w=>w.status==='pending');
+  const ownerAlert = isOwner && pendingWOs.length ? `
+    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
+      <span style="font-weight:700;color:#92400e">⚠️ ${pendingWOs.length} списани${pendingWOs.length===1?'е':'й'} ожидают вашего одобрения</span>
+    </div>` : '';
+
+  const monthDaily = daily.filter(d=>(d.date||'').startsWith(mk)).sort((a,b)=>b.date.localeCompare(a.date));
+  const monthWOs = writeoffs.filter(w=>(w.date||'').startsWith(mk)).sort((a,b)=>b.date.localeCompare(a.date));
+
+  const stBadge = s => s==='approved'?'<span style="background:#dcfce7;color:#16a34a;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700">✅ Одобрено</span>'
+    :s==='rejected'?'<span style="background:#fee2e2;color:#dc2626;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700">❌ Отклонено</span>'
+    :'<span style="background:#fef3c7;color:#d97706;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700">⏳ Ожидает</span>';
+
+  const dailyCards = monthDaily.map(d=>`
+    <div class="kitch-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-weight:700">${fmtDate(d.date)}</span>
+        <span style="font-size:12px;color:#6b7280">${(d.items||[]).length} позиций</span>
+      </div>
+      ${(d.items||[]).map(it=>`<div style="display:flex;justify-content:space-between;font-size:13px;padding:2px 0;border-bottom:1px solid #f1f5f9">
+        <span>${it.name}</span><span style="font-weight:600;color:#dc2626">−${it.qty} ${it.unit||''}</span>
+      </div>`).join('')}
+      ${d.notes?`<div style="font-size:12px;color:#6b7280;margin-top:6px">${d.notes}</div>`:''}
+    </div>`).join('');
+
+  const woCards = monthWOs.map(w=>`
+    <div class="kitch-card" style="border-left:4px solid ${w.status==='approved'?'#16a34a':w.status==='rejected'?'#dc2626':'#d97706'}">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+            <span style="font-weight:700">${fmtDate(w.date)}</span>
+            ${stBadge(w.status)}
+            <span style="font-size:11px;background:#f1f5f9;padding:2px 7px;border-radius:8px">${w.reason||''}</span>
+          </div>
+          ${(w.items||[]).map(it=>`<div style="font-size:13px;padding:2px 0">
+            <span style="font-weight:600">${it.name}</span> — ${it.qty} ${it.unit||''}
+          </div>`).join('')}
+          ${w.notes?`<div style="font-size:12px;color:#6b7280;margin-top:4px">${w.notes}</div>`:''}
+        </div>
+        ${w.photo?`<img src="${w.photo.data}" onclick="window.open('${w.photo.data}','_blank')"
+          style="width:60px;height:60px;object-fit:cover;border-radius:8px;cursor:pointer;flex-shrink:0">`:
+          `<div style="width:60px;height:60px;background:#f8fafc;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px">📷</div>`}
+      </div>
+      ${isOwner&&w.status==='pending'?`<div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9">
+        <button class="btn btn-primary" style="flex:1;justify-content:center;font-size:13px" onclick="approveWriteoff('${w.id}')">✅ Одобрить — списать</button>
+        <button class="btn btn-outline" style="flex:1;justify-content:center;font-size:13px;color:#dc2626" onclick="rejectWriteoff('${w.id}')">❌ Отклонить</button>
+      </div>`:''}
+    </div>`).join('');
+
+  const realNow = new Date();
+  const isCurrent = kitchenMonth===(realNow.getMonth()+1)&&kitchenYear===realNow.getFullYear();
+  const nav = `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:white;border-radius:12px;border:1px solid #e2e8f0;margin-bottom:10px">
+    <button class="year-btn" onclick="kitchenMonth--;if(kitchenMonth<1){kitchenMonth=12;kitchenYear--}render()">◄</button>
+    <div style="font-size:16px;font-weight:700;color:#1e293b;min-width:160px;text-align:center">${MONTHS[kitchenMonth-1]} ${kitchenYear}</div>
+    <button class="year-btn" onclick="kitchenMonth++;if(kitchenMonth>12){kitchenMonth=1;kitchenYear++}render()">►</button>
+    ${isCurrent?'<span class="badge badge-blue">Текущий месяц</span>':''}
+  </div>`;
+
+  const addBtns = canEdit&&isCurrent ? `<div style="display:flex;gap:8px;margin-bottom:12px">
+    <button class="btn btn-primary" style="flex:1;justify-content:center" onclick="openDailyUsageModal()">📋 Внести дневной расход</button>
+    <button class="btn btn-outline" style="flex:1;justify-content:center;color:#dc2626;border-color:#fca5a5" onclick="openWriteoffModal()">🗑 Списание (брак/потеря)</button>
+  </div>` : '';
+
+  return ownerAlert + nav + addBtns +
+    (monthDaily.length||monthWOs.length ? `
+      <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:8px">📋 Дневной расход</div>
+      ${monthDaily.length ? dailyCards : '<div style="color:#94a3b8;font-size:13px;margin-bottom:12px">Записей нет</div>'}
+      <div style="font-size:13px;font-weight:700;color:#374151;margin:12px 0 8px">🗑 Списания</div>
+      ${monthWOs.length ? woCards : '<div style="color:#94a3b8;font-size:13px">Записей нет</div>'}
+    ` : `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
+      <div style="font-size:48px;margin-bottom:12px">📋</div>
+      <div style="font-size:14px">Записей расхода за ${MONTHS[kitchenMonth-1]} нет</div>
+    </div></div>`);
+}
+
+function openDailyUsageModal() {
+  const inv = getKitchenInventory().filter(it=>it.name);
+  if (!inv.length) { alert('Склад пустой — нечего списывать'); return; }
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('modal-title').textContent = '📋 Дневной расход';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>Дата</label><input type="date" class="form-control" id="du-date" value="${today}"></div>
+    <div class="form-group">
+      <label>Что использовали сегодня</label>
+      <div id="du-items">
+        ${inv.map((it,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f1f5f9">
+          <span style="flex:1;font-size:13px;font-weight:500">${it.name} <span style="font-size:11px;color:#94a3b8">(есть: ${it.qty||0} ${it.unit||''})</span></span>
+          <input type="number" min="0" step="0.1" id="du-qty-${i}" placeholder="0"
+            style="width:80px;padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;text-align:center"
+            data-name="${it.name.replace(/"/g,'&quot;')}" data-unit="${it.unit||''}" data-max="${it.qty||0}">
+        </div>`).join('')}
+      </div>
+    </div>
+    <div class="form-group"><label>Примечание</label><textarea class="form-control" id="du-notes" placeholder="Необязательно"></textarea></div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveDailyUsage(${inv.length})">💾 Сохранить расход</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function saveDailyUsage(count) {
+  const date = document.getElementById('du-date').value;
+  const items = [];
+  for (let i=0;i<count;i++) {
+    const el = document.getElementById(`du-qty-${i}`);
+    if (!el) continue;
+    const qty = Number(el.value||0);
+    if (!qty) continue;
+    items.push({name:el.dataset.name, qty, unit:el.dataset.unit});
+  }
+  if (!items.length) { alert('Укажите хотя бы одну позицию'); return; }
+  const inv = getKitchenInventory();
+  const today = new Date().toISOString().slice(0,10);
+  items.forEach(it => {
+    const p = inv.find(x=>x.name===it.name);
+    if (p) { p.qty = Math.max(0,(Number(p.qty)||0)-it.qty); p.updated=today; }
+  });
+  setLS('kitchen_inventory', inv);
+  _saveInvSnapshot();
+  const log = getKitchenDailyUsage();
+  log.push({id:Date.now().toString(36), date, items, notes:(document.getElementById('du-notes').value||'').trim()});
+  setLS('kitchen_daily_usage', log);
+  if (_useFirebase) _scheduleSave();
+  closeModal(); _showToast('✅ Расход записан', true); render();
+}
+
+function openWriteoffModal() {
+  const inv = getKitchenInventory().filter(it=>it.name);
+  if (!inv.length) { alert('Склад пустой'); return; }
+  _kitchenWriteoffItems = [{name:'',qty:'',unit:''}];
+  _kitchenWriteoffPhoto = null;
+  const today = new Date().toISOString().slice(0,10);
+  const reasons = ['Просрочено','Испорчено / брак','Разбито / повреждено','Возврат поставщику','Другое'];
+  const invOpts = inv.map(it=>`<option value="${it.name}|${it.unit||''}">${it.name} (${it.qty||0} ${it.unit||''})</option>`).join('');
+  document.getElementById('modal-title').textContent = '🗑 Списание';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#92400e">
+      ⚠️ Списание требует фото и будет отправлено на одобрение владельцу
+    </div>
+    <div class="form-group"><label>Дата</label><input type="date" class="form-control" id="wo-date" value="${today}"></div>
+    <div class="form-group"><label>Причина *</label>
+      <select class="form-control" id="wo-reason">
+        ${reasons.map(r=>`<option>${r}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Позиции *</label>
+      <div id="wo-items-body"></div>
+      <button type="button" class="btn btn-outline" style="font-size:12px;margin-top:6px" onclick="addWriteoffItemRow('${invOpts.replace(/'/g,"\\'")}')">+ Добавить позицию</button>
+    </div>
+    <div class="form-group">
+      <label>📸 Фото доказательство *</label>
+      <input type="file" id="wo-photo-input" accept="image/*" capture="environment" style="display:none" onchange="onWriteoffPhotoSelect(this)">
+      <button type="button" class="btn btn-outline" style="width:100%;justify-content:center" onclick="document.getElementById('wo-photo-input').click()">📷 Сфотографировать</button>
+      <div id="wo-photo-preview"></div>
+    </div>
+    <div class="form-group"><label>Комментарий</label><textarea class="form-control" id="wo-notes" placeholder="Обязательно опишите ситуацию..."></textarea></div>`;
+  _renderWriteoffItems(invOpts);
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" style="background:#dc2626" onclick="saveWriteoffRequest()">📤 Отправить на одобрение</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function _renderWriteoffItems(invOpts) {
+  const body = document.getElementById('wo-items-body');
+  if (!body) return;
+  body.innerHTML = _kitchenWriteoffItems.map((it,i)=>`
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <select class="form-control" style="flex:2;font-size:12px" onchange="(function(s){const v=s.value.split('|');_kitchenWriteoffItems[${i}].name=v[0];_kitchenWriteoffItems[${i}].unit=v[1]||''})(this)">
+        <option value="|">— Выберите —</option>${invOpts}
+      </select>
+      <input type="number" min="0" step="0.1" placeholder="Кол-во" class="form-control" style="width:80px;font-size:12px"
+        oninput="_kitchenWriteoffItems[${i}].qty=this.value" value="${it.qty||''}">
+      <span style="font-size:12px;color:#6b7280;width:30px">${it.unit||''}</span>
+      <button type="button" onclick="_kitchenWriteoffItems.splice(${i},1);_renderWriteoffItems('${invOpts.replace(/'/g,"\\'")}')"
+        style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:16px;padding:0">✕</button>
+    </div>`).join('');
+}
+
+function addWriteoffItemRow(invOpts) {
+  _kitchenWriteoffItems.push({name:'',qty:'',unit:''});
+  _renderWriteoffItems(invOpts);
+}
+
+function onWriteoffPhotoSelect(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  _compressImage(file).then(res => {
+    _kitchenWriteoffPhoto = {data:res.data, name:file.name};
+    document.getElementById('wo-photo-preview').innerHTML =
+      `<div style="margin-top:8px"><img src="${res.data}" style="max-height:120px;border-radius:8px;border:1px solid #e2e8f0">
+       <div style="font-size:11px;color:#16a34a;margin-top:4px">✅ Фото загружено</div></div>`;
+  });
+}
+
+function saveWriteoffRequest() {
+  if (!_kitchenWriteoffPhoto) { alert('📸 Загрузите фото доказательство'); return; }
+  const items = _kitchenWriteoffItems.filter(it=>it.name&&Number(it.qty||0)>0);
+  if (!items.length) { alert('Укажите хотя бы одну позицию с количеством'); return; }
+  const notes = (document.getElementById('wo-notes').value||'').trim();
+  const record = {
+    id: Date.now().toString(36),
+    date: document.getElementById('wo-date').value,
+    reason: document.getElementById('wo-reason').value,
+    items,
+    photo: _kitchenWriteoffPhoto,
+    notes,
+    status: 'pending',
+    createdBy: currentUser,
+    createdAt: new Date().toISOString(),
+  };
+  const list = getKitchenWriteoffs();
+  list.push(record);
+  setLS('kitchen_writeoffs', list);
+  if (_useFirebase) _scheduleSave();
+  closeModal(); _showToast('📤 Запрос отправлен владельцу', true); render();
+}
+
+function approveWriteoff(id) {
+  if (!confirm('Одобрить списание и вычесть из склада?')) return;
+  const list = getKitchenWriteoffs();
+  const wo = list.find(w=>w.id===id);
+  if (!wo) return;
+  wo.status = 'approved';
+  wo.approvedAt = new Date().toISOString();
+  setLS('kitchen_writeoffs', list);
+  const inv = getKitchenInventory();
+  const today = new Date().toISOString().slice(0,10);
+  (wo.items||[]).forEach(it=>{
+    const p = inv.find(x=>x.name===it.name);
+    if (p) { p.qty = Math.max(0,(Number(p.qty)||0)-Number(it.qty||0)); p.updated=today; }
+  });
+  setLS('kitchen_inventory', inv);
+  _saveInvSnapshot();
+  if (_useFirebase) _scheduleSave();
+  _showToast('✅ Списание одобрено', true); render();
+}
+
+function rejectWriteoff(id) {
+  const reason = prompt('Причина отклонения (необязательно):');
+  if (reason === null) return;
+  const list = getKitchenWriteoffs();
+  const wo = list.find(w=>w.id===id);
+  if (!wo) return;
+  wo.status = 'rejected';
+  wo.rejectReason = reason;
+  wo.rejectedAt = new Date().toISOString();
+  setLS('kitchen_writeoffs', list);
+  if (_useFirebase) _scheduleSave();
+  _showToast('❌ Списание отклонено', false); render();
 }
 
 // ---------- ANALYTICS (owner only) ----------
