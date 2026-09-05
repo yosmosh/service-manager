@@ -961,6 +961,12 @@ function openSettingsModal() {
         </div>
       </div>
       <button class="btn btn-success" style="width:100%;justify-content:center" onclick="saveKitchenCreds()">💾 Сохранить данные менеджера кухни</button>
+    </div>
+    <div style="margin-bottom:16px;padding:12px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px">
+      <div style="font-size:12px;font-weight:700;color:#92400e;margin-bottom:6px">🤖 Anthropic API Key (ИИ для кухни)</div>
+      <div style="font-size:11px;color:#78350f;margin-bottom:8px">Используется для сканирования счётов. Ключ хранится только в этом устройстве.</div>
+      <input type="password" class="form-control" id="anthropic-key-input" value="${getLS('anthropic_api_key')||''}" placeholder="sk-ant-...">
+      <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:8px" onclick="saveAnthropicKey()">💾 Сохранить ключ</button>
     </div>` : '';
 
   const nc = getNotifyCfg();
@@ -1113,6 +1119,14 @@ function saveKitchenCreds() {
   setLS('kitchen_username', u);
   setLS('kitchen_pwd', p);
   alert('Данные менеджера кухни сохранены');
+}
+
+function saveAnthropicKey() {
+  const key = (document.getElementById('anthropic-key-input').value||'').trim();
+  if (!key.startsWith('sk-ant-')) { alert('Неверный формат ключа. Должен начинаться с sk-ant-'); return; }
+  setLS('anthropic_api_key', key);
+  if (_useFirebase) _scheduleSave();
+  alert('✅ Ключ сохранён');
 }
 
 function debugRecords() {
@@ -6874,8 +6888,22 @@ function _renderKitchenDeliveryItems() {
       <td style="padding:3px;width:70px"><input class="form-control" type="number" style="padding:5px 7px;font-size:12px" value="${it.qty||''}" oninput="_kitchenDeliveryItems[${i}].qty=this.value" min="0" placeholder="0"></td>
       <td style="padding:3px;width:72px">${_unitSel(it.unit||'',`onchange="_kitchenDeliveryItems[${i}].unit=this.value"`,'padding:5px 4px;font-size:12px')}</td>
       <td style="padding:3px;width:80px"><input class="form-control" type="number" style="padding:5px 7px;font-size:12px" value="${it.price||''}" oninput="_kitchenDeliveryItems[${i}].price=this.value" min="0" placeholder="0.00"></td>
+      <td style="padding:3px;width:36px">
+        <input type="file" accept="image/*" capture="environment" id="kd-item-photo-${i}" style="display:none" onchange="onDeliveryItemPhotoSelect(this,${i})">
+        <button type="button" onclick="document.getElementById('kd-item-photo-${i}').click()"
+          title="Фото товара" style="background:${it.photo?'#dcfce7':'none'};border:1px solid ${it.photo?'#86efac':'#d1d5db'};border-radius:6px;cursor:pointer;font-size:14px;padding:3px 5px;min-height:0">${it.photo?'✅':'📷'}</button>
+      </td>
       <td style="padding:3px;width:30px"><button type="button" onclick="removeKitchenDeliveryItemRow(${i})" style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:14px;padding:2px;min-height:0">✕</button></td>
     </tr>`).join('');
+}
+
+function onDeliveryItemPhotoSelect(input, i) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  _compressImage(file).then(res => {
+    _kitchenDeliveryItems[i].photo = {data:res.data, name:file.name};
+    _renderKitchenDeliveryItems();
+  });
 }
 
 function addKitchenDeliveryItemRow() {
@@ -6912,6 +6940,7 @@ function onTruckPhotoSelect(input) {
 function saveKitchenDelivery() {
   const date = document.getElementById('kd-date').value;
   if (!date) { alert('Укажите дату'); return; }
+  if (!_kitchenTruckPhoto) { alert('📸 Необходимо сфотографировать грузовик доставки!\n\nФото обязательно для сохранения доставки.'); return; }
   const status = document.getElementById('kd-status').value;
   const items = _kitchenDeliveryItems.filter(it=>(it.name||'').trim());
   const delivery = {
@@ -6924,21 +6953,35 @@ function saveKitchenDelivery() {
     notes: (document.getElementById('kd-notes').value||'').trim(),
   };
   const list = getKitchenDeliveries();
+  const prevStatus = _editingKitchenDelivery ? (list.find(d=>d.id===_editingKitchenDelivery)||{}).status : null;
   if (_editingKitchenDelivery) { const idx=list.findIndex(d=>d.id===_editingKitchenDelivery); if(idx>=0)list[idx]=delivery;else list.push(delivery); }
   else list.push(delivery);
   setLS('kitchen_deliveries', list);
-  if (status==='received' && !_editingKitchenDelivery) _applyDeliveryToInventory(items);
+  if (status==='received' && prevStatus !== 'received') _applyDeliveryToInventory(items);
   closeModal(); _showToast('✅ Доставка сохранена', true); render();
 }
 
 function _applyDeliveryToInventory(items) {
   const inv = getKitchenInventory();
+  const today = new Date().toISOString().slice(0,10);
   items.forEach(it => {
     if (!it.name) return;
     const existing = inv.find(p=>p.name.toLowerCase()===it.name.toLowerCase());
     if (existing) {
       existing.qty = (Number(existing.qty)||0) + (Number(it.qty)||0);
-      existing.updated = new Date().toISOString().slice(0,10);
+      existing.updated = today;
+      if (it.photo) existing.photo = it.photo;
+    } else {
+      inv.push({
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+        name: it.name,
+        qty: Number(it.qty)||0,
+        unit: it.unit||'',
+        category: 'Прочее',
+        min_qty: 0,
+        updated: today,
+        photo: it.photo||null,
+      });
     }
   });
   setLS('kitchen_inventory', inv);
@@ -6971,7 +7014,12 @@ function renderKitchenInventory() {
       ? `<span style="${expired?'color:#dc2626;font-weight:700':''}">${expired?'⚠️ ':''}${fmtDate(it.expiry)}</span>`
       : '<span style="color:#94a3b8">—</span>';
     return `<tr>
-      <td><span style="font-weight:600">${it.name}</span></td>
+      <td>
+        ${it.photo?`<img src="${it.photo.data}" onclick="window.open('${it.photo.data}','_blank')"
+          style="width:36px;height:36px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-left:4px;cursor:pointer;border:1px solid #e2e8f0" title="Фото: ${it.name}">`:''
+        }
+        <span style="font-weight:600">${it.name}</span>
+      </td>
       <td><span style="font-size:11px;background:#dbeafe;color:#1e40af;padding:2px 7px;border-radius:10px">${it.category||'—'}</span></td>
       <td class="${low?'low':''}" style="text-align:center">
         <span style="font-weight:${low?'700':'400'}">${it.qty||0} <span style="font-size:11px;color:#94a3b8;font-weight:400">${it.unit||''}</span></span>
@@ -7121,7 +7169,10 @@ function openKitchenInvoiceModal(id) {
     <div class="form-group">
       <label>📎 Файл счёта (фото/PDF)</label>
       <input type="file" id="kinv-file" accept="image/*,application/pdf" style="display:none" onchange="onKitchenInvoiceFileSelect(this)">
-      <button type="button" class="btn btn-outline" style="width:100%;justify-content:center" onclick="document.getElementById('kinv-file').click()">📂 Загрузить файл</button>
+      <div style="display:flex;gap:8px">
+        <button type="button" id="kinv-scan-btn" class="btn btn-primary" style="flex:1;justify-content:center" onclick="scanInvoiceWithAI()">🤖 Сканировать счёт (ИИ)</button>
+        <button type="button" class="btn btn-outline" style="flex:1;justify-content:center" onclick="document.getElementById('kinv-file').click()">📂 Загрузить вручную</button>
+      </div>
       <div id="kinv-file-preview">${_kitchenInvoiceFile?`<div style="margin-top:6px;font-size:12px;color:#2563eb">📎 ${_kitchenInvoiceFile.name}</div>`:''}</div>
     </div>
     <div class="form-group">
@@ -7162,6 +7213,62 @@ function removeKitchenInvoiceItemRow(i) {
   _kitchenInvoiceItems.splice(i,1);
   if (!_kitchenInvoiceItems.length) _kitchenInvoiceItems.push({name:'',qty:'',unit:'',price:''});
   _renderKitchenInvoiceItems();
+}
+
+async function scanInvoiceWithAI() {
+  const apiKey = getLS('anthropic_api_key');
+  if (!apiKey) { alert('⚠️ Сначала добавьте Anthropic API Key в Настройках доступа'); return; }
+  const input = document.getElementById('kinv-file');
+  input.onchange = null;
+  input.accept = 'image/*';
+  input.onchange = async function() {
+    const file = this.files && this.files[0];
+    if (!file) return;
+    const btn = document.getElementById('kinv-scan-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Сканирую...'; }
+    try {
+      const compressed = await _compressImage(file);
+      _kitchenInvoiceFile = {data:compressed.data, name:file.name, type:compressed.type, size:compressed.size};
+      document.getElementById('kinv-file-preview').innerHTML = `<div style="margin-top:6px;font-size:12px;color:#2563eb">📎 ${file.name}</div>`;
+      const base64 = compressed.data.split(',')[1];
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {'x-api-key':apiKey,'anthropic-version':'2023-06-01','content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 1024,
+          messages: [{role:'user', content:[
+            {type:'image', source:{type:'base64', media_type:file.type||'image/jpeg', data:base64}},
+            {type:'text', text:'Это счёт/накладная от поставщика. Извлеки данные и верни ТОЛЬКО JSON без комментариев:\n{"supplier_name":"...","date":"YYYY-MM-DD","invoice_num":"...","total":0,"items":[{"name":"...","qty":0,"unit":"кг","price":0}]}\nЕсли поле не найдено — оставь пустым или 0. Единицы: кг/г/л/мл/шт/уп/кор/бут/пак. Валюта — ₪ (шекели).'}
+          ]}]
+        })
+      });
+      if (!resp.ok) { const e=await resp.json(); throw new Error(e.error?.message||resp.statusText); }
+      const data = await resp.json();
+      const text = data.content[0].text.trim();
+      const json = JSON.parse(text.match(/\{[\s\S]*\}/)[0]);
+      // Fill form
+      if (json.date) document.getElementById('kinv-date').value = json.date;
+      if (json.invoice_num) document.getElementById('kinv-num').value = json.invoice_num;
+      if (json.total) document.getElementById('kinv-total').value = json.total;
+      if (json.supplier_name) {
+        const sups = getKitchenSuppliers();
+        const match = sups.find(s=>s.name.toLowerCase().includes(json.supplier_name.toLowerCase())||json.supplier_name.toLowerCase().includes(s.name.toLowerCase()));
+        if (match) document.getElementById('kinv-sup').value = match.id;
+      }
+      if (json.items && json.items.length) {
+        _kitchenInvoiceItems = json.items.map(it=>({name:it.name||'',qty:it.qty||'',unit:it.unit||'',price:it.price||''}));
+        _renderKitchenInvoiceItems();
+      }
+      _showToast('✅ Счёт распознан автоматически', true);
+    } catch(e) {
+      alert('❌ Ошибка сканирования: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🤖 Сканировать счёт (ИИ)'; }
+      this.value = '';
+    }
+  };
+  input.click();
 }
 
 function onKitchenInvoiceFileSelect(input) {
