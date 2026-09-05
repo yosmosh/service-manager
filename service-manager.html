@@ -2339,6 +2339,8 @@ async function _galShow(index) {
         ${total > 1 ? `<span style="color:rgba(255,255,255,.7);font-size:12px">${index+1} / ${total}</span>` : ''}
         <button onclick="event.stopPropagation();_galDl()"
            style="color:white;background:rgba(255,255,255,.18);padding:${isMobile?'7px 12px':'5px 12px'};border-radius:6px;font-size:13px;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent">⬇</button>
+        ${_gal.workId ? `<button onclick="event.stopPropagation();_galDelMaint()"
+          style="color:#fca5a5;background:rgba(220,38,38,.35);border:none;padding:${isMobile?'7px 12px':'5px 12px'};border-radius:6px;font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent">🗑</button>` : ''}
         <button onclick="event.stopPropagation();_galClose()"
           style="color:white;background:rgba(255,255,255,.18);border:none;padding:${isMobile?'7px 14px':'5px 12px'};border-radius:6px;font-size:${isMobile?16:13}px;cursor:pointer;-webkit-tap-highlight-color:transparent">✕</button>
       </div>
@@ -2360,6 +2362,15 @@ function _galNav(dir) {
 function _galClose() {
   document.getElementById('file-preview-overlay')?.remove();
   _gal = null;
+}
+
+async function _galDelMaint() {
+  if (!_gal || !_gal.workId) return;
+  if (!confirm('Удалить этот файл?')) return;
+  const workId = _gal.workId;
+  const origIdx = _gal.origIndices[_gal.index];
+  _galClose();
+  await delMaintFile(workId, origIdx, true);
 }
 
 function _makePDFFromJPEG(jpegBytes, w, h) {
@@ -2461,8 +2472,8 @@ async function delSosFile(sosId, fi) {
   openSosModal(sosId);
 }
 
-async function delMaintFile(maintId, fi) {
-  if (!confirm('Удалить этот файл?')) return;
+async function delMaintFile(maintId, fi, skipConfirm) {
+  if (!skipConfirm && !confirm('Удалить этот файл?')) return;
   const list = getMaintWorks();
   const idx = list.findIndex(w => w.id === maintId);
   if (idx < 0) return;
@@ -3834,15 +3845,28 @@ function openMaintModal(editId) {
   pendingFiles = [];
   document.getElementById('modal-title').textContent = ex ? '✏️ Редактировать работу' : '➕ Добавить работу';
 
-  const existFiles = (ex?.fileIds||[])
+  const _exSorted = (ex?.fileIds||[])
     .map((fid,i) => ({ fid, i, ft:(ex.fileTypes||[])[i]||'', fn:(ex.fileNames||[])[i]||'Файл' }))
-    .sort((a,b)=>{const p=ft=>ft.startsWith('video/')?0:ft.startsWith('image/')?1:2;return p(a.ft)-p(b.ft);})
-    .map(({fid,i,ft,fn}) => `<div class="file-item">
-      <span>${fileEmoji(ft)}</span>
-      <span class="fn">${fn}</span>
-      <button onclick="previewFile('${fid}','${ft}','${fn.replace(/'/g,"\\'")}'")" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button>
-      <button onclick="delMaintFile('${ex.id}',${i})" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Удалить файל">✕</button>
-    </div>`).join('');
+    .sort((a,b)=>{const p=ft=>ft.startsWith('video/')?0:ft.startsWith('image/')?1:2;return p(a.ft)-p(b.ft);});
+  const _exIds    = _exSorted.map(f=>f.fid);
+  const _exTypes  = _exSorted.map(f=>f.ft);
+  const _exNames  = _exSorted.map(f=>f.fn);
+  const _exOrig   = _exSorted.map(f=>f.i);
+  const existFiles = _exSorted.length ? `
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      ${_exSorted.map(({fid,ft,fn},gi) => ft.startsWith('image/') ? `
+        <div onclick="openMaintGallery('${ex.id}',${gi})" title="${fn.replace(/'/g,"\\'")}"
+          style="width:72px;height:72px;border-radius:8px;overflow:hidden;cursor:pointer;border:2px solid #e2e8f0;flex-shrink:0;background:#f8fafc;display:flex;align-items:center;justify-content:center">
+          <img class="mthumb" data-fid="${fid}" src="" alt="${fn.replace(/'/g,"\\'")}"
+            style="width:100%;height:100%;object-fit:cover;display:block">
+        </div>` : `
+        <div onclick="openMaintGallery('${ex.id}',${gi})" title="${fn.replace(/'/g,"\\'")}"
+          style="width:72px;height:72px;border-radius:8px;overflow:hidden;cursor:pointer;border:2px solid #e2e8f0;flex-shrink:0;background:#f8fafc;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">
+          <span style="font-size:26px">${fileEmoji(ft)}</span>
+          <span style="font-size:9px;color:#64748b;text-align:center;padding:0 2px;word-break:break-all;line-height:1.2;max-height:28px;overflow:hidden">${fn}</span>
+        </div>`).join('')}
+    </div>` : '';
+  window._maintGalData = ex ? {workId:ex.id, ids:_exIds, types:_exTypes, names:_exNames, origIndices:_exOrig} : null;
 
   const defaultDate = ex?.date || `${maintYear}-${String(maintMonth).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
   const catOptions = MAINT_CATS.map(c =>
@@ -3907,7 +3931,7 @@ function openMaintModal(editId) {
     </div>
     <div class="form-group">
       <label>Фото / документы</label>
-      ${existFiles ? `<div class="file-list" style="margin-bottom:8px">${existFiles}</div>` : ''}
+      ${existFiles}
       <div class="upload-zone" onclick="document.getElementById('maint-fi').click()" id="maint-drop">
         📂 Загрузить фото, видео, документы
         <input type="file" id="maint-fi" multiple style="display:none" onchange="onFilePick(event)">
@@ -3921,6 +3945,14 @@ function openMaintModal(editId) {
 
   setupDrop('maint-drop');
   document.getElementById('modal-overlay').classList.remove('hidden');
+  if (ex) loadMaintImages();
+}
+
+function openMaintGallery(workId, startIndex) {
+  const d = window._maintGalData;
+  if (!d || d.workId !== workId) return;
+  _gal = { ids: d.ids, types: d.types, names: d.names, index: startIndex, workId: d.workId, origIndices: d.origIndices };
+  _galShow(startIndex);
 }
 
 async function saveMaint(editId) {
