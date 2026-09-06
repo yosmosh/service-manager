@@ -6875,7 +6875,7 @@ function renderKitchenDeliveries() {
             ${sup?`<span style="font-weight:600">${sup.name}</span>`:''}
             <span style="font-size:11px;font-weight:700;color:${stColor[d.status]||'#6b7280'}">${stLabel[d.status]||d.status}</span>
           </div>
-          <div style="font-size:12px;color:#6b7280">${(d.items||[]).length} позиций${total>0?' · ₪'+total.toFixed(2):''}</div>
+          <div style="font-size:12px;color:#6b7280">${(d.items||[]).length} позиций${total>0?' · ₪'+total.toFixed(2):''}${d.invoice_id?` · <span style="color:#2563eb">📄 Из накладной</span>`:''}</div>
           ${d.notes?`<div style="font-size:12px;color:#374151;margin-top:3px">${d.notes}</div>`:''}
         </div>
         ${canEdit?`<div style="display:flex;gap:6px;flex-shrink:0">
@@ -7007,7 +7007,9 @@ function saveKitchenDelivery() {
     items,
     truck_photo: _kitchenTruckPhoto || null,
     notes: (document.getElementById('kd-notes').value||'').trim(),
+    invoice_id: window._deliveryInvoiceLink || null,
   };
+  window._deliveryInvoiceLink = null;
   const list = getKitchenDeliveries();
   const prevStatus = _editingKitchenDelivery ? (list.find(d=>d.id===_editingKitchenDelivery)||{}).status : null;
   if (_editingKitchenDelivery) { const idx=list.findIndex(d=>d.id===_editingKitchenDelivery); if(idx>=0)list[idx]=delivery;else list.push(delivery); }
@@ -7369,6 +7371,7 @@ function saveKitchenInvoice() {
   const total = document.getElementById('kinv-total').value;
   if (!total) { alert('Укажите сумму'); return; }
   const items = _kitchenInvoiceItems.filter(it=>(it.name||'').trim());
+  const isNew = !_editingKitchenInvoice;
   const record = {
     id: _editingKitchenInvoice || Date.now().toString(36),
     date,
@@ -7383,7 +7386,67 @@ function saveKitchenInvoice() {
   if (_editingKitchenInvoice) { const idx=list.findIndex(i=>i.id===_editingKitchenInvoice); if(idx>=0)list[idx]=record;else list.push(record); }
   else list.push(record);
   setLS('kitchen_invoices', list);
+  if (_useFirebase) _scheduleSave();
   closeModal(); _showToast('✅ Счёт сохранён', true); render();
+  // Offer to create a linked delivery (only for new invoices with items)
+  if (isNew && items.length) {
+    setTimeout(() => {
+      if (confirm('📦 Товар прибыл вместе с этой накладной?\n\nНажмите OK — система создаст доставку с готовыми данными.\n⚠️ Потребуется фото грузовика (защита от ввода старых накладных).')) {
+        openDeliveryFromInvoice(record);
+      }
+    }, 350);
+  }
+}
+
+function openDeliveryFromInvoice(inv) {
+  _editingKitchenDelivery = null;
+  _kitchenTruckPhoto = null;
+  _kitchenDeliveryItems = (inv.items||[]).map(it=>({name:it.name||'',qty:it.qty||'',unit:it.unit||'',price:it.price||'',photo:null}));
+  if (!_kitchenDeliveryItems.length) _kitchenDeliveryItems = [{name:'',qty:'',unit:'',price:''}];
+  window._deliveryInvoiceLink = inv.id;
+
+  const suppliers = getKitchenSuppliers();
+  const supOpts = suppliers.map(s=>`<option value="${s.id}" ${inv.supplier_id===s.id?'selected':''}>${s.name}</option>`).join('');
+  const stOpts = [['received','✅ Получено'],['pending','⏳ Ожидается'],['cancelled','❌ Отменено']]
+    .map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
+
+  document.getElementById('modal-title').textContent = '🚚 Доставка из накладной';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#1e40af">
+      📄 Данные перенесены из накладной ${inv.invoice_num?'<b>#'+inv.invoice_num+'</b>':''} от ${inv.date||''}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="kd-date" value="${inv.date||new Date().toISOString().slice(0,10)}"></div>
+      <div class="form-group"><label>Статус</label><select class="form-control" id="kd-status">${stOpts}</select></div>
+    </div>
+    <div class="form-group"><label>Поставщик</label>
+      <select class="form-control" id="kd-sup"><option value="">— Выберите —</option>${supOpts}</select>
+    </div>
+    <div class="form-group">
+      <label>📸 Фото грузовика <span style="color:#dc2626;font-weight:700">* ОБЯЗАТЕЛЬНО</span></label>
+      <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:8px 12px;font-size:12px;color:#92400e;margin-bottom:8px;font-weight:600">
+        ⚠️ Фото должно быть сделано ПРЯМО СЕЙЧАС (не более 1 часа назад) — защита от ввода старых накладных
+      </div>
+      <input type="file" id="kd-truck-photo" accept="image/*" capture="environment" style="display:none" onchange="onTruckPhotoSelect(this)">
+      <button type="button" class="btn btn-danger" style="width:100%;justify-content:center;font-size:14px;padding:12px" onclick="document.getElementById('kd-truck-photo').click()">📷 Сфотографировать грузовик СЕЙЧАС</button>
+      <div id="truck-photo-preview"></div>
+    </div>
+    <div class="form-group">
+      <label>Позиции (из накладной)</label>
+      <table style="width:100%;font-size:12px;border-collapse:collapse;margin-bottom:6px">
+        <tr style="background:#f8fafc"><th style="padding:5px 6px;text-align:left;font-weight:600;color:#6b7280">Наименование</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Кол-во</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Ед.</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Цена ₪</th><th></th></tr>
+        <tbody id="kd-items-body"></tbody>
+      </table>
+      <button type="button" class="btn btn-outline" style="font-size:12px;width:100%;justify-content:center" onclick="addKitchenDeliveryItemRow()">+ Добавить позицию</button>
+    </div>
+    <div class="form-group"><label>Примечание</label>
+      <textarea class="form-control" id="kd-notes">Доставка по накладной${inv.invoice_num?' #'+inv.invoice_num:''}</textarea>
+    </div>`;
+  _renderKitchenDeliveryItems();
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Пропустить</button>
+    <button class="btn btn-primary" onclick="saveKitchenDelivery()">💾 Сохранить доставку</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
 function delKitchenInvoice(id) {
