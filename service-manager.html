@@ -1609,6 +1609,12 @@ function render() {
   const title = document.getElementById('page-title');
   const actions = document.getElementById('topbar-actions');
   actions.innerHTML = '';
+  // kitchen_worker sees ONLY the delivery intake screen — no other views
+  if (currentUser === 'kitchen_worker') {
+    title.textContent = '👨‍🍳 Приём доставки';
+    content.innerHTML = renderKitchenWorker();
+    return;
+  }
 
   if (view === 'dashboard') {
     title.textContent = 'Панель управления';
