@@ -774,8 +774,10 @@ function getProviderPins() { return getLS('provider_pins') || {}; }
 function getProviderPin(pid) { const pins = getProviderPins(); return pins[pid] || '1234'; }
 function getProviderUsernames() { return getLS('provider_usernames') || {}; }
 function getProviderUsername(pid) { const u = getProviderUsernames(); return u[pid] || pid; }
-function getKitchenUser() { return getLS('kitchen_username') || 'kitchen'; }
-function getKitchenPwd()  { return getLS('kitchen_pwd')      || 'kitchen123'; }
+function getKitchenUser()       { return getLS('kitchen_username')        || 'kitchen'; }
+function getKitchenPwd()        { return getLS('kitchen_pwd')             || 'kitchen123'; }
+function getKitchenWorkerUser() { return getLS('kitchen_worker_username') || 'worker'; }
+function getKitchenWorkerPwd()  { return getLS('kitchen_worker_pwd')      || 'worker123'; }
 
 function doLogin() {
   const username = (document.getElementById('login-username').value || '').trim().toLowerCase();
@@ -804,6 +806,15 @@ function doLogin() {
   // Check kitchen manager
   if (username === getKitchenUser().toLowerCase() && pwd === getKitchenPwd()) {
     currentUser = 'kitchen';
+    document.getElementById('login-screen').style.display = 'none';
+    applyUserLayout();
+    showView('kitchen');
+    return;
+  }
+
+  // Check kitchen worker (limited: delivery intake only)
+  if (username === getKitchenWorkerUser().toLowerCase() && pwd === getKitchenWorkerPwd()) {
+    currentUser = 'kitchen_worker';
     document.getElementById('login-screen').style.display = 'none';
     applyUserLayout();
     showView('kitchen');
@@ -867,6 +878,9 @@ function applyUserLayout() {
   } else if (currentUser === 'kitchen') {
     sidebar.style.display = 'none';
     document.getElementById('user-label').textContent = '🍽️ Менеджер кухни';
+  } else if (currentUser === 'kitchen_worker') {
+    sidebar.style.display = 'none';
+    document.getElementById('user-label').textContent = '👨‍🍳 Сотрудник кухни';
   } else {
     sidebar.style.display = 'none';
     if (provReqBtn) provReqBtn.style.display = '';
@@ -961,6 +975,21 @@ function openSettingsModal() {
         </div>
       </div>
       <button class="btn btn-success" style="width:100%;justify-content:center" onclick="saveKitchenCreds()">💾 Сохранить данные менеджера кухни</button>
+    </div>
+    <div style="margin-bottom:16px;padding:12px 14px;background:#f0f9ff;border:1px solid #7dd3fc;border-radius:10px">
+      <div style="font-size:12px;font-weight:700;color:#0c4a6e;margin-bottom:4px">👨‍🍳 Учётная запись сотрудника кухни</div>
+      <div style="font-size:11px;color:#075985;margin-bottom:8px">Ограниченный доступ: только приём доставки (сканирование накладной + фото грузовика)</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
+          <input type="text" class="form-control" id="kitchen-worker-user" value="${getKitchenWorkerUser()}" placeholder="worker">
+        </div>
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
+          <input type="text" class="form-control" id="kitchen-worker-pwd" value="${getKitchenWorkerPwd()}" placeholder="Пароль...">
+        </div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveKitchenWorkerCreds()">💾 Сохранить данные сотрудника кухни</button>
     </div>
     <div style="margin-bottom:16px;padding:12px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px">
       <div style="font-size:12px;font-weight:700;color:#92400e;margin-bottom:6px">🤖 Anthropic API Key (ИИ для кухни)</div>
@@ -1118,7 +1147,19 @@ function saveKitchenCreds() {
   if (!p) { alert('Введите пароль'); return; }
   setLS('kitchen_username', u);
   setLS('kitchen_pwd', p);
+  if (_useFirebase) _scheduleSave();
   alert('Данные менеджера кухни сохранены');
+}
+
+function saveKitchenWorkerCreds() {
+  const u = (document.getElementById('kitchen-worker-user').value||'').trim();
+  const p = (document.getElementById('kitchen-worker-pwd').value||'').trim();
+  if (!u) { alert('Введите имя пользователя'); return; }
+  if (!p) { alert('Введите пароль'); return; }
+  setLS('kitchen_worker_username', u);
+  setLS('kitchen_worker_pwd', p);
+  if (_useFirebase) _scheduleSave();
+  alert('Данные сотрудника кухни сохранены');
 }
 
 function saveAnthropicKey() {
@@ -6705,7 +6746,65 @@ function _unitSel(val, onchange, style='') {
 
 function switchKitchenTab(t) { kitchenTab = t; render(); }
 
+function renderKitchenWorker() {
+  const today = new Date().toISOString().slice(0,10);
+  const suppliers = getKitchenSuppliers();
+  const todayDeliveries = getKitchenDeliveries()
+    .filter(d => (d.date||'').startsWith(today))
+    .sort((a,b) => b.id.localeCompare(a.id));
+  const stColor = {received:'#16a34a', pending:'#d97706', cancelled:'#dc2626'};
+  const stLabel = {received:'✅ Получено', pending:'⏳ Ожидается', cancelled:'❌ Отменено'};
+  const hasKey = !!getLS('anthropic_api_key');
+
+  const todayCards = todayDeliveries.length ? `
+    <div style="margin-top:20px">
+      <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:8px">📋 Сегодняшние приёмки</div>
+      ${todayDeliveries.map(d => {
+        const sup = suppliers.find(s=>s.id===d.supplier_id);
+        return `<div style="background:white;border-radius:10px;border:1px solid #e2e8f0;border-left:4px solid ${stColor[d.status]||'#94a3b8'};padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px">
+          ${d.truck_photo?.data ? `<img src="${d.truck_photo.data}" style="width:56px;height:42px;object-fit:cover;border-radius:6px;flex-shrink:0">` : '<div style="width:56px;height:42px;background:#f1f5f9;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">🚚</div>'}
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:13px">${sup?sup.name:'—'}</div>
+            <div style="font-size:11px;color:${stColor[d.status]||'#6b7280'};font-weight:600">${stLabel[d.status]||d.status} · ${(d.items||[]).length} позиций</div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>` : `<div style="margin-top:20px;text-align:center;color:#94a3b8;font-size:13px">Сегодня приёмок ещё не было</div>`;
+
+  return `
+    <div style="max-width:480px;margin:0 auto;padding:16px">
+      <div style="text-align:center;margin-bottom:20px">
+        <div style="font-size:36px;margin-bottom:6px">👨‍🍳</div>
+        <div style="font-size:18px;font-weight:700;color:#1e293b">Приём доставки</div>
+        <div style="font-size:12px;color:#6b7280;margin-top:3px">${new Date().toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long'})}</div>
+      </div>
+
+      ${hasKey ? `
+      <button onclick="openKitchenInvoiceModal()" style="width:100%;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:white;border:none;border-radius:14px;padding:20px;font-size:16px;font-weight:700;cursor:pointer;margin-bottom:12px;display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 4px 14px rgba(37,99,235,.35)">
+        <span style="font-size:24px">🤖</span>
+        <div style="text-align:left">
+          <div>Сканировать накладную (ИИ)</div>
+          <div style="font-size:12px;font-weight:400;opacity:.85">AI заполнит все данные автоматически</div>
+        </div>
+      </button>` : `
+      <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:12px 14px;margin-bottom:12px;font-size:12px;color:#92400e;text-align:center">
+        ⚠️ AI-сканирование недоступно. Попросите менеджера настроить API ключ.
+      </div>`}
+
+      <button onclick="openKitchenDeliveryModal()" style="width:100%;background:white;color:#374151;border:2px solid #e2e8f0;border-radius:14px;padding:18px;font-size:15px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px">
+        <span style="font-size:22px">📦</span>
+        <div style="text-align:left">
+          <div>Новая доставка вручную</div>
+          <div style="font-size:11px;font-weight:400;color:#6b7280">Заполнить данные самостоятельно</div>
+        </div>
+      </button>
+
+      ${todayCards}
+    </div>`;
+}
+
 function renderKitchen() {
+  if (currentUser === 'kitchen_worker') return renderKitchenWorker();
   const isOwner = currentUser === 'owner';
   const pendingWO = getKitchenWriteoffs().filter(w=>w.status==='pending').length;
   const tabs = [
