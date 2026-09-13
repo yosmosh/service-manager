@@ -449,6 +449,7 @@ img{max-width:100%;height:auto}
     <div class="nav-item owner-only" id="nav-custom-report" onclick="openCustomReportModal()" style="color:#0891b2;font-weight:600">📑 Выборочный отчёт</div>
     <div class="nav-item owner-only" id="nav-export" onclick="exportCSV()">📊 Экспорт данных (CSV)</div>
     <div class="nav-item owner-only" id="recompress-btn" onclick="recompressExistingImages()" style="color:#f59e0b">🗜️ דחוס תמונות קיימות</div>
+    <div class="nav-item owner-only" id="migrate-kitchen-btn" onclick="migrateKitchenPhotosToStorage()" style="color:#dc2626;font-weight:600">📦 Перенести фото кухни в хранилище</div>
   </div>
   <div>
     <div class="sidebar-section-title owner-only">Кухня</div>
@@ -1290,15 +1291,54 @@ function _showToast(msg, ok) {
   t._t = setTimeout(() => t.style.opacity = '0', ok ? 3000 : 8000);
 }
 
+// Sticky, non-auto-hiding banner for failures that must not be missed — unlike the
+// toast above, this stays on screen even after the user has moved to another tab/screen,
+// since a save failure discovered only via an 8-second toast is easy to miss entirely.
+function _showPersistentError(msg) {
+  let b = document.getElementById('_fb-error-banner');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = '_fb-error-banner';
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999999;background:#dc2626;color:white;padding:12px 20px;font-size:13px;font-weight:700;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap';
+    document.body.appendChild(b);
+  }
+  b.innerHTML = '<span>⚠️ ' + msg + '</span><button onclick="this.parentElement.remove()" style="background:rgba(255,255,255,.25);border:none;color:white;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:700;flex-shrink:0">✕ Закрыть</button>';
+}
+
 async function _flushState() {
-  if (!_firestoreDB) return;
+  if (!_firestoreDB) return true;
   _isOwnFlush = true;
   try {
-    await _firestoreDB.collection('appdata').doc('state').set(_state);
+    // Firestore caps a single document at ~1MB. This app used to keep the entire
+    // `files` registry (one entry per file ever uploaded, across every department)
+    // inside the same shared document as everything else — with 1000+ files
+    // accumulated over time, that registry alone became the dominant contributor
+    // and pushed the shared document over the cap, breaking saves for ALL departments.
+    // `files` is split into its own document here so it can keep growing indefinitely
+    // without ever capping the main document again — same principle as file BLOBS
+    // already living in Storage instead of inline; this just applies it one level up,
+    // to the registry of references itself.
+    const filesPart = _state.files;
+    const statePart = {..._state};
+    delete statePart.files;
+
+    const stateSize = JSON.stringify(statePart).length;
+    const filesSize = JSON.stringify(filesPart||{}).length;
+    if (stateSize > 900000 || filesSize > 900000) {
+      console.warn('[FLUSH] Size near Firestore 1MB document limit — state:', stateSize, 'files:', filesSize);
+      _showPersistentError('База данных почти заполнена (state: ' + Math.round(stateSize/1024) + ' КБ, files: ' + Math.round(filesSize/1024) + ' КБ из ~1024 КБ макс. каждый) — сохранения могут перестать работать! Сообщите администратору.');
+    }
+    await _firestoreDB.collection('appdata').doc('state').set(statePart);
+    if (filesPart !== undefined) {
+      await _firestoreDB.collection('appdata').doc('files_registry').set({files: filesPart});
+    }
     _showToast('✅ Сохранено', true);
+    return true;
   } catch(e) {
     _isOwnFlush = false;
-    _showToast('❌ Ошибка сохранения: ' + e.message, false);
+    console.error('[FLUSH] Save failed:', e);
+    _showPersistentError('ОШИБКА СОХРАНЕНИЯ: ' + e.message + ' — данные НЕ сохранены на сервере! Попробуйте ещё раз, иначе изменения будут потеряны.');
+    return false;
   }
 }
 async function _loadState() {
@@ -1307,6 +1347,18 @@ async function _loadState() {
     const doc = await _firestoreDB.collection('appdata').doc('state').get();
     if (doc.exists && Object.keys(doc.data()).length > 0) {
       _state = doc.data() || {};
+      try {
+        const filesDoc = await _firestoreDB.collection('appdata').doc('files_registry').get();
+        if (filesDoc.exists) {
+          _state.files = filesDoc.data().files || {};
+        } else if (_state.files && Object.keys(_state.files).length) {
+          // One-time migration: this account still has the old layout, where `files`
+          // was embedded inline in appdata/state. Split it out now so the shared
+          // document stops carrying it — the next flush writes it to its own document.
+          console.log('[MIGRATE] Splitting files registry out of appdata/state...');
+          await _flushState();
+        }
+      } catch(e) { console.error('Ошибка загрузки files_registry:', e); }
     } else {
       // первый запуск — мигрируем из localStorage
       const keys = ['admin_pwd','admin_username','owner_pwd','owner_username',
@@ -1324,7 +1376,11 @@ function _setupSync() {
   if (!_firestoreDB) return;
   _firestoreDB.collection('appdata').doc('state').onSnapshot(doc => {
     if (!doc.metadata.hasPendingWrites && doc.exists) {
+      // `files` lives in its own document (appdata/files_registry) and isn't part of
+      // this snapshot — carry the already-loaded copy forward instead of dropping it.
+      const filesBackup = _state.files;
       _state = doc.data() || {};
+      _state.files = filesBackup;
       if (_isOwnFlush) { _isOwnFlush = false; return; }
       if (document.querySelector('.modal-overlay')) return;
       if (currentUser) render();
@@ -1580,6 +1636,83 @@ async function recompressExistingImages() {
   await _flushState();
   if (btn) { btn.disabled = false; btn.textContent = '🗜️ דחוס תמונות קיימות'; }
   _showToast(`✅ הסתיים! חסכנו ${fmtSize(savedBytes)} מ-${imgs.length} תמונות`, true);
+}
+
+// Resolve a kitchen photo/file field to a displayable URL, whether it's an OLD inline
+// record ({data,...}, embedded directly in the shared state document) or a NEW uploaded
+// reference ({id,...}, pointing at Storage via the small shared `files` map). Old records
+// are left as-is on disk — this only affects how they're displayed — so nothing breaks
+// for data saved before migrateKitchenPhotosToStorage() below existed.
+function _kFileUrl(ref) {
+  if (!ref) return '';
+  if (ref.data) return ref.data;
+  if (ref.id) { const f = (getLS('files')||{})[ref.id]; return f ? f.url : ''; }
+  return '';
+}
+
+async function migrateKitchenPhotosToStorage() {
+  if (!_useFirebase) { _showToast('Работает только с Firebase', false); return; }
+  if (!confirm('Перенести фото кухни (доставки, счета, списания, склад) в отдельное хранилище?\n\nЭто освободит место в общей базе данных, из-за которого сохранения могли не проходить ни в одном разделе.\n\nСтарые фото продолжат отображаться как прежде — переносятся только их данные.')) return;
+
+  const btn = document.getElementById('migrate-kitchen-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Переносим...'; }
+
+  let uploaded = 0, freedBytes = 0;
+
+  async function migrateRef(ref, label) {
+    if (!ref || !ref.data) return ref;
+    try {
+      const sizeBefore = ref.data.length;
+      const id = await dbSave({
+        name: ref.name || label,
+        type: ref.type || 'image/jpeg',
+        size: ref.size || Math.round(sizeBefore * 0.75),
+        data: ref.data
+      });
+      uploaded++;
+      freedBytes += sizeBefore;
+      _showToast(`⏳ Перенесено файлов: ${uploaded}`, true);
+      return { id, name: ref.name || label, type: ref.type || 'image/jpeg', ts: ref.ts };
+    } catch (e) {
+      console.error('[MIGRATE] Failed for', label, e);
+      return ref; // leave as-is on failure — better than losing the photo
+    }
+  }
+
+  try {
+    const deliveries = getKitchenDeliveries();
+    for (const d of deliveries) {
+      if (d.truck_photo) d.truck_photo = await migrateRef(d.truck_photo, 'truck.jpg');
+      if (d.items) for (const it of d.items) { if (it.photo) it.photo = await migrateRef(it.photo, 'item.jpg'); }
+    }
+    setLS('kitchen_deliveries', deliveries);
+
+    const invoices = getKitchenInvoices();
+    for (const inv of invoices) { if (inv.file) inv.file = await migrateRef(inv.file, 'invoice'); }
+    setLS('kitchen_invoices', invoices);
+
+    const writeoffs = getKitchenWriteoffs();
+    for (const w of writeoffs) { if (w.photo) w.photo = await migrateRef(w.photo, 'writeoff.jpg'); }
+    setLS('kitchen_writeoffs', writeoffs);
+
+    const inv2 = getKitchenInventory();
+    for (const it of inv2) { if (it.photo) it.photo = await migrateRef(it.photo, 'product.jpg'); }
+    setLS('kitchen_inventory', inv2);
+
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (ok) {
+      _showToast(`✅ Перенесено ${uploaded} фото, освобождено ~${fmtSize(freedBytes)}`, true);
+    } else {
+      _showToast('⚠️ Файлы перенесены, но итог не сохранился — нажмите кнопку ещё раз', false);
+    }
+  } catch (e) {
+    console.error('[MIGRATE] error:', e);
+    alert('Ошибка переноса: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📦 Перенести фото кухни в хранилище'; }
+    render();
+  }
 }
 
 // ==============================
@@ -2161,10 +2294,23 @@ function setupDrop(zoneId) {
 // ==============================
 // ДЕДУПЛИКАЦИЯ ФАЙЛОВ
 // ==============================
+function _hash32(str, seed) {
+  let h = seed >>> 0;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 0x01000193) >>> 0;
+  return h;
+}
 function _fileFP(data, size) {
-  // Fingerprint = size + first 240 chars + last 60 chars of base64 payload
+  // Fingerprint = size + base64 length + hash of the FULL base64 payload.
+  // Previously this only hashed the first 240 + last 60 chars — but images are all
+  // re-encoded by _compressImage at the same fixed JPEG quality, so that window falls
+  // entirely inside the constant JFIF/quantization/Huffman header, which is IDENTICAL
+  // for every photo regardless of content. That made unrelated photos collide and get
+  // flagged as duplicates. Hashing the full payload ties the fingerprint to the actual
+  // image data instead of just the shared header.
   const b64 = (data && data.includes(',')) ? data.split(',')[1] : (data || '');
-  return size + ':' + b64.slice(0, 240) + ':' + b64.slice(-60);
+  const h1 = _hash32(b64, 0x811c9dc5);
+  const h2 = _hash32(b64, 0x9e3779b9);
+  return size + ':' + b64.length + ':' + h1.toString(36) + h2.toString(36);
 }
 
 function _compressImage(file) {
@@ -5937,10 +6083,11 @@ async function renderSharePageCustomReport(d) {
     try {
       const stateDoc = await _firestoreDB.collection('appdata').doc('state').get({ source: 'server' });
       const st = stateDoc.exists ? stateDoc.data() : {};
+      const filesRegDoc = await _firestoreDB.collection('appdata').doc('files_registry').get({ source: 'server' });
       const allWorks = st.maint_works || [];
       const allSOS   = st.sos_items   || [];
       const allRecs  = st.svc_records  || {};
-      const allFiles = st.files        || {};
+      const allFiles = (filesRegDoc.exists && filesRegDoc.data().files) || st.files || {};
       const CATS = {'territory':'🌿 Благоустройство','buildings':'🏛️ Корпуса','pool':'🏊 Бассейн','electrical':'⚡ Электрика','plumbing':'🔧 Сантехника','other':'🔩 Прочее'};
       works = [];
       d.workIds.forEach(prefixedId => {
@@ -6768,7 +6915,7 @@ function renderKitchenWorker() {
       ${todayDeliveries.map(d => {
         const sup = suppliers.find(s=>s.id===d.supplier_id);
         return `<div style="background:white;border-radius:10px;border:1px solid #e2e8f0;border-left:4px solid ${stColor[d.status]||'#94a3b8'};padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px">
-          ${d.truck_photo?.data ? `<img src="${d.truck_photo.data}" style="width:56px;height:42px;object-fit:cover;border-radius:6px;flex-shrink:0">` : '<div style="width:56px;height:42px;background:#f1f5f9;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">🚚</div>'}
+          ${_kFileUrl(d.truck_photo) ? `<img src="${_kFileUrl(d.truck_photo)}" style="width:56px;height:42px;object-fit:cover;border-radius:6px;flex-shrink:0">` : '<div style="width:56px;height:42px;background:#f1f5f9;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">🚚</div>'}
           <div style="flex:1;min-width:0">
             <div style="font-weight:600;font-size:13px">${sup?sup.name:'—'}</div>
             <div style="font-size:11px;color:${stColor[d.status]||'#6b7280'};font-weight:600">${stLabel[d.status]||d.status} · ${(d.items||[]).length} позиций</div>
@@ -6961,7 +7108,8 @@ function renderKitchenDeliveries() {
   const cards = deliveries.map(d => {
     const sup = suppliers.find(s=>s.id===d.supplier_id);
     const total = (d.items||[]).reduce((acc,it)=>acc+(Number(it.qty||0)*Number(it.price||0)),0);
-    const hasPhoto = d.truck_photo && d.truck_photo.data;
+    const truckPhotoUrl = _kFileUrl(d.truck_photo);
+    const hasPhoto = !!truckPhotoUrl;
     const itemsTable = (d.items||[]).length ? `
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9">
         <table style="width:100%;font-size:12px;border-collapse:collapse">
@@ -6972,7 +7120,7 @@ function renderKitchenDeliveries() {
     return `<div class="kitch-card" style="border-left:4px solid ${stColor[d.status]||'#94a3b8'}">
       <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
         ${hasPhoto
-          ? `<img src="${d.truck_photo.data}" style="width:80px;height:60px;object-fit:cover;border-radius:8px;flex-shrink:0;cursor:pointer" onclick="window.open('${d.truck_photo.data}','_blank')">`
+          ? `<img src="${truckPhotoUrl}" style="width:80px;height:60px;object-fit:cover;border-radius:8px;flex-shrink:0;cursor:pointer" onclick="window.open('${truckPhotoUrl}','_blank')">`
           : `<div style="width:80px;height:60px;background:#f1f5f9;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">🚚</div>`}
         <div style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
@@ -7020,8 +7168,8 @@ function openKitchenDeliveryModal(id) {
       <div style="font-size:11px;color:#6b7280;margin-bottom:6px">Фото должно быть сделано не более 1 часа назад</div>
       <input type="file" id="kd-truck-photo" accept="image/*" capture="environment" style="display:none" onchange="onTruckPhotoSelect(this)">
       <button type="button" class="btn btn-outline" style="width:100%;justify-content:center" onclick="document.getElementById('kd-truck-photo').click()">📷 Сфотографировать грузовик</button>
-      <div id="truck-photo-preview">${_kitchenTruckPhoto
-        ? `<div style="margin-top:8px"><img src="${_kitchenTruckPhoto.data}" style="max-height:120px;border-radius:8px;border:1px solid #e2e8f0"><div style="font-size:11px;color:#16a34a;margin-top:4px">✅ Фото загружено</div></div>`
+      <div id="truck-photo-preview">${_kFileUrl(_kitchenTruckPhoto)
+        ? `<div style="margin-top:8px"><img src="${_kFileUrl(_kitchenTruckPhoto)}" style="max-height:120px;border-radius:8px;border:1px solid #e2e8f0"><div style="font-size:11px;color:#16a34a;margin-top:4px">✅ Фото загружено</div></div>`
         : ''}</div>
     </div>
     <div class="form-group">
@@ -7062,7 +7210,7 @@ function onDeliveryItemPhotoSelect(input, i) {
   const file = input.files && input.files[0];
   if (!file) return;
   _compressImage(file).then(res => {
-    _kitchenDeliveryItems[i].photo = {data:res.data, name:file.name};
+    _kitchenDeliveryItems[i].photo = {data:res.data, name:file.name, type:res.type, size:res.size};
     _renderKitchenDeliveryItems();
   });
 }
@@ -7088,7 +7236,7 @@ function onTruckPhotoSelect(input) {
     return;
   }
   _compressImage(file).then(function(res) {
-    _kitchenTruckPhoto = {data:res.data, ts:file.lastModified, name:file.name};
+    _kitchenTruckPhoto = {data:res.data, ts:file.lastModified, name:file.name, type:res.type, size:res.size};
     const t = new Date(file.lastModified).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
     document.getElementById('truck-photo-preview').innerHTML = `
       <div style="margin-top:8px">
@@ -7098,19 +7246,38 @@ function onTruckPhotoSelect(input) {
   });
 }
 
-function saveKitchenDelivery() {
+async function saveKitchenDelivery() {
   const date = document.getElementById('kd-date').value;
   if (!date) { alert('Укажите дату'); return; }
   if (!_kitchenTruckPhoto) { alert('📸 Необходимо сфотографировать грузовик доставки!\n\nФото обязательно для сохранения доставки.'); return; }
   const status = document.getElementById('kd-status').value;
   const items = _kitchenDeliveryItems.filter(it=>(it.name||'').trim());
+
+  // Upload photos to Storage instead of embedding them inline — the shared state
+  // document has a 1MB cap shared by every department, and kitchen photos embedded
+  // inline were what broke saves app-wide. Already-migrated refs ({id,...}, no .data)
+  // pass through untouched.
+  let truckPhotoRef = _kitchenTruckPhoto;
+  if (_useFirebase && _kitchenTruckPhoto && _kitchenTruckPhoto.data) {
+    const tid = await dbSave({name:_kitchenTruckPhoto.name||'truck.jpg', type:_kitchenTruckPhoto.type||'image/jpeg', size:_kitchenTruckPhoto.size||Math.round(_kitchenTruckPhoto.data.length*0.75), data:_kitchenTruckPhoto.data});
+    truckPhotoRef = {id:tid, name:_kitchenTruckPhoto.name||'truck.jpg', type:_kitchenTruckPhoto.type||'image/jpeg', ts:_kitchenTruckPhoto.ts};
+  }
+  if (_useFirebase) {
+    for (const it of items) {
+      if (it.photo && it.photo.data) {
+        const iid = await dbSave({name:it.photo.name||'item.jpg', type:it.photo.type||'image/jpeg', size:it.photo.size||Math.round(it.photo.data.length*0.75), data:it.photo.data});
+        it.photo = {id:iid, name:it.photo.name||'item.jpg', type:it.photo.type||'image/jpeg'};
+      }
+    }
+  }
+
   const delivery = {
     id: _editingKitchenDelivery || Date.now().toString(36),
     date,
     status,
     supplier_id: document.getElementById('kd-sup').value,
     items,
-    truck_photo: _kitchenTruckPhoto || null,
+    truck_photo: truckPhotoRef || null,
     notes: (document.getElementById('kd-notes').value||'').trim(),
     invoice_id: window._deliveryInvoiceLink || null,
   };
@@ -7121,6 +7288,12 @@ function saveKitchenDelivery() {
   else list.push(delivery);
   setLS('kitchen_deliveries', list);
   if (status==='received' && prevStatus !== 'received') _applyDeliveryToInventory(items);
+  if (_useFirebase) {
+    _showToast('💾 Сохраняем...', true);
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) return; // keep modal open so the user can retry without re-entering data
+  }
   closeModal(); _showToast('✅ Доставка сохранена', true); render();
 }
 
@@ -7169,7 +7342,7 @@ function _invTable(inv, canEdit, readonly) {
       : '<span style="color:#94a3b8">—</span>';
     return `<tr>
       <td>
-        ${it.photo?`<img src="${it.photo.data}" onclick="window.open('${it.photo.data}','_blank')"
+        ${_kFileUrl(it.photo)?`<img src="${_kFileUrl(it.photo)}" onclick="window.open('${_kFileUrl(it.photo)}','_blank')"
           style="width:32px;height:32px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-right:6px;cursor:pointer;border:1px solid #e2e8f0">`:'' }
         <span style="font-weight:600">${it.name}</span>
       </td>
@@ -7320,7 +7493,7 @@ function renderKitchenInvoices() {
           </div>
           ${(inv.items||[]).length?`<div style="font-size:12px;color:#6b7280">${inv.items.length} позиций</div>`:''}
           ${inv.notes?`<div style="font-size:12px;color:#374151;margin-top:3px">${inv.notes}</div>`:''}
-          ${inv.file?`<div style="margin-top:6px"><a href="${inv.file.data}" download="${inv.file.name}" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${inv.file.name} (${fmtSize(inv.file.size||0)})</a></div>`:''}
+          ${inv.file?`<div style="margin-top:6px"><a href="${_kFileUrl(inv.file)}" target="_blank" download="${inv.file.name}" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${inv.file.name} (${fmtSize(inv.file.size||0)})</a></div>`:''}
         </div>
         ${canEdit?`<div style="display:flex;gap:6px;flex-shrink:0">
           <button class="btn btn-outline" style="padding:5px 10px;font-size:12px" onclick="openKitchenInvoiceModal('${inv.id}')">✏️</button>
@@ -7470,13 +7643,21 @@ function onKitchenInvoiceFileSelect(input) {
   });
 }
 
-function saveKitchenInvoice() {
+async function saveKitchenInvoice() {
   const date = document.getElementById('kinv-date').value;
   if (!date) { alert('Укажите дату'); return; }
   const total = document.getElementById('kinv-total').value;
   if (!total) { alert('Укажите сумму'); return; }
   const items = _kitchenInvoiceItems.filter(it=>(it.name||'').trim());
   const isNew = !_editingKitchenInvoice;
+
+  // Upload to Storage instead of embedding inline — see saveKitchenDelivery for why.
+  let fileRef = _kitchenInvoiceFile;
+  if (_useFirebase && _kitchenInvoiceFile && _kitchenInvoiceFile.data) {
+    const fid = await dbSave({name:_kitchenInvoiceFile.name||'invoice', type:_kitchenInvoiceFile.type||'image/jpeg', size:_kitchenInvoiceFile.size||Math.round(_kitchenInvoiceFile.data.length*0.75), data:_kitchenInvoiceFile.data});
+    fileRef = {id:fid, name:_kitchenInvoiceFile.name||'invoice', type:_kitchenInvoiceFile.type||'image/jpeg', size:_kitchenInvoiceFile.size};
+  }
+
   const record = {
     id: _editingKitchenInvoice || Date.now().toString(36),
     date,
@@ -7484,14 +7665,19 @@ function saveKitchenInvoice() {
     invoice_num: document.getElementById('kinv-num').value.trim(),
     total: Number(total),
     items,
-    file: _kitchenInvoiceFile,
+    file: fileRef,
     notes: (document.getElementById('kinv-notes').value||'').trim(),
   };
   const list = getKitchenInvoices();
   if (_editingKitchenInvoice) { const idx=list.findIndex(i=>i.id===_editingKitchenInvoice); if(idx>=0)list[idx]=record;else list.push(record); }
   else list.push(record);
   setLS('kitchen_invoices', list);
-  if (_useFirebase) _scheduleSave();
+  if (_useFirebase) {
+    _showToast('💾 Сохраняем...', true);
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) return; // keep modal open so the user can retry without re-entering data
+  }
   closeModal(); _showToast('✅ Счёт сохранён', true); render();
   // Offer to create a linked delivery (only for new invoices with items)
   if (isNew && items.length) {
@@ -7608,7 +7794,7 @@ function renderKitchenExpense() {
           </div>`).join('')}
           ${w.notes?`<div style="font-size:12px;color:#6b7280;margin-top:4px">${w.notes}</div>`:''}
         </div>
-        ${w.photo?`<img src="${w.photo.data}" onclick="window.open('${w.photo.data}','_blank')"
+        ${_kFileUrl(w.photo)?`<img src="${_kFileUrl(w.photo)}" onclick="window.open('${_kFileUrl(w.photo)}','_blank')"
           style="width:60px;height:60px;object-fit:cover;border-radius:8px;cursor:pointer;flex-shrink:0">`:
           `<div style="width:60px;height:60px;background:#f8fafc;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px">📷</div>`}
       </div>
@@ -7758,24 +7944,32 @@ function onWriteoffPhotoSelect(input) {
   const file = input.files && input.files[0];
   if (!file) return;
   _compressImage(file).then(res => {
-    _kitchenWriteoffPhoto = {data:res.data, name:file.name};
+    _kitchenWriteoffPhoto = {data:res.data, name:file.name, type:res.type, size:res.size};
     document.getElementById('wo-photo-preview').innerHTML =
       `<div style="margin-top:8px"><img src="${res.data}" style="max-height:120px;border-radius:8px;border:1px solid #e2e8f0">
        <div style="font-size:11px;color:#16a34a;margin-top:4px">✅ Фото загружено</div></div>`;
   });
 }
 
-function saveWriteoffRequest() {
+async function saveWriteoffRequest() {
   if (!_kitchenWriteoffPhoto) { alert('📸 Загрузите фото доказательство'); return; }
   const items = _kitchenWriteoffItems.filter(it=>it.name&&Number(it.qty||0)>0);
   if (!items.length) { alert('Укажите хотя бы одну позицию с количеством'); return; }
   const notes = (document.getElementById('wo-notes').value||'').trim();
+
+  // Upload to Storage instead of embedding inline — see saveKitchenDelivery for why.
+  let photoRef = _kitchenWriteoffPhoto;
+  if (_useFirebase && _kitchenWriteoffPhoto && _kitchenWriteoffPhoto.data) {
+    const pid = await dbSave({name:_kitchenWriteoffPhoto.name||'writeoff.jpg', type:_kitchenWriteoffPhoto.type||'image/jpeg', size:_kitchenWriteoffPhoto.size||Math.round(_kitchenWriteoffPhoto.data.length*0.75), data:_kitchenWriteoffPhoto.data});
+    photoRef = {id:pid, name:_kitchenWriteoffPhoto.name||'writeoff.jpg', type:_kitchenWriteoffPhoto.type||'image/jpeg'};
+  }
+
   const record = {
     id: Date.now().toString(36),
     date: document.getElementById('wo-date').value,
     reason: document.getElementById('wo-reason').value,
     items,
-    photo: _kitchenWriteoffPhoto,
+    photo: photoRef,
     notes,
     status: 'pending',
     createdBy: currentUser,
@@ -7784,7 +7978,12 @@ function saveWriteoffRequest() {
   const list = getKitchenWriteoffs();
   list.push(record);
   setLS('kitchen_writeoffs', list);
-  if (_useFirebase) _scheduleSave();
+  if (_useFirebase) {
+    _showToast('💾 Сохраняем...', true);
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) return; // keep modal open so the user can retry without re-entering data
+  }
   closeModal(); _showToast('📤 Запрос отправлен владельцу', true); render();
 }
 
