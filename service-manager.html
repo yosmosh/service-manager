@@ -1258,6 +1258,14 @@ console.log('[FB] useFirebase=', _useFirebase, 'db=', !!_firestoreDB, 'storage='
 // ХРАНИЛИЩЕ (Firebase или localStorage)
 // ==============================
 let _state = {};
+// Resolves once _state.files has been loaded from appdata/files_registry (see
+// _loadState below). Thumbnail loaders await this instead of guessing at a fixed
+// delay, since the registry now lives in its own document and needs its own
+// round-trip — a fixed timeout sized for the old single-fetch load was starting
+// to run out before that second fetch finished, showing blank thumbnails that
+// were never actually missing, just not resolved yet.
+let _filesReadyResolve;
+const _filesReadyPromise = new Promise(res => { _filesReadyResolve = res; });
 
 const getLS = k => {
   if (_useFirebase) return _state[k] !== undefined ? _state[k] : null;
@@ -1342,7 +1350,7 @@ async function _flushState() {
   }
 }
 async function _loadState() {
-  if (!_firestoreDB) return;
+  if (!_firestoreDB) { _filesReadyResolve(); return; }
   try {
     const doc = await _firestoreDB.collection('appdata').doc('state').get();
     if (doc.exists && Object.keys(doc.data()).length > 0) {
@@ -1357,8 +1365,10 @@ async function _loadState() {
           // document stops carrying it — the next flush writes it to its own document.
           console.log('[MIGRATE] Splitting files registry out of appdata/state...');
           await _flushState();
+        } else {
+          _state.files = _state.files || {};
         }
-      } catch(e) { console.error('Ошибка загрузки files_registry:', e); }
+      } catch(e) { console.error('Ошибка загрузки files_registry:', e); _state.files = _state.files || {}; }
     } else {
       // первый запуск — мигрируем из localStorage
       const keys = ['admin_pwd','admin_username','owner_pwd','owner_username',
@@ -1371,6 +1381,7 @@ async function _loadState() {
       await _flushState();
     }
   } catch(e) { console.error('Ошибка загрузки:', e); }
+  finally { _filesReadyResolve(); }
 }
 function _setupSync() {
   if (!_firestoreDB) return;
@@ -4570,6 +4581,7 @@ async function deleteJournalVisit(pid, yr, mo, vi) {
 async function loadJournalImages() { await _loadImages('img.jthumb[data-fid]'); }
 
 async function _loadImages(selector) {
+  if (_useFirebase) { await Promise.race([_filesReadyPromise, new Promise(res => setTimeout(res, 4000))]); }
   const trySet = () => {
     const fc = _useFirebase ? (getLS('files') || {}) : {};
     document.querySelectorAll(selector + ':not([src])').forEach(img => {
