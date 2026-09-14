@@ -7539,7 +7539,7 @@ function openKitchenInvoiceModal(id) {
       <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="kinv-date" value="${inv.date||today}"></div>
       <div class="form-group"><label>№ счёта</label><input class="form-control" id="kinv-num" value="${(inv.invoice_num||'').replace(/"/g,'&quot;')}"></div>
     </div>
-    <div class="form-group"><label>Поставщик</label><select class="form-control" id="kinv-sup"><option value="">—</option>${supOpts}</select></div>
+    <div class="form-group"><label>Поставщик *</label><select class="form-control" id="kinv-sup"><option value="">—</option>${supOpts}</select></div>
     <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="kinv-total" value="${inv.total||''}" min="0" step="0.01"></div>
     <div class="form-group">
       <label>📎 Файл счёта (фото/PDF)</label>
@@ -7660,6 +7660,15 @@ async function saveKitchenInvoice() {
   if (!date) { alert('Укажите дату'); return; }
   const total = document.getElementById('kinv-total').value;
   if (!total) { alert('Укажите сумму'); return; }
+  const supEl = document.getElementById('kinv-sup');
+  const supplierId = supEl.value;
+  if (!supplierId) {
+    supEl.style.borderColor = '#dc2626';
+    alert('⚠️ Укажите поставщика — без него счёт нельзя сохранить (иначе расходы попадают в "Неизвестно" и отчёты искажаются)');
+    supEl.focus();
+    return;
+  }
+  supEl.style.borderColor = '';
   const items = _kitchenInvoiceItems.filter(it=>(it.name||'').trim());
   const isNew = !_editingKitchenInvoice;
 
@@ -7673,7 +7682,7 @@ async function saveKitchenInvoice() {
   const record = {
     id: _editingKitchenInvoice || Date.now().toString(36),
     date,
-    supplier_id: document.getElementById('kinv-sup').value,
+    supplier_id: supplierId,
     invoice_num: document.getElementById('kinv-num').value.trim(),
     total: Number(total),
     items,
