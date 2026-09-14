@@ -7613,7 +7613,7 @@ async function scanInvoiceWithAI() {
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 1024,
           messages: [{role:'user', content:[
-            {type:'image', source:{type:'base64', media_type:file.type||'image/jpeg', data:base64}},
+            {type:'image', source:{type:'base64', media_type:compressed.type||'image/jpeg', data:base64}},
             {type:'text', text:'Это счёт/накладная от поставщика. Извлеки данные и верни ТОЛЬКО JSON без комментариев:\n{"supplier_name":"...","date":"YYYY-MM-DD","invoice_num":"...","total":0,"items":[{"name":"...","qty":0,"unit":"кг","price":0}]}\nЕсли поле не найдено — оставь пустым или 0. Единицы: кг/г/л/мл/шт/уп/кор/бут/пак. Валюта — ₪ (шекели).'}
           ]}]
         })
