@@ -2373,6 +2373,54 @@ function _compressImage(file) {
   });
 }
 
+// Higher-fidelity resize than _compressImage (which targets small storage size) — small
+// receipt/invoice text and digits need more resolution and less JPEG compression to be
+// read reliably by the AI scanner. Used only for the API request payload, never stored.
+function _compressForAI(file) {
+  return new Promise(function(resolve) {
+    const isHeic = file.type === 'image/heic' || file.type === 'image/heif' ||
+                   /\.(heic|heif)$/i.test(file.name || '');
+    if (isHeic && typeof heic2any !== 'undefined') {
+      heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 })
+        .then(function(blob) {
+          const jpgFile = new File([blob], (file.name || 'photo').replace(/\.(heic|heif)$/i, '.jpg'), { type: 'image/jpeg' });
+          _compressForAI(jpgFile).then(resolve);
+        })
+        .catch(function() {
+          var fr = new FileReader();
+          fr.onload = function(e) { resolve({data: e.target.result, type: 'image/jpeg'}); };
+          fr.readAsDataURL(file);
+        });
+      return;
+    }
+    if (!file.type.startsWith('image/') || file.type === 'image/gif') {
+      var fr = new FileReader();
+      fr.onload = function(e) { resolve({data: e.target.result, type: file.type}); };
+      fr.readAsDataURL(file);
+      return;
+    }
+    var fr = new FileReader();
+    fr.onload = function(e) {
+      var img = new Image();
+      img.onload = function() {
+        var MAX = 1568; // Anthropic resizes above this anyway — no benefit sending more
+        var w = img.width, h = img.height;
+        if (w > MAX || h > MAX) {
+          if (w >= h) { h = Math.round(h * MAX / w); w = MAX; }
+          else { w = Math.round(w * MAX / h); h = MAX; }
+        }
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve({data: canvas.toDataURL('image/jpeg', 0.92), type: 'image/jpeg'});
+      };
+      img.onerror = function() { resolve({data: e.target.result, type: file.type}); };
+      img.src = e.target.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
 function _isDupFile(data, size) {
   const fp = _fileFP(data, size);
   // Check current pending lists
@@ -7605,16 +7653,20 @@ async function scanInvoiceWithAI() {
       const compressed = await _compressImage(file);
       _kitchenInvoiceFile = {data:compressed.data, name:file.name, type:compressed.type, size:compressed.size};
       document.getElementById('kinv-file-preview').innerHTML = `<div style="margin-top:6px;font-size:12px;color:#2563eb">📎 ${file.name}</div>`;
-      const base64 = compressed.data.split(',')[1];
+      // Separate, higher-fidelity copy for the AI request — _compressImage is tuned for
+      // small storage size, which was likely blurring small receipt text/digits.
+      const forAI = await _compressForAI(file);
+      const base64 = forAI.data.split(',')[1];
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {'x-api-key':apiKey,'anthropic-version':'2023-06-01','content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
         body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 1024,
+          model: 'claude-sonnet-5',
+          max_tokens: 4096,
+          temperature: 0,
           messages: [{role:'user', content:[
-            {type:'image', source:{type:'base64', media_type:compressed.type||'image/jpeg', data:base64}},
-            {type:'text', text:'Это счёт/накладная от поставщика. Извлеки данные и верни ТОЛЬКО JSON без комментариев:\n{"supplier_name":"...","date":"YYYY-MM-DD","invoice_num":"...","total":0,"items":[{"name":"...","qty":0,"unit":"кг","price":0}]}\nЕсли поле не найдено — оставь пустым или 0. Единицы: кг/г/л/мл/шт/уп/кор/бут/пак. Валюта — ₽ (рубли).'}
+            {type:'image', source:{type:'base64', media_type:forAI.type||'image/jpeg', data:base64}},
+            {type:'text', text:'Это фото счёта/накладной от поставщика. Внимательно прочитай КАЖДУЮ строку документа, включая мелкий текст и колонки с цифрами — не пропускай ни одной позиции, даже если текст неразборчив (в этом случае дай наиболее вероятное значение, не выдумывай). Особое внимание удели точности цифр (количество, цена, сумма) — перепроверь каждую цифру перед тем, как записать её в ответ, особенно похожие друг на друга (0/6/8, 1/7, 3/8, 5/6). Перед выводом мысленно проверь: сумма (количество × цена) по всем позициям должна примерно совпадать с итоговой суммой счёта; если не совпадает — перепроверь распознанные цифры ещё раз.\n\nВерни ТОЛЬКО JSON без комментариев, в точности в этом формате:\n{"supplier_name":"...","date":"YYYY-MM-DD","invoice_num":"...","total":0,"items":[{"name":"...","qty":0,"unit":"кг","price":0}]}\n\nПравила:\n- Название товара — точно как написано в документе, без сокращений и без "улучшений" от себя.\n- Если поле в принципе не найдено в документе — оставь пустым ("") или 0, но саму позицию всё равно включи.\n- Включи ВСЕ строки товаров из документа, ничего не пропускай.\n- Единицы измерения: кг/г/л/мл/шт/уп/кор/бут/пак — выбери наиболее подходящую по контексту.\n- Валюта — ₽ (рубли).'}
           ]}]
         })
       });
