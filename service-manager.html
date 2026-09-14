@@ -430,6 +430,7 @@ img{max-width:100%;height:auto}
     <div class="nav-item" id="nav-sos" onclick="showView('sos')">🚨 Экстренное ТО (SOS)</div>
     <div class="nav-item admin-or-owner" id="nav-maint" onclick="showView('maint')">🏗️ Обслуживание территории</div>
     <div class="nav-item" id="nav-finance" onclick="showView('finance')">💰 Финансовая сводка</div>
+    <div class="nav-item admin-or-owner" id="nav-budget" onclick="showView('budget')">🏦 Бюджет</div>
     <div class="nav-item admin-or-owner" id="nav-requests" onclick="showView('requests')" style="justify-content:space-between">
       <span>🔔 Заявки на закупку</span>
       <span id="req-badge" style="display:none;background:#ef4444;color:white;border-radius:10px;font-size:10px;font-weight:700;padding:2px 8px;min-width:20px;text-align:center;flex-shrink:0"></span>
@@ -779,6 +780,10 @@ function getKitchenUser()       { return getLS('kitchen_username')        || 'ki
 function getKitchenPwd()        { return getLS('kitchen_pwd')             || 'kitchen123'; }
 function getKitchenWorkerUser() { return getLS('kitchen_worker_username') || 'worker'; }
 function getKitchenWorkerPwd()  { return getLS('kitchen_worker_pwd')      || 'worker123'; }
+function getAlexanderUser()     { return getLS('alexander_username')      || 'alexander'; }
+function getAlexanderPwd()      { return getLS('alexander_pwd')           || 'alex123'; }
+function getAccountantUser()    { return getLS('accountant_username')     || 'accountant'; }
+function getAccountantPwd()     { return getLS('accountant_pwd')          || 'buh123'; }
 
 function doLogin() {
   const username = (document.getElementById('login-username').value || '').trim().toLowerCase();
@@ -819,6 +824,24 @@ function doLogin() {
     document.getElementById('login-screen').style.display = 'none';
     applyUserLayout();
     showView('kitchen');
+    return;
+  }
+
+  // Check Alexander (finance co-approver: kitchen + maintenance ledgers)
+  if (username === getAlexanderUser().toLowerCase() && pwd === getAlexanderPwd()) {
+    currentUser = 'alexander';
+    document.getElementById('login-screen').style.display = 'none';
+    applyUserLayout();
+    showView('finance');
+    return;
+  }
+
+  // Check accountant (marks approved transactions as paid, across all ledgers)
+  if (username === getAccountantUser().toLowerCase() && pwd === getAccountantPwd()) {
+    currentUser = 'accountant';
+    document.getElementById('login-screen').style.display = 'none';
+    applyUserLayout();
+    showView('finance');
     return;
   }
 
@@ -882,6 +905,12 @@ function applyUserLayout() {
   } else if (currentUser === 'kitchen_worker') {
     sidebar.style.display = 'none';
     document.getElementById('user-label').textContent = '👨‍🍳 Сотрудник кухни';
+  } else if (currentUser === 'alexander') {
+    sidebar.style.display = 'none';
+    document.getElementById('user-label').textContent = '✅ Александр';
+  } else if (currentUser === 'accountant') {
+    sidebar.style.display = 'none';
+    document.getElementById('user-label').textContent = '🧾 Бухгалтер';
   } else {
     sidebar.style.display = 'none';
     if (provReqBtn) provReqBtn.style.display = '';
@@ -997,6 +1026,36 @@ function openSettingsModal() {
       <div style="font-size:11px;color:#78350f;margin-bottom:8px">Используется для сканирования счётов. Ключ хранится только в этом устройстве.</div>
       <input type="password" class="form-control" id="anthropic-key-input" value="${getLS('anthropic_api_key')||''}" placeholder="sk-ant-...">
       <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:8px" onclick="saveAnthropicKey()">💾 Сохранить ключ</button>
+    </div>
+    <div style="margin-bottom:16px;padding:12px 14px;background:#eff6ff;border:1px solid #93c5fd;border-radius:10px">
+      <div style="font-size:12px;font-weight:700;color:#1e40af;margin-bottom:4px">✅ Учётная запись Александра (согласование)</div>
+      <div style="font-size:11px;color:#1e40af;margin-bottom:8px">Согласовывает расходы в Финансах: Кухня и ТО/зарплаты</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
+          <input type="text" class="form-control" id="alexander-cred-user" value="${getAlexanderUser()}" placeholder="alexander">
+        </div>
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
+          <input type="text" class="form-control" id="alexander-cred-pwd" value="${getAlexanderPwd()}" placeholder="Пароль...">
+        </div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveAlexanderCreds()">💾 Сохранить данные Александра</button>
+    </div>
+    <div style="margin-bottom:16px;padding:12px 14px;background:#faf5ff;border:1px solid #d8b4fe;border-radius:10px">
+      <div style="font-size:12px;font-weight:700;color:#6b21a8;margin-bottom:4px">🧾 Учётная запись бухгалтера</div>
+      <div style="font-size:11px;color:#6b21a8;margin-bottom:8px">Подтверждает оплату по всем трём разделам Финансов после согласования</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
+          <input type="text" class="form-control" id="accountant-cred-user" value="${getAccountantUser()}" placeholder="accountant">
+        </div>
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
+          <input type="text" class="form-control" id="accountant-cred-pwd" value="${getAccountantPwd()}" placeholder="Пароль...">
+        </div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveAccountantCreds()">💾 Сохранить данные бухгалтера</button>
     </div>` : '';
 
   const nc = getNotifyCfg();
@@ -1161,6 +1220,28 @@ function saveKitchenWorkerCreds() {
   setLS('kitchen_worker_pwd', p);
   if (_useFirebase) _scheduleSave();
   alert('Данные сотрудника кухни сохранены');
+}
+
+function saveAlexanderCreds() {
+  const u = (document.getElementById('alexander-cred-user').value||'').trim();
+  const p = (document.getElementById('alexander-cred-pwd').value||'').trim();
+  if (!u) { alert('Введите имя пользователя'); return; }
+  if (!p) { alert('Введите пароль'); return; }
+  setLS('alexander_username', u);
+  setLS('alexander_pwd', p);
+  if (_useFirebase) _scheduleSave();
+  alert('Данные Александра сохранены');
+}
+
+function saveAccountantCreds() {
+  const u = (document.getElementById('accountant-cred-user').value||'').trim();
+  const p = (document.getElementById('accountant-cred-pwd').value||'').trim();
+  if (!u) { alert('Введите имя пользователя'); return; }
+  if (!p) { alert('Введите пароль'); return; }
+  setLS('accountant_username', u);
+  setLS('accountant_pwd', p);
+  if (_useFirebase) _scheduleSave();
+  alert('Данные бухгалтера сохранены');
 }
 
 function saveAnthropicKey() {
@@ -1759,6 +1840,12 @@ function render() {
     content.innerHTML = renderKitchenWorker();
     return;
   }
+  // alexander/accountant see ONLY their budget approval/payment queue — no other views
+  if (currentUser === 'alexander' || currentUser === 'accountant') {
+    title.textContent = currentUser === 'alexander' ? '✅ Согласование расходов' : '🧾 Подтверждение оплаты';
+    content.innerHTML = renderBudget();
+    return;
+  }
 
   if (view === 'dashboard') {
     title.textContent = 'Панель управления';
@@ -1816,6 +1903,10 @@ function render() {
     if (currentUser !== 'owner' && currentUser !== 'kitchen') { showView('dashboard'); return; }
     title.textContent = '🍽️ Управление кухней';
     content.innerHTML = renderKitchen();
+  } else if (view === 'budget') {
+    if (currentUser !== 'owner' && currentUser !== 'admin') { showView('dashboard'); return; }
+    title.textContent = '💰 Бюджет';
+    content.innerHTML = renderBudget();
   }
 }
 
@@ -8202,6 +8293,438 @@ function renderKitchenAnalytics() {
         </div>`;
       }).join('')}</div>
     </div>`:''}`;
+}
+
+// ==============================
+// БЮДЖЕТ (multi-stage approval ledgers — kitchen / maintenance / personal)
+// ==============================
+const FINANCE_LEDGERS = {
+  kitchen:     { label:'🍽️ Кухня',        approvers:['alexander','owner'], useFunds:false, canCreate:['owner','admin'] },
+  maintenance: { label:'🔧 ТО и зарплаты', approvers:['alexander','owner'], useFunds:false, canCreate:['owner','admin'] },
+  personal:    { label:'👤 Личный бюджет', approvers:['owner'],             useFunds:true,  canCreate:['owner'] },
+};
+let budgetLedger = 'kitchen';
+let budgetMonth = new Date().getMonth()+1;
+let budgetYear = new Date().getFullYear();
+let _editingBudgetTx = null;
+
+const getBudgetTx = (ledgerKey) => getLS('finance_tx_'+ledgerKey) || [];
+const setBudgetTx = (ledgerKey, list) => setLS('finance_tx_'+ledgerKey, list);
+const getBudgetFunds = () => getLS('finance_funds') || [];
+
+function _budgetBalance(ledgerKey) {
+  const tx = getBudgetTx(ledgerKey).filter(t=>t.status!=='rejected');
+  let income = 0, expensePrelim = 0, expenseActual = 0;
+  const byFund = {};
+  tx.forEach(t => {
+    const amt = Number(t.amount)||0;
+    const fund = t.fund || '—';
+    if (!byFund[fund]) byFund[fund] = {income:0, prelim:0, actual:0};
+    if (t.type === 'income' || t.type === 'refund') {
+      income += amt;
+      byFund[fund].income += amt;
+    } else {
+      expensePrelim += amt;
+      byFund[fund].prelim += amt;
+      if (t.accountantConfirm && t.accountantConfirm.paid) {
+        expenseActual += amt;
+        byFund[fund].actual += amt;
+      }
+    }
+  });
+  return { income, expensePrelim, expenseActual, prelimBalance: income-expensePrelim, actualBalance: income-expenseActual, byFund };
+}
+
+function renderBudget() {
+  if (currentUser === 'alexander') return _renderBudgetApproverQueue('alexander');
+  if (currentUser === 'accountant') return _renderBudgetAccountantQueue();
+
+  const isOwner = currentUser === 'owner';
+  const ledgerKeys = Object.keys(FINANCE_LEDGERS).filter(k => !(k==='personal' && !isOwner));
+  if (!ledgerKeys.includes(budgetLedger)) budgetLedger = ledgerKeys[0];
+  const tabs = ledgerKeys.map(k => `<button class="kitchen-tab-btn${budgetLedger===k?' active':''}" onclick="switchBudgetLedger('${k}')">${FINANCE_LEDGERS[k].label}</button>`).join('');
+
+  const realNow = new Date();
+  const isCurrent = budgetMonth===(realNow.getMonth()+1) && budgetYear===realNow.getFullYear();
+  const monthNav = `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:white;border-radius:12px;border:1px solid #e2e8f0;margin-bottom:10px">
+    <button class="year-btn" onclick="budgetMonth--;if(budgetMonth<1){budgetMonth=12;budgetYear--}render()">◄</button>
+    <div style="font-size:16px;font-weight:700;color:#1e293b;min-width:160px;text-align:center">${MONTHS[budgetMonth-1]} ${budgetYear}</div>
+    <button class="year-btn" onclick="budgetMonth++;if(budgetMonth>12){budgetMonth=1;budgetYear++}render()">►</button>
+    ${isCurrent?'<span class="badge badge-blue">Текущий месяц</span>':''}
+  </div>`;
+  const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0">${tabs}</div>`;
+
+  return tabBar + monthNav + _renderBudgetLedger(budgetLedger);
+}
+
+function switchBudgetLedger(k) { budgetLedger = k; render(); }
+
+function _renderBudgetLedger(ledgerKey) {
+  const cfg = FINANCE_LEDGERS[ledgerKey];
+  const mk = `${budgetYear}-${String(budgetMonth).padStart(2,'0')}`;
+  const monthTx = getBudgetTx(ledgerKey)
+    .filter(t=>(t.date||'').startsWith(mk))
+    .sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.time||'').localeCompare(a.time||''));
+  const bal = _budgetBalance(ledgerKey);
+  const canCreate = cfg.canCreate.includes(currentUser);
+  const fmt = n => (Number(n)||0).toLocaleString('ru-RU',{maximumFractionDigits:2});
+
+  const summaryCards = `<div class="stats-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:12px">
+    <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:20px">₽${fmt(bal.prelimBalance)}</div><div class="stat-label">Предварительный остаток</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:#16a34a;font-size:20px">₽${fmt(bal.actualBalance)}</div><div class="stat-label">Фактический остаток</div></div>
+  </div>`;
+
+  const fundBreakdown = cfg.useFunds ? `<div class="card" style="margin-bottom:12px"><div class="card-header"><h3>💰 По фондам</h3></div>
+    <div style="padding:12px 16px">${Object.entries(bal.byFund).map(([fund,v])=>`
+      <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f1f5f9;font-size:13px">
+        <span style="font-weight:600">${fund}</span>
+        <span>факт: <b style="color:${(v.income-v.actual)>=0?'#16a34a':'#dc2626'}">₽${fmt(v.income-v.actual)}</b></span>
+      </div>`).join('') || '<div style="color:#94a3b8;font-size:13px">Нет данных</div>'}
+    </div></div>` : '';
+
+  const addBtn = canCreate ? `<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+    <button class="btn btn-primary" onclick="openBudgetTxModal('${ledgerKey}',null,'expense')">+ Расход</button>
+    <button class="btn btn-outline" onclick="openBudgetTxModal('${ledgerKey}',null,'income')">+ Приход</button>
+    ${cfg.useFunds?`<button class="btn btn-outline" onclick="openBudgetFundsModal()">⚙️ Фонды</button>`:''}
+  </div>` : '';
+
+  if (!monthTx.length) {
+    return summaryCards + fundBreakdown + addBtn + `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
+      <div style="font-size:48px;margin-bottom:12px">🏦</div>
+      <div style="font-size:14px">Нет операций за ${MONTHS[budgetMonth-1]} ${budgetYear}</div></div></div>`;
+  }
+
+  const rows = monthTx.map(t => _renderBudgetTxCard(ledgerKey, t, cfg)).join('');
+  return summaryCards + fundBreakdown + addBtn + rows;
+}
+
+function _renderBudgetTxCard(ledgerKey, t, cfg) {
+  const isIncome = t.type === 'income' || t.type === 'refund';
+  const typeLabel = t.type==='income'?'Приход':t.type==='refund'?'Возврат':'Расход';
+  const amtColor = isIncome ? '#16a34a' : '#dc2626';
+  const amtSign = isIncome ? '+' : '−';
+  const statusBadge = t.status === 'rejected' ? `<span class="badge badge-danger" style="font-size:10px">❌ Отклонено${t.rejectReason?': '+t.rejectReason:''}</span>` : '';
+
+  let approvalBadges = '', paidBadge = '', actionsHtml = '';
+  if (t.type === 'expense' && t.status !== 'rejected') {
+    approvalBadges = cfg.approvers.map(role => {
+      const a = (t.approvals||{})[role];
+      const roleLabel = role==='alexander' ? 'Александр' : 'Йосеф';
+      return a && a.approved
+        ? `<span class="badge badge-success" style="font-size:10px">✅ ${roleLabel}</span>`
+        : `<span class="badge badge-gray" style="font-size:10px">⏳ ${roleLabel}</span>`;
+    }).join(' ');
+    const allApproved = cfg.approvers.every(role => (t.approvals||{})[role] && (t.approvals||{})[role].approved);
+    paidBadge = t.accountantConfirm && t.accountantConfirm.paid
+      ? `<span class="badge badge-success" style="font-size:10px">✅ Оплачено ${fmtDate(t.accountantConfirm.date)}</span>`
+      : allApproved ? `<span class="badge badge-warning" style="font-size:10px">⏳ Ожидает оплаты</span>` : '';
+
+    const myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : null;
+    const canApprove = myRole && cfg.approvers.includes(myRole) && !((t.approvals||{})[myRole] && (t.approvals||{})[myRole].approved);
+    const canConfirmPaid = currentUser==='accountant' && allApproved && !(t.accountantConfirm && t.accountantConfirm.paid);
+    actionsHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+      ${canApprove?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">✅ Согласовать</button>
+        <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="rejectBudgetTx('${ledgerKey}','${t.id}')">❌ Отклонить</button>`:''}
+      ${canConfirmPaid?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="confirmBudgetPaid('${ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>`:''}
+    </div>`;
+  }
+  const editActions = currentUser==='owner' ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+    <button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="openBudgetTxModal('${ledgerKey}','${t.id}')">✏️</button>
+    <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="delBudgetTx('${ledgerKey}','${t.id}')">🗑</button>
+  </div>` : '';
+
+  return `<div class="kitch-card">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+          <span style="font-weight:700">${fmtDate(t.date)}</span>
+          ${t.time?`<span style="font-size:11px;color:#94a3b8">${t.time}</span>`:''}
+          <span class="badge badge-gray" style="font-size:10px">${typeLabel}</span>
+          ${t.fund?`<span class="badge badge-blue" style="font-size:10px">${t.fund}</span>`:''}
+        </div>
+        <div style="font-weight:600;font-size:14px">${t.vendor||''}</div>
+        ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
+        ${t.fileRef?`<div style="margin-top:4px"><a href="${_kFileUrl(t.fileRef)}" target="_blank" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${t.fileRef.name||'Документ'}</a></div>`:''}
+        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${statusBadge}${approvalBadges}${paidBadge}</div>
+      </div>
+      <div style="font-weight:700;font-size:16px;color:${amtColor};flex-shrink:0">${amtSign}₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
+    </div>
+    ${actionsHtml}${editActions}
+  </div>`;
+}
+
+function openBudgetTxModal(ledgerKey, id, defaultType) {
+  const cfg = FINANCE_LEDGERS[ledgerKey];
+  const t = id ? (getBudgetTx(ledgerKey).find(x=>x.id===id)||{}) : {};
+  _editingBudgetTx = id || null;
+  window._budgetTxFile = t.fileRef || null;
+  const today = new Date().toISOString().slice(0,10);
+  const nowTime = new Date().toTimeString().slice(0,5);
+  const type = t.type || defaultType || 'expense';
+  const fundOpts = cfg.useFunds ? getBudgetFunds().map(f=>`<option value="${f.name}" ${t.fund===f.name?'selected':''}>${f.name}</option>`).join('') : '';
+
+  document.getElementById('modal-title').textContent = id ? '✏️ Редактировать операцию' : (type==='income'?'💰 Новый приход':'💸 Новый расход');
+  document.getElementById('modal-body').innerHTML = `
+    ${id?'<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#92400e">⚠️ Изменение операции сбросит все согласования — потребуется согласовать заново</div>':''}
+    <div class="form-group"><label>Тип</label>
+      <select class="form-control" id="bt-type">
+        <option value="expense" ${type==='expense'?'selected':''}>Расход</option>
+        <option value="income" ${type==='income'?'selected':''}>Приход</option>
+        <option value="refund" ${type==='refund'?'selected':''}>Возврат средств</option>
+      </select>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="bt-date" value="${t.date||today}"></div>
+      <div class="form-group"><label>Время</label><input type="time" class="form-control" id="bt-time" value="${t.time||nowTime}"></div>
+    </div>
+    <div class="form-group"><label>Название / получатель *</label><input class="form-control" id="bt-vendor" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="Поставщик, сотрудник, назначение..."></div>
+    <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="bt-amount" value="${t.amount||''}" min="0" step="0.01"></div>
+    ${cfg.useFunds ? `<div class="form-group"><label>Фонд *</label><select class="form-control" id="bt-fund"><option value="">— Выберите —</option>${fundOpts}</select></div>` : ''}
+    <div class="form-group">
+      <label>📎 Документ (чек/счёт)</label>
+      <input type="file" id="bt-file" accept="image/*,application/pdf" style="display:none" onchange="onBudgetFileSelect(this)">
+      <button type="button" class="btn btn-outline" style="width:100%;justify-content:center" onclick="document.getElementById('bt-file').click()">📂 Загрузить</button>
+      <div id="bt-file-preview">${window._budgetTxFile?`<div style="margin-top:6px;font-size:12px;color:#2563eb">📎 ${window._budgetTxFile.name}</div>`:''}</div>
+    </div>
+    <div class="form-group"><label>Примечание</label><textarea class="form-control" id="bt-notes">${t.notes||''}</textarea></div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveBudgetTx('${ledgerKey}')">💾 Сохранить</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function onBudgetFileSelect(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  _compressImage(file).then(res => {
+    window._budgetTxFile = {data:res.data, name:file.name, type:res.type, size:res.size};
+    document.getElementById('bt-file-preview').innerHTML = `<div style="margin-top:6px;font-size:12px;color:#2563eb">📎 ${file.name} (${fmtSize(res.size)})</div>`;
+  });
+}
+
+async function saveBudgetTx(ledgerKey) {
+  const cfg = FINANCE_LEDGERS[ledgerKey];
+  const type = document.getElementById('bt-type').value;
+  const date = document.getElementById('bt-date').value;
+  if (!date) { alert('Укажите дату'); return; }
+  const vendor = (document.getElementById('bt-vendor').value||'').trim();
+  if (!vendor) { alert('Укажите название/получателя'); return; }
+  const amount = document.getElementById('bt-amount').value;
+  if (!amount || Number(amount) <= 0) { alert('Укажите сумму'); return; }
+  let fund = '';
+  if (cfg.useFunds) {
+    fund = document.getElementById('bt-fund').value;
+    if (!fund) { alert('Укажите фонд'); return; }
+  }
+
+  let fileRef = window._budgetTxFile;
+  if (_useFirebase && fileRef && fileRef.data) {
+    const fid = await dbSave({name:fileRef.name||'doc', type:fileRef.type||'image/jpeg', size:fileRef.size||Math.round(fileRef.data.length*0.75), data:fileRef.data});
+    fileRef = {id:fid, name:fileRef.name||'doc', type:fileRef.type||'image/jpeg'};
+  }
+
+  const list = getBudgetTx(ledgerKey);
+  const existing = _editingBudgetTx ? list.find(x=>x.id===_editingBudgetTx) : null;
+  const record = {
+    id: _editingBudgetTx || Date.now().toString(36),
+    type, date,
+    time: document.getElementById('bt-time').value||'',
+    vendor, amount: Number(amount),
+    fund: fund||undefined,
+    notes: (document.getElementById('bt-notes').value||'').trim(),
+    fileRef: fileRef||null,
+    // Any save (new or edit) starts/resets the approval chain — editing an already
+    // approved amount/vendor without forcing re-approval would let changes slip
+    // through under a stale sign-off.
+    status: 'pending',
+    approvals: {},
+    accountantConfirm: {paid:false},
+    createdBy: existing ? existing.createdBy : currentUser,
+    createdAt: existing ? existing.createdAt : new Date().toISOString(),
+  };
+  if (_editingBudgetTx) { const idx=list.findIndex(x=>x.id===_editingBudgetTx); if(idx>=0)list[idx]=record; else list.push(record); }
+  else list.push(record);
+  setBudgetTx(ledgerKey, list);
+  if (_useFirebase) {
+    _showToast('💾 Сохраняем...', true);
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) return; // keep modal open so the user can retry without re-entering data
+  }
+  closeModal(); _showToast('✅ Операция сохранена', true); render();
+}
+
+async function approveBudgetTx(ledgerKey, id) {
+  const myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : null;
+  if (!myRole) return;
+  if (!confirm('Согласовать эту операцию?')) return;
+  const list = getBudgetTx(ledgerKey);
+  const t = list.find(x=>x.id===id);
+  if (!t) return;
+  t.approvals = t.approvals || {};
+  t.approvals[myRole] = {approved:true, date:new Date().toISOString().slice(0,10)};
+  setBudgetTx(ledgerKey, list);
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) { render(); return; }
+  }
+  _showToast('✅ Согласовано', true); render();
+}
+
+async function rejectBudgetTx(ledgerKey, id) {
+  const reason = prompt('Причина отклонения (необязательно):');
+  if (reason === null) return;
+  const list = getBudgetTx(ledgerKey);
+  const t = list.find(x=>x.id===id);
+  if (!t) return;
+  t.status = 'rejected';
+  t.rejectReason = reason;
+  t.rejectedBy = currentUser;
+  t.rejectedAt = new Date().toISOString();
+  setBudgetTx(ledgerKey, list);
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) { render(); return; }
+  }
+  _showToast('❌ Отклонено', false); render();
+}
+
+async function confirmBudgetPaid(ledgerKey, id) {
+  if (currentUser !== 'accountant') return;
+  if (!confirm('Подтвердить оплату?')) return;
+  const list = getBudgetTx(ledgerKey);
+  const t = list.find(x=>x.id===id);
+  if (!t) return;
+  t.accountantConfirm = {paid:true, date:new Date().toISOString().slice(0,10)};
+  setBudgetTx(ledgerKey, list);
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) { render(); return; }
+  }
+  _showToast('✅ Оплата подтверждена', true); render();
+}
+
+async function delBudgetTx(ledgerKey, id) {
+  if (currentUser !== 'owner') return;
+  if (!confirm('Удалить операцию безвозвратно?')) return;
+  setBudgetTx(ledgerKey, getBudgetTx(ledgerKey).filter(x=>x.id!==id));
+  if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
+  render();
+}
+
+function _renderBudgetApproverQueue(role) {
+  const ledgerKeys = Object.keys(FINANCE_LEDGERS).filter(k => FINANCE_LEDGERS[k].approvers.includes(role));
+  const items = [];
+  ledgerKeys.forEach(k => {
+    getBudgetTx(k).forEach(t => {
+      if (t.type !== 'expense' || t.status === 'rejected') return;
+      const already = (t.approvals||{})[role] && (t.approvals||{})[role].approved;
+      if (!already) items.push({ledgerKey:k, t});
+    });
+  });
+  items.sort((a,b)=>(a.t.date||'').localeCompare(b.t.date||''));
+
+  if (!items.length) {
+    return `<div style="max-width:600px;margin:0 auto;padding:16px"><div style="text-align:center;padding:60px 20px;color:#94a3b8">
+      <div style="font-size:48px;margin-bottom:12px">✅</div>
+      <div style="font-size:15px">Нет операций, ожидающих согласования</div></div></div>`;
+  }
+  const cards = items.map(({ledgerKey,t}) => `
+    <div class="kitch-card">
+      <div style="font-size:11px;color:#6b7280;margin-bottom:4px">${FINANCE_LEDGERS[ledgerKey].label}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+        <div>
+          <div style="font-weight:700">${fmtDate(t.date)} · ${t.vendor||''}</div>
+          ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
+          ${t.fileRef?`<div style="margin-top:4px"><a href="${_kFileUrl(t.fileRef)}" target="_blank" style="font-size:12px;color:#2563eb">📎 ${t.fileRef.name||'Документ'}</a></div>`:''}
+        </div>
+        <div style="font-weight:700;font-size:16px;color:#dc2626;flex-shrink:0">−₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-primary" style="flex:1;justify-content:center" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">✅ Согласовать</button>
+        <button class="btn btn-outline" style="flex:1;justify-content:center;color:#dc2626" onclick="rejectBudgetTx('${ledgerKey}','${t.id}')">❌ Отклонить</button>
+      </div>
+    </div>`).join('');
+  return `<div style="max-width:600px;margin:0 auto;padding:16px">
+    <div style="text-align:center;margin-bottom:16px"><div style="font-size:15px;font-weight:700">Операции, ожидающие согласования (${items.length})</div></div>${cards}</div>`;
+}
+
+function _renderBudgetAccountantQueue() {
+  const items = [];
+  Object.keys(FINANCE_LEDGERS).forEach(k => {
+    const cfg = FINANCE_LEDGERS[k];
+    getBudgetTx(k).forEach(t => {
+      if (t.type !== 'expense' || t.status === 'rejected') return;
+      if (t.accountantConfirm && t.accountantConfirm.paid) return;
+      const allApproved = cfg.approvers.every(role => (t.approvals||{})[role] && (t.approvals||{})[role].approved);
+      if (allApproved) items.push({ledgerKey:k, t});
+    });
+  });
+  items.sort((a,b)=>(a.t.date||'').localeCompare(b.t.date||''));
+
+  if (!items.length) {
+    return `<div style="max-width:600px;margin:0 auto;padding:16px"><div style="text-align:center;padding:60px 20px;color:#94a3b8">
+      <div style="font-size:48px;margin-bottom:12px">🧾</div>
+      <div style="font-size:15px">Нет операций, ожидающих оплаты</div></div></div>`;
+  }
+  const cards = items.map(({ledgerKey,t}) => `
+    <div class="kitch-card">
+      <div style="font-size:11px;color:#6b7280;margin-bottom:4px">${FINANCE_LEDGERS[ledgerKey].label}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+        <div>
+          <div style="font-weight:700">${fmtDate(t.date)} · ${t.vendor||''}</div>
+          ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
+          ${t.fileRef?`<div style="margin-top:4px"><a href="${_kFileUrl(t.fileRef)}" target="_blank" style="font-size:12px;color:#2563eb">📎 ${t.fileRef.name||'Документ'}</a></div>`:''}
+        </div>
+        <div style="font-weight:700;font-size:16px;color:#dc2626;flex-shrink:0">−₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:10px;background:#16a34a;border-color:#16a34a" onclick="confirmBudgetPaid('${ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>
+    </div>`).join('');
+  return `<div style="max-width:600px;margin:0 auto;padding:16px">
+    <div style="text-align:center;margin-bottom:16px"><div style="font-size:15px;font-weight:700">Согласовано, ожидает оплаты (${items.length})</div></div>${cards}</div>`;
+}
+
+function openBudgetFundsModal() {
+  const funds = getBudgetFunds();
+  document.getElementById('modal-title').textContent = '💰 Управление фондами';
+  document.getElementById('modal-body').innerHTML = `
+    <div id="bf-list">${_renderBudgetFundsList(funds)}</div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <input class="form-control" id="bf-new-name" placeholder="Название нового фонда">
+      <button class="btn btn-primary" onclick="addBudgetFund()">+ Добавить</button>
+    </div>`;
+  document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal();render()">Закрыть</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function _renderBudgetFundsList(funds) {
+  if (!funds.length) return '<div style="color:#94a3b8;font-size:13px">Фондов пока нет</div>';
+  return funds.map(f => `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9">
+    <span style="font-size:13px">${f.name}</span>
+    <button onclick="delBudgetFund('${f.id}')" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px">✕</button>
+  </div>`).join('');
+}
+
+async function addBudgetFund() {
+  const name = (document.getElementById('bf-new-name').value||'').trim();
+  if (!name) return;
+  const funds = getBudgetFunds();
+  funds.push({id:Date.now().toString(36), name});
+  setLS('finance_funds', funds);
+  if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
+  document.getElementById('bf-list').innerHTML = _renderBudgetFundsList(funds);
+  document.getElementById('bf-new-name').value = '';
+}
+
+async function delBudgetFund(id) {
+  if (!confirm('Удалить фонд?')) return;
+  const funds = getBudgetFunds().filter(f=>f.id!==id);
+  setLS('finance_funds', funds);
+  if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
+  document.getElementById('bf-list').innerHTML = _renderBudgetFundsList(funds);
 }
 
 init();
