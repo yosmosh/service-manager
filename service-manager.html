@@ -827,21 +827,24 @@ function doLogin() {
     return;
   }
 
-  // Check Alexander (finance co-approver: kitchen + maintenance ledgers)
-  if (username === getAlexanderUser().toLowerCase() && pwd === getAlexanderPwd()) {
+  // Check Alexander (finance co-approver: kitchen + maintenance ledgers) — refused
+  // until the owner publishes Бюджет, so this login does nothing while it's still
+  // owner-only.
+  if (getBudgetReleased() && username === getAlexanderUser().toLowerCase() && pwd === getAlexanderPwd()) {
     currentUser = 'alexander';
     document.getElementById('login-screen').style.display = 'none';
     applyUserLayout();
-    showView('finance');
+    showView('budget');
     return;
   }
 
-  // Check accountant (marks approved transactions as paid, across all ledgers)
-  if (username === getAccountantUser().toLowerCase() && pwd === getAccountantPwd()) {
+  // Check accountant (marks approved transactions as paid, across all ledgers) — same
+  // release gate as Alexander.
+  if (getBudgetReleased() && username === getAccountantUser().toLowerCase() && pwd === getAccountantPwd()) {
     currentUser = 'accountant';
     document.getElementById('login-screen').style.display = 'none';
     applyUserLayout();
-    showView('finance');
+    showView('budget');
     return;
   }
 
@@ -899,6 +902,8 @@ function applyUserLayout() {
   } else if (currentUser === 'admin') {
     sidebar.style.display = '';
     document.getElementById('user-label').textContent = '👑 Администратор';
+    const navBudget = document.getElementById('nav-budget');
+    if (navBudget && !getBudgetReleased()) navBudget.style.display = 'none';
   } else if (currentUser === 'kitchen') {
     sidebar.style.display = 'none';
     document.getElementById('user-label').textContent = '🍽️ Менеджер кухни';
@@ -1905,6 +1910,7 @@ function render() {
     content.innerHTML = renderKitchen();
   } else if (view === 'budget') {
     if (currentUser !== 'owner' && currentUser !== 'admin') { showView('dashboard'); return; }
+    if (currentUser === 'admin' && !getBudgetReleased()) { showView('dashboard'); return; }
     title.textContent = '💰 Бюджет';
     content.innerHTML = renderBudget();
   }
@@ -8308,6 +8314,22 @@ let budgetMonth = new Date().getMonth()+1;
 let budgetYear = new Date().getFullYear();
 let _editingBudgetTx = null;
 
+// Staged rollout: while unreleased, only the owner can see/use Бюджет at all —
+// admin's nav item stays hidden and alexander/accountant logins are refused, so the
+// owner can review real data in production before anyone else knows it exists.
+const getBudgetReleased = () => !!getLS('budget_released');
+async function releaseBudgetToEveryone() {
+  if (currentUser !== 'owner') return;
+  if (!confirm('Опубликовать раздел "Бюджет" для администратора, Александра и бухгалтера?\n\nОни получат доступ немедленно.')) return;
+  setLS('budget_released', true);
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) return;
+  }
+  _showToast('✅ Бюджет опубликован для всех', true); render();
+}
+
 const getBudgetTx = (ledgerKey) => getLS('finance_tx_'+ledgerKey) || [];
 const setBudgetTx = (ledgerKey, list) => setLS('finance_tx_'+ledgerKey, list);
 const getBudgetFunds = () => getLS('finance_funds') || [];
@@ -8354,7 +8376,14 @@ function renderBudget() {
   </div>`;
   const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0">${tabs}</div>`;
 
-  return tabBar + monthNav + _renderBudgetLedger(budgetLedger);
+  const releaseBar = isOwner ? (getBudgetReleased()
+    ? `<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#166534;font-weight:600">✅ Опубликовано — доступно администратору, Александру и бухгалтеру</div>`
+    : `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <span style="font-size:12px;color:#92400e;font-weight:600">🔒 Видно только вам — проверьте данные перед публикацией</span>
+        <button class="btn btn-primary" style="font-size:12px;padding:6px 14px" onclick="releaseBudgetToEveryone()">🚀 Опубликовать для всех</button>
+      </div>`) : '';
+
+  return releaseBar + tabBar + monthNav + _renderBudgetLedger(budgetLedger);
 }
 
 function switchBudgetLedger(k) { budgetLedger = k; render(); }
