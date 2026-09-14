@@ -7119,7 +7119,7 @@ function openKitchenSupplierModal(id) {
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
-function saveKitchenSupplier() {
+async function saveKitchenSupplier() {
   const name = (document.getElementById('ks-name').value||'').trim();
   if (!name) { alert('Введите название'); return; }
   const delivery_days = Array.from(document.querySelectorAll('input[name="kday"]:checked')).map(el=>Number(el.value));
@@ -7136,6 +7136,11 @@ function saveKitchenSupplier() {
   if (_editingKitchenSupplier) { const idx=list.findIndex(s=>s.id===_editingKitchenSupplier); if(idx>=0)list[idx]=sup;else list.push(sup); }
   else list.push(sup);
   setLS('kitchen_suppliers', list);
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) return; // keep modal open so the user can retry without re-entering data
+  }
   closeModal(); _showToast('✅ Поставщик сохранён', true); render();
 }
 
@@ -7311,7 +7316,9 @@ async function saveKitchenDelivery() {
   if (!date) { alert('Укажите дату'); return; }
   if (!_kitchenTruckPhoto) { alert('📸 Необходимо сфотографировать грузовик доставки!\n\nФото обязательно для сохранения доставки.'); return; }
   const status = document.getElementById('kd-status').value;
-  const items = _kitchenDeliveryItems.filter(it=>(it.name||'').trim());
+  // Trim names — an untrimmed "Молоко " vs "Молоко" would fail the exact-match lookup
+  // in _applyDeliveryToInventory and silently create a duplicate inventory row.
+  const items = _kitchenDeliveryItems.map(it=>({...it, name:(it.name||'').trim()})).filter(it=>it.name);
 
   // Upload photos to Storage instead of embedding them inline — the shared state
   // document has a 1MB cap shared by every department, and kitchen photos embedded
@@ -7362,7 +7369,7 @@ function _applyDeliveryToInventory(items) {
   const today = new Date().toISOString().slice(0,10);
   items.forEach(it => {
     if (!it.name) return;
-    const existing = inv.find(p=>p.name.toLowerCase()===it.name.toLowerCase());
+    const existing = inv.find(p=>p.name.trim().toLowerCase()===it.name.trim().toLowerCase());
     if (existing) {
       existing.qty = (Number(existing.qty)||0) + (Number(it.qty)||0);
       existing.updated = today;
@@ -7491,7 +7498,7 @@ function openKitchenInventoryModal(id) {
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
-function saveKitchenInventoryItem() {
+async function saveKitchenInventoryItem() {
   const name = (document.getElementById('ki-name').value||'').trim();
   if (!name) { alert('Введите наименование'); return; }
   const item = {
@@ -7509,6 +7516,11 @@ function saveKitchenInventoryItem() {
   else list.push(item);
   setLS('kitchen_inventory', list);
   _saveInvSnapshot();
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) return; // keep modal open so the user can retry without re-entering data
+  }
   closeModal(); _showToast('✅ Позиция сохранена', true); render();
 }
 
@@ -7678,10 +7690,16 @@ async function scanInvoiceWithAI() {
       if (json.date) document.getElementById('kinv-date').value = json.date;
       if (json.invoice_num) document.getElementById('kinv-num').value = json.invoice_num;
       if (json.total) document.getElementById('kinv-total').value = json.total;
+      let supplierMatched = false;
       if (json.supplier_name) {
         const sups = getKitchenSuppliers();
         const match = sups.find(s=>s.name.toLowerCase().includes(json.supplier_name.toLowerCase())||json.supplier_name.toLowerCase().includes(s.name.toLowerCase()));
-        if (match) document.getElementById('kinv-sup').value = match.id;
+        if (match) { document.getElementById('kinv-sup').value = match.id; supplierMatched = true; }
+      }
+      if (!supplierMatched) {
+        const supEl = document.getElementById('kinv-sup');
+        if (supEl) supEl.style.borderColor = '#d97706';
+        _showToast('⚠️ Поставщик "' + (json.supplier_name||'?') + '" не найден в списке — выберите вручную', false);
       }
       if (json.items && json.items.length) {
         _kitchenInvoiceItems = json.items.map(it=>({name:it.name||'',qty:it.qty||'',unit:it.unit||'',price:it.price||''}));
@@ -7721,7 +7739,7 @@ async function saveKitchenInvoice() {
     return;
   }
   supEl.style.borderColor = '';
-  const items = _kitchenInvoiceItems.filter(it=>(it.name||'').trim());
+  const items = _kitchenInvoiceItems.map(it=>({...it, name:(it.name||'').trim()})).filter(it=>it.name);
   const isNew = !_editingKitchenInvoice;
 
   // Upload to Storage instead of embedding inline — see saveKitchenDelivery for why.
@@ -7928,17 +7946,21 @@ function openDailyUsageModal() {
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
-function saveDailyUsage(count) {
+async function saveDailyUsage(count) {
   const date = document.getElementById('du-date').value;
   const items = [];
+  const overLimit = [];
   for (let i=0;i<count;i++) {
     const el = document.getElementById(`du-qty-${i}`);
     if (!el) continue;
     const qty = Number(el.value||0);
     if (!qty) continue;
+    const max = Number(el.dataset.max||0);
+    if (qty > max) overLimit.push(`${el.dataset.name}: списываете ${qty}, на складе ${max}`);
     items.push({name:el.dataset.name, qty, unit:el.dataset.unit});
   }
   if (!items.length) { alert('Укажите хотя бы одну позицию'); return; }
+  if (overLimit.length && !confirm('⚠️ Количество больше, чем есть на складе:\n\n' + overLimit.join('\n') + '\n\nОстаток уйдёт в 0 вместо отрицательного значения. Продолжить?')) return;
   const inv = getKitchenInventory();
   const today = new Date().toISOString().slice(0,10);
   items.forEach(it => {
@@ -7950,7 +7972,11 @@ function saveDailyUsage(count) {
   const log = getKitchenDailyUsage();
   log.push({id:Date.now().toString(36), date, items, notes:(document.getElementById('du-notes').value||'').trim()});
   setLS('kitchen_daily_usage', log);
-  if (_useFirebase) _scheduleSave();
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) return; // keep modal open so the user can retry without re-entering data
+  }
   closeModal(); _showToast('✅ Расход записан', true); render();
 }
 
@@ -8060,7 +8086,7 @@ async function saveWriteoffRequest() {
   closeModal(); _showToast('📤 Запрос отправлен владельцу', true); render();
 }
 
-function approveWriteoff(id) {
+async function approveWriteoff(id) {
   if (!confirm('Одобрить списание и вычесть из склада?')) return;
   const list = getKitchenWriteoffs();
   const wo = list.find(w=>w.id===id);
@@ -8076,11 +8102,15 @@ function approveWriteoff(id) {
   });
   setLS('kitchen_inventory', inv);
   _saveInvSnapshot();
-  if (_useFirebase) _scheduleSave();
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) { render(); return; } // status/inventory changes stay pending locally until retried
+  }
   _showToast('✅ Списание одобрено', true); render();
 }
 
-function rejectWriteoff(id) {
+async function rejectWriteoff(id) {
   const reason = prompt('Причина отклонения (необязательно):');
   if (reason === null) return;
   const list = getKitchenWriteoffs();
@@ -8090,7 +8120,11 @@ function rejectWriteoff(id) {
   wo.rejectReason = reason;
   wo.rejectedAt = new Date().toISOString();
   setLS('kitchen_writeoffs', list);
-  if (_useFirebase) _scheduleSave();
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) { render(); return; }
+  }
   _showToast('❌ Списание отклонено', false); render();
 }
 
