@@ -7126,7 +7126,7 @@ function renderKitchenDeliveries() {
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9">
         <table style="width:100%;font-size:12px;border-collapse:collapse">
           <tr style="color:#6b7280"><th style="text-align:left;padding:2px 6px;font-weight:600">Наименование</th><th style="padding:2px 6px;font-weight:600">Кол-во</th><th style="padding:2px 6px;font-weight:600">Ед.</th><th style="text-align:right;padding:2px 6px;font-weight:600">Цена</th></tr>
-          ${(d.items||[]).map(it=>`<tr><td style="padding:2px 6px">${it.name||''}</td><td style="text-align:center;padding:2px 6px">${it.qty||''}</td><td style="text-align:center;padding:2px 6px">${it.unit||''}</td><td style="text-align:right;padding:2px 6px">${it.price?'₪'+Number(it.price).toFixed(2):''}</td></tr>`).join('')}
+          ${(d.items||[]).map(it=>`<tr><td style="padding:2px 6px">${it.name||''}</td><td style="text-align:center;padding:2px 6px">${it.qty||''}</td><td style="text-align:center;padding:2px 6px">${it.unit||''}</td><td style="text-align:right;padding:2px 6px">${it.price?'₽'+Number(it.price).toFixed(2):''}</td></tr>`).join('')}
         </table>
       </div>` : '';
     return `<div class="kitch-card" style="border-left:4px solid ${stColor[d.status]||'#94a3b8'}">
@@ -7140,7 +7140,7 @@ function renderKitchenDeliveries() {
             ${sup?`<span style="font-weight:600">${sup.name}</span>`:''}
             <span style="font-size:11px;font-weight:700;color:${stColor[d.status]||'#6b7280'}">${stLabel[d.status]||d.status}</span>
           </div>
-          <div style="font-size:12px;color:#6b7280">${(d.items||[]).length} позиций${total>0?' · ₪'+total.toFixed(2):''}${d.invoice_id?` · <span style="color:#2563eb">📄 Из накладной</span>`:''}</div>
+          <div style="font-size:12px;color:#6b7280">${(d.items||[]).length} позиций${total>0?' · ₽'+total.toFixed(2):''}${d.invoice_id?` · <span style="color:#2563eb">📄 Из накладной</span>`:''}</div>
           ${d.notes?`<div style="font-size:12px;color:#374151;margin-top:3px">${d.notes}</div>`:''}
         </div>
         ${canEdit?`<div style="display:flex;gap:6px;flex-shrink:0">
@@ -7187,7 +7187,7 @@ function openKitchenDeliveryModal(id) {
     <div class="form-group">
       <label>Позиции доставки</label>
       <table style="width:100%;font-size:12px;border-collapse:collapse;margin-bottom:6px">
-        <tr style="background:#f8fafc"><th style="padding:5px 6px;text-align:left;font-weight:600;color:#6b7280">Наименование</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Кол-во</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Ед.</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Цена ₪</th><th></th></tr>
+        <tr style="background:#f8fafc"><th style="padding:5px 6px;text-align:left;font-weight:600;color:#6b7280">Наименование</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Кол-во</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Ед.</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Цена ₽</th><th></th></tr>
         <tbody id="kd-items-body"></tbody>
       </table>
       <button type="button" class="btn btn-outline" style="font-size:12px;width:100%;justify-content:center" onclick="addKitchenDeliveryItemRow()">+ Добавить позицию</button>
@@ -7501,7 +7501,7 @@ function renderKitchenInvoices() {
             <span style="font-weight:700">${fmtDate(inv.date)}</span>
             ${sup?`<span style="font-weight:600">${sup.name}</span>`:''}
             ${inv.invoice_num?`<span class="badge badge-gray"># ${inv.invoice_num}</span>`:''}
-            <span style="font-weight:700;color:#16a34a;font-size:14px">₪ ${Number(inv.total||0).toFixed(2)}</span>
+            <span style="font-weight:700;color:#16a34a;font-size:14px">₽ ${Number(inv.total||0).toFixed(2)}</span>
           </div>
           ${(inv.items||[]).length?`<div style="font-size:12px;color:#6b7280">${inv.items.length} позиций</div>`:''}
           ${inv.notes?`<div style="font-size:12px;color:#374151;margin-top:3px">${inv.notes}</div>`:''}
@@ -7517,8 +7517,8 @@ function renderKitchenInvoices() {
 
   return `
     <div class="stats-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:12px">
-      <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:20px">₪${totalMonth.toFixed(0)}</div><div class="stat-label">Счета за ${MONTHS[kitchenMonth-1]}</div></div>
-      <div class="stat-card"><div class="stat-value" style="color:#7c3aed;font-size:20px">₪${totalAll.toFixed(0)}</div><div class="stat-label">Счета всего</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:20px">₽${totalMonth.toFixed(0)}</div><div class="stat-label">Счета за ${MONTHS[kitchenMonth-1]}</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:#7c3aed;font-size:20px">₽${totalAll.toFixed(0)}</div><div class="stat-label">Счета всего</div></div>
     </div>
     <div style="display:flex;justify-content:flex-end;margin-bottom:10px">${addBtn}</div>${cards}`;
 }
@@ -7540,7 +7540,7 @@ function openKitchenInvoiceModal(id) {
       <div class="form-group"><label>№ счёта</label><input class="form-control" id="kinv-num" value="${(inv.invoice_num||'').replace(/"/g,'&quot;')}"></div>
     </div>
     <div class="form-group"><label>Поставщик</label><select class="form-control" id="kinv-sup"><option value="">—</option>${supOpts}</select></div>
-    <div class="form-group"><label>Сумма ₪ *</label><input type="number" class="form-control" id="kinv-total" value="${inv.total||''}" min="0" step="0.01"></div>
+    <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="kinv-total" value="${inv.total||''}" min="0" step="0.01"></div>
     <div class="form-group">
       <label>📎 Файл счёта (фото/PDF)</label>
       <input type="file" id="kinv-file" accept="image/*,application/pdf" style="display:none" onchange="onKitchenInvoiceFileSelect(this)">
@@ -7553,7 +7553,7 @@ function openKitchenInvoiceModal(id) {
     <div class="form-group">
       <label>Позиции</label>
       <table style="width:100%;font-size:12px;border-collapse:collapse;margin-bottom:6px">
-        <tr style="background:#f8fafc"><th style="padding:5px 6px;text-align:left;font-weight:600;color:#6b7280">Наименование</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Кол-во</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Ед.</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Цена ₪</th><th></th></tr>
+        <tr style="background:#f8fafc"><th style="padding:5px 6px;text-align:left;font-weight:600;color:#6b7280">Наименование</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Кол-во</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Ед.</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Цена ₽</th><th></th></tr>
         <tbody id="kinv-items-body"></tbody>
       </table>
       <button type="button" class="btn btn-outline" style="font-size:12px;width:100%;justify-content:center" onclick="addKitchenInvoiceItemRow()">+ Добавить позицию</button>
@@ -7614,7 +7614,7 @@ async function scanInvoiceWithAI() {
           max_tokens: 1024,
           messages: [{role:'user', content:[
             {type:'image', source:{type:'base64', media_type:compressed.type||'image/jpeg', data:base64}},
-            {type:'text', text:'Это счёт/накладная от поставщика. Извлеки данные и верни ТОЛЬКО JSON без комментариев:\n{"supplier_name":"...","date":"YYYY-MM-DD","invoice_num":"...","total":0,"items":[{"name":"...","qty":0,"unit":"кг","price":0}]}\nЕсли поле не найдено — оставь пустым или 0. Единицы: кг/г/л/мл/шт/уп/кор/бут/пак. Валюта — ₪ (шекели).'}
+            {type:'text', text:'Это счёт/накладная от поставщика. Извлеки данные и верни ТОЛЬКО JSON без комментариев:\n{"supplier_name":"...","date":"YYYY-MM-DD","invoice_num":"...","total":0,"items":[{"name":"...","qty":0,"unit":"кг","price":0}]}\nЕсли поле не найдено — оставь пустым или 0. Единицы: кг/г/л/мл/шт/уп/кор/бут/пак. Валюта — ₽ (рубли).'}
           ]}]
         })
       });
@@ -7737,7 +7737,7 @@ function openDeliveryFromInvoice(inv) {
     <div class="form-group">
       <label>Позиции (из накладной)</label>
       <table style="width:100%;font-size:12px;border-collapse:collapse;margin-bottom:6px">
-        <tr style="background:#f8fafc"><th style="padding:5px 6px;text-align:left;font-weight:600;color:#6b7280">Наименование</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Кол-во</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Ед.</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Цена ₪</th><th></th></tr>
+        <tr style="background:#f8fafc"><th style="padding:5px 6px;text-align:left;font-weight:600;color:#6b7280">Наименование</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Кол-во</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Ед.</th><th style="padding:5px 6px;font-weight:600;color:#6b7280">Цена ₽</th><th></th></tr>
         <tbody id="kd-items-body"></tbody>
       </table>
       <button type="button" class="btn btn-outline" style="font-size:12px;width:100%;justify-content:center" onclick="addKitchenDeliveryItemRow()">+ Добавить позицию</button>
@@ -8063,7 +8063,7 @@ function renderKitchenAnalytics() {
     const v = monthlyTotals[m.key]||0;
     const pct = Math.max(Math.round(v/maxMonthly*100), v?2:0);
     return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
-      <div style="font-size:10px;font-weight:700;color:#1e293b">₪${Math.round(v)}</div>
+      <div style="font-size:10px;font-weight:700;color:#1e293b">₽${Math.round(v)}</div>
       <div style="width:100%;background:#f1f5f9;border-radius:4px;height:80px;display:flex;align-items:flex-end">
         <div style="width:100%;background:#2563eb;border-radius:4px;height:${pct}%;transition:.3s"></div>
       </div>
@@ -8086,8 +8086,8 @@ function renderKitchenAnalytics() {
 
   return `
     <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
-      <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:22px">₪${thisMonthTotal.toFixed(0)}</div><div class="stat-label">Расходы за ${MONTHS[kitchenMonth-1]}</div></div>
-      <div class="stat-card"><div class="stat-value" style="color:#7c3aed;font-size:22px">₪${allTotal.toFixed(0)}</div><div class="stat-label">Расходы всего</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:22px">₽${thisMonthTotal.toFixed(0)}</div><div class="stat-label">Расходы за ${MONTHS[kitchenMonth-1]}</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:#7c3aed;font-size:22px">₽${allTotal.toFixed(0)}</div><div class="stat-label">Расходы всего</div></div>
       <div class="stat-card"><div class="stat-value" style="color:#16a34a">${rcvCount}</div><div class="stat-label">Доставок за ${MONTHS[kitchenMonth-1]}</div></div>
     </div>
     <div class="card">
@@ -8103,7 +8103,7 @@ function renderKitchenAnalytics() {
           <div style="flex:1;background:#f1f5f9;border-radius:4px;height:18px">
             <div style="width:${pct}%;background:#7c3aed;border-radius:4px;height:100%"></div>
           </div>
-          <div style="font-size:12px;font-weight:700;color:#7c3aed;width:65px;text-align:right;flex-shrink:0">₪${total.toFixed(0)}</div>
+          <div style="font-size:12px;font-weight:700;color:#7c3aed;width:65px;text-align:right;flex-shrink:0">₽${total.toFixed(0)}</div>
         </div>`;
       }).join('')}</div>
     </div>`:''}`;
