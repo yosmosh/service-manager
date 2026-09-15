@@ -8534,11 +8534,14 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
       : allApproved ? `<span class="badge badge-warning" style="font-size:10px">⏳ Ожидает оплаты</span>` : '';
 
     const myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : null;
-    const canApprove = myRole && cfg.approvers.includes(myRole) && !((t.approvals||{})[myRole] && (t.approvals||{})[myRole].approved);
-    const canConfirmPaid = currentUser==='accountant' && allApproved && !(t.accountantConfirm && t.accountantConfirm.paid);
+    const isMyRoleRequired = myRole && cfg.approvers.includes(myRole);
+    const myApproved = isMyRoleRequired && (t.approvals||{})[myRole] && (t.approvals||{})[myRole].approved;
+    const notPaidYet = !(t.accountantConfirm && t.accountantConfirm.paid);
+    const canConfirmPaid = currentUser==='accountant' && allApproved && notPaidYet;
     actionsHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-      ${canApprove?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">✅ Согласовать</button>
+      ${isMyRoleRequired && notPaidYet && !myApproved?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">✅ Согласовать</button>
         <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="rejectBudgetTx('${ledgerKey}','${t.id}')">❌ Отклонить</button>`:''}
+      ${isMyRoleRequired && notPaidYet && myApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#d97706" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">↩️ Отменить своё согласование</button>`:''}
       ${canConfirmPaid?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="confirmBudgetPaid('${ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>`:''}
     </div>`;
   }
@@ -8688,19 +8691,28 @@ async function saveBudgetTx(ledgerKey) {
 async function approveBudgetTx(ledgerKey, id) {
   const myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : null;
   if (!myRole) return;
-  if (!confirm('Согласовать эту операцию?')) return;
   const list = getBudgetTx(ledgerKey);
   const t = list.find(x=>x.id===id);
   if (!t) return;
+  if (t.accountantConfirm && t.accountantConfirm.paid) { alert('Уже оплачено — согласование изменить нельзя'); return; }
   t.approvals = t.approvals || {};
-  t.approvals[myRole] = {approved:true, date:new Date().toISOString()};
+  const alreadyApproved = t.approvals[myRole] && t.approvals[myRole].approved;
+  // Toggle: approving is not a one-way door — the same button lets you take back
+  // your own approval, as long as it hasn't been paid yet.
+  if (alreadyApproved) {
+    if (!confirm('Отменить своё согласование этой операции?')) return;
+    delete t.approvals[myRole];
+  } else {
+    if (!confirm('Согласовать эту операцию?')) return;
+    t.approvals[myRole] = {approved:true, date:new Date().toISOString()};
+  }
   setBudgetTx(ledgerKey, list);
   if (_useFirebase) {
     clearTimeout(_saveTimer);
     const ok = await _flushState();
     if (!ok) { render(); return; }
   }
-  _showToast('✅ Согласовано', true); render();
+  _showToast(alreadyApproved ? '↩️ Согласование отменено' : '✅ Согласовано', true); render();
 }
 
 async function rejectBudgetTx(ledgerKey, id) {
@@ -8748,22 +8760,20 @@ async function delBudgetTx(ledgerKey, id) {
 
 function _renderBudgetApproverQueue(role) {
   const ledgerKeys = Object.keys(FINANCE_LEDGERS).filter(k => FINANCE_LEDGERS[k].approvers.includes(role));
-  const items = [];
+  const pending = [], approvedByMe = [];
   ledgerKeys.forEach(k => {
     getBudgetTx(k).forEach(t => {
       if (t.type !== 'expense' || t.status === 'rejected') return;
+      if (t.accountantConfirm && t.accountantConfirm.paid) return; // already paid — nothing left to change
       const already = (t.approvals||{})[role] && (t.approvals||{})[role].approved;
-      if (!already) items.push({ledgerKey:k, t});
+      (already ? approvedByMe : pending).push({ledgerKey:k, t});
     });
   });
-  items.sort((a,b)=>(a.t.date||'').localeCompare(b.t.date||''));
+  pending.sort((a,b)=>(a.t.date||'').localeCompare(b.t.date||''));
+  approvedByMe.sort((a,b)=>(b.t.date||'').localeCompare(a.t.date||''));
 
-  if (!items.length) {
-    return `<div style="max-width:600px;margin:0 auto;padding:16px"><div style="text-align:center;padding:60px 20px;color:#94a3b8">
-      <div style="font-size:48px;margin-bottom:12px">✅</div>
-      <div style="font-size:15px">Нет операций, ожидающих согласования</div></div></div>`;
-  }
-  const cards = items.map(({ledgerKey,t}) => {
+  const roleLabel = role==='alexander' ? 'Александр' : 'Йосеф';
+  const _card = ({ledgerKey,t}, mine) => {
     const otherRoles = FINANCE_LEDGERS[ledgerKey].approvers.filter(r=>r!==role);
     const otherStatus = otherRoles.map(r => {
       const a = (t.approvals||{})[r];
@@ -8772,6 +8782,13 @@ function _renderBudgetApproverQueue(role) {
         ? `<span class="badge badge-success" style="font-size:10px">✅ ${label} · ${_fmtApprovalWhen(a.date)}</span>`
         : `<span class="badge badge-gray" style="font-size:10px">⏳ ${label} ещё не согласовал</span>`;
     }).join(' ');
+    const myBadge = mine ? `<span class="badge badge-success" style="font-size:10px">✅ ${roleLabel} · ${_fmtApprovalWhen((t.approvals[role]||{}).date)}</span>` : '';
+    const actions = mine
+      ? `<button class="btn btn-outline" style="width:100%;justify-content:center;color:#d97706" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">↩️ Отменить своё согласование</button>`
+      : `<div style="display:flex;gap:8px">
+          <button class="btn btn-primary" style="flex:1;justify-content:center" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">✅ Согласовать</button>
+          <button class="btn btn-outline" style="flex:1;justify-content:center;color:#dc2626" onclick="rejectBudgetTx('${ledgerKey}','${t.id}')">❌ Отклонить</button>
+        </div>`;
     return `
     <div class="kitch-card">
       <div style="font-size:11px;color:#6b7280;margin-bottom:4px">${FINANCE_LEDGERS[ledgerKey].label}</div>
@@ -8780,18 +8797,22 @@ function _renderBudgetApproverQueue(role) {
           <div style="font-weight:700">${fmtDate(t.date)} · ${t.vendor||''}</div>
           ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
           ${t.fileRef?`<div style="margin-top:4px"><a href="${_kFileUrl(t.fileRef)}" target="_blank" style="font-size:12px;color:#2563eb">📎 ${t.fileRef.name||'Документ'}</a></div>`:''}
-          ${otherStatus?`<div style="margin-top:6px">${otherStatus}</div>`:''}
+          <div style="margin-top:6px">${myBadge} ${otherStatus}</div>
         </div>
         <div style="font-weight:700;font-size:16px;color:#dc2626;flex-shrink:0">−₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
       </div>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <button class="btn btn-primary" style="flex:1;justify-content:center" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">✅ Согласовать</button>
-        <button class="btn btn-outline" style="flex:1;justify-content:center;color:#dc2626" onclick="rejectBudgetTx('${ledgerKey}','${t.id}')">❌ Отклонить</button>
-      </div>
+      <div style="margin-top:10px">${actions}</div>
     </div>`;
-  }).join('');
-  return `<div style="max-width:600px;margin:0 auto;padding:16px">
-    <div style="text-align:center;margin-bottom:16px"><div style="font-size:15px;font-weight:700">Операции, ожидающие согласования (${items.length})</div></div>${cards}</div>`;
+  };
+
+  if (!pending.length && !approvedByMe.length) {
+    return `<div style="max-width:600px;margin:0 auto;padding:16px"><div style="text-align:center;padding:60px 20px;color:#94a3b8">
+      <div style="font-size:48px;margin-bottom:12px">✅</div>
+      <div style="font-size:15px">Нет операций, ожидающих согласования</div></div></div>`;
+  }
+  const pendingHtml = pending.length ? `<div style="text-align:center;margin:16px 0 10px"><div style="font-size:15px;font-weight:700">Ожидают согласования (${pending.length})</div></div>${pending.map(x=>_card(x,false)).join('')}` : '';
+  const approvedHtml = approvedByMe.length ? `<div style="text-align:center;margin:20px 0 10px"><div style="font-size:13px;font-weight:700;color:#166534">Согласовано вами, ожидает остальных (${approvedByMe.length})</div></div>${approvedByMe.map(x=>_card(x,true)).join('')}` : '';
+  return `<div style="max-width:600px;margin:0 auto;padding:16px">${pendingHtml}${approvedHtml}</div>`;
 }
 
 function _renderBudgetAccountantQueue() {
