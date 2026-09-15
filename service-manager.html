@@ -8757,7 +8757,8 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
       ${isMyRoleRequired && notPaidYet && !myApproved?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">✅ Согласовать</button>
         <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="rejectBudgetTx('${ledgerKey}','${t.id}')">❌ Отклонить</button>`:''}
       ${isMyRoleRequired && notPaidYet && myApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#d97706" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">↩️ Отменить своё согласование</button>`:''}
-      ${canConfirmPaid?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="confirmBudgetPaid('${ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>`:''}
+      ${canConfirmPaid?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="confirmBudgetPaid('${ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>
+        <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="declineBudgetPaid('${ledgerKey}','${t.id}')">❌ Отказать в оплате</button>`:''}
     </div>`;
   }
   const editActions = currentUser==='owner' ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
@@ -8989,6 +8990,33 @@ async function confirmBudgetPaid(ledgerKey, id) {
   _showToast('✅ Оплата подтверждена', true); render();
 }
 
+// The accountant is the last line before money actually moves — she can find a problem
+// even after both approvers signed off (wrong invoice, a compliance reason payment isn't
+// allowed, etc.). That's a real decision, same weight as Alexander's or the owner's own
+// rejection — so it goes through the same status:'rejected' path, which _budgetTxMonthKey
+// already keeps out of every future month's forecast, instead of just sitting unconfirmed
+// forever and quietly dragging every later month down.
+async function declineBudgetPaid(ledgerKey, id) {
+  if (currentUser !== 'accountant') return;
+  const list = getBudgetTx(ledgerKey);
+  const t = list.find(x=>x.id===id);
+  if (!t) return;
+  if (t.accountantConfirm && t.accountantConfirm.paid) { alert('Уже оплачено — отклонить нельзя'); return; }
+  const reason = prompt('Причина отказа в оплате (например: неверный счёт, не подлежит оплате):');
+  if (reason === null) return;
+  t.status = 'rejected';
+  t.rejectReason = reason;
+  t.rejectedBy = currentUser;
+  t.rejectedAt = new Date().toISOString();
+  setBudgetTx(ledgerKey, list);
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) { render(); return; }
+  }
+  _showToast('❌ Отклонено бухгалтером', false); render();
+}
+
 async function delBudgetTx(ledgerKey, id) {
   if (currentUser !== 'owner') return;
   if (!confirm('Удалить операцию безвозвратно?')) return;
@@ -9090,7 +9118,10 @@ function _renderBudgetAccountantQueue() {
         </div>
         <div style="font-weight:700;font-size:16px;color:#dc2626;flex-shrink:0">−₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
       </div>
-      <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:10px;background:#16a34a;border-color:#16a34a" onclick="confirmBudgetPaid('${ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-primary" style="flex:1;justify-content:center;background:#16a34a;border-color:#16a34a" onclick="confirmBudgetPaid('${ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>
+        <button class="btn btn-outline" style="flex:1;justify-content:center;color:#dc2626" onclick="declineBudgetPaid('${ledgerKey}','${t.id}')">❌ Отказать в оплате</button>
+      </div>
     </div>`;
   }).join('');
   return `<div style="max-width:600px;margin:0 auto;padding:16px">
