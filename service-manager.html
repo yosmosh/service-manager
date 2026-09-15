@@ -8417,10 +8417,12 @@ function _renderBudgetLedger(ledgerKey) {
       </div>`).join('') || '<div style="color:#94a3b8;font-size:13px">Нет данных</div>'}
     </div></div>` : '';
 
-  const addBtn = canCreate ? `<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-    <button class="btn btn-primary" onclick="openBudgetTxModal('${ledgerKey}',null,'expense')">+ Расход</button>
-    <button class="btn btn-outline" onclick="openBudgetTxModal('${ledgerKey}',null,'income')">+ Приход</button>
-    ${cfg.useFunds?`<button class="btn btn-outline" onclick="openBudgetFundsModal()">⚙️ Фонды</button>`:''}
+  // Income can only be entered by the owner — everyone else with access to this ledger
+  // (e.g. admin) can view income but not record it themselves.
+  const addBtn = (canCreate || currentUser==='owner') ? `<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+    ${canCreate?`<button class="btn btn-primary" onclick="openBudgetTxModal('${ledgerKey}',null,'expense')">+ Расход</button>`:''}
+    ${currentUser==='owner'?`<button class="btn btn-outline" onclick="openBudgetTxModal('${ledgerKey}',null,'income')">+ Приход</button>`:''}
+    ${cfg.useFunds && currentUser==='owner'?`<button class="btn btn-outline" onclick="openBudgetFundsModal()">⚙️ Фонды</button>`:''}
   </div>` : '';
 
   if (!monthTx.length) {
@@ -8498,11 +8500,16 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   const type = t.type || defaultType || 'expense';
   const fundOpts = cfg.useFunds ? getBudgetFunds().map(f=>`<option value="${f.name}" ${t.fund===f.name?'selected':''}>${f.name}</option>`).join('') : '';
 
+  // Kitchen/maintenance income has exactly one source in practice — no point asking
+  // for a name/recipient on those. Funded ledgers (personal budget) keep the field
+  // since income there can come from different places.
+  const vendorNeeded = cfg.useFunds || type !== 'income';
+
   document.getElementById('modal-title').textContent = id ? '✏️ Редактировать операцию' : (type==='income'?'💰 Новый приход':'💸 Новый расход');
   document.getElementById('modal-body').innerHTML = `
     ${id?'<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#92400e">⚠️ Изменение операции сбросит все согласования — потребуется согласовать заново</div>':''}
     <div class="form-group"><label>Тип</label>
-      <select class="form-control" id="bt-type">
+      <select class="form-control" id="bt-type" onchange="_toggleBudgetVendorField('${ledgerKey}')">
         <option value="expense" ${type==='expense'?'selected':''}>Расход</option>
         <option value="income" ${type==='income'?'selected':''}>Приход</option>
         <option value="refund" ${type==='refund'?'selected':''}>Возврат средств</option>
@@ -8512,7 +8519,7 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
       <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="bt-date" value="${t.date||today}"></div>
       <div class="form-group"><label>Время</label><input type="time" class="form-control" id="bt-time" value="${t.time||nowTime}"></div>
     </div>
-    <div class="form-group"><label>Название / получатель *</label><input class="form-control" id="bt-vendor" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="Поставщик, сотрудник, назначение..."></div>
+    <div class="form-group" id="bt-vendor-group" ${vendorNeeded?'':'hidden'}><label>Название / получатель *</label><input class="form-control" id="bt-vendor" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="Поставщик, сотрудник, назначение..."></div>
     <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="bt-amount" value="${t.amount||''}" min="0" step="0.01"></div>
     ${cfg.useFunds ? `<div class="form-group"><label>Фонд *</label><select class="form-control" id="bt-fund"><option value="">— Выберите —</option>${fundOpts}</select></div>` : ''}
     <div class="form-group">
@@ -8528,6 +8535,14 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
+function _toggleBudgetVendorField(ledgerKey) {
+  const cfg = FINANCE_LEDGERS[ledgerKey];
+  const type = document.getElementById('bt-type').value;
+  const group = document.getElementById('bt-vendor-group');
+  if (!group) return;
+  group.hidden = !(cfg.useFunds || type !== 'income');
+}
+
 function onBudgetFileSelect(input) {
   const file = input.files && input.files[0];
   if (!file) return;
@@ -8540,10 +8555,14 @@ function onBudgetFileSelect(input) {
 async function saveBudgetTx(ledgerKey) {
   const cfg = FINANCE_LEDGERS[ledgerKey];
   const type = document.getElementById('bt-type').value;
+  // Income can only be recorded by the owner — others with access to this ledger
+  // (e.g. admin) can view it but not create or edit it.
+  if (type === 'income' && currentUser !== 'owner') { alert('Приход может вносить только владелец'); return; }
   const date = document.getElementById('bt-date').value;
   if (!date) { alert('Укажите дату'); return; }
-  const vendor = (document.getElementById('bt-vendor').value||'').trim();
-  if (!vendor) { alert('Укажите название/получателя'); return; }
+  const vendorNeeded = cfg.useFunds || type !== 'income';
+  const vendor = vendorNeeded ? (document.getElementById('bt-vendor').value||'').trim() : 'Приход';
+  if (vendorNeeded && !vendor) { alert('Укажите название/получателя'); return; }
   const amount = document.getElementById('bt-amount').value;
   if (!amount || Number(amount) <= 0) { alert('Укажите сумму'); return; }
   let fund = '';
