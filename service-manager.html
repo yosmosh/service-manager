@@ -8654,7 +8654,12 @@ function renderBudget() {
     <button class="btn btn-outline" style="font-size:12px;padding:6px 14px" onclick="reconcileBudgetAmounts()">🎯 Уточнить суммы (копейки)</button>
   </div>` : '';
 
-  return releaseBar + importBar + reconcileBar + tabBar + monthNav + _renderBudgetLedger(budgetLedger);
+  const declinedBar = (isOwner && getLS('maintenance_preaug_imported') && !getLS('budget_declined_fixed')) ? `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+    <span style="font-size:12px;color:#991b1b">⚠️ 2 счёта, которые бухгалтер явно отметил "не оплачено" (с датой), сейчас числятся как ожидающие — их нужно пометить отклонёнными</span>
+    <button class="btn btn-outline" style="font-size:12px;padding:6px 14px" onclick="fixDeclinedInvoices()">🚫 Исправить отклонённые счета</button>
+  </div>` : '';
+
+  return releaseBar + importBar + reconcileBar + declinedBar + tabBar + monthNav + _renderBudgetLedger(budgetLedger);
 }
 
 function switchBudgetLedger(k) { budgetLedger = k; render(); }
@@ -9299,9 +9304,9 @@ const _MAINTENANCE_PREAUG_INCOME = [{"date":"2026-03-12","vendor":"Приход"
 
 async function importMaintenancePreAugust() {
   if (currentUser !== 'owner') return;
-  if (getLS('maintenance_preaug_imported')) { alert('׀­ׁ‚׀° ׀¸ׁׁ‚׀¾ׁ€׀¸ׁ ׁƒ׀¶׀µ ׀±ׁ‹׀»׀° ׀¸׀¼׀¿׀¾ׁ€ׁ‚׀¸ׁ€׀¾׀²׀°׀½׀° ׁ€׀°׀½׀µ׀µ.'); return; }
+  if (getLS('maintenance_preaug_imported')) { alert('Эта история уже была импортирована ранее.'); return; }
   const expenseCount = Object.values(_MAINTENANCE_PREAUG_EXPENSES).reduce((s,a)=>s+a.length,0);
-  if (!confirm('׀˜׀¼׀¿׀¾ׁ€ׁ‚׀¸ׁ€׀¾׀²׀°ׁ‚ׁ ׀¸ׁׁ‚׀¾ׁ€׀¸ׁ ׀¢׀ ׀¸ ׀·׀°ׁ€׀¿׀»׀°ׁ‚ ׀·׀° ׀¼׀°ׁ€ׁ‚-׀°׀²׀³ׁƒׁׁ‚ 2026 (' + expenseCount + ' ׁ€׀°ׁׁ…׀¾׀´׀¾׀² + ' + _MAINTENANCE_PREAUG_INCOME.length + ' ׀¿ׁ€׀¸ׁ…׀¾׀´׀¾׀²)?\n\n׀­ׁ‚׀¾ ׁ€׀°׀·׀¾׀²׀¾׀µ ׀´׀µ׀¹ׁׁ‚׀²׀¸׀µ.')) return;
+  if (!confirm('Импортировать историю ТО и зарплат за март-август 2026 (' + expenseCount + ' расходов + ' + _MAINTENANCE_PREAUG_INCOME.length + ' приходов)?\n\nЭто разовое действие.')) return;
 
   const list = getBudgetTx('maintenance');
   let idx = 0;
@@ -9326,12 +9331,31 @@ async function importMaintenancePreAugust() {
   setLS('maintenance_preaug_imported', true);
 
   if (_useFirebase) {
-    _showToast('נ’¾ ׀˜׀¼׀¿׀¾ׁ€ׁ‚׀¸ׁ€ׁƒ׀µ׀¼...', true);
+    _showToast('💾 Импортируем...', true);
     clearTimeout(_saveTimer);
     const ok = await _flushState();
-    if (!ok) { alert('ג ן¸ ׀ׁˆ׀¸׀±׀÷׀° ׁ׀¾ׁ…ׁ€׀°׀½׀µ׀½׀¸ׁ ג€” ׀¿׀¾׀¿ׁ€׀¾׀±ׁƒ׀¹ׁ‚׀µ ׀½׀°׀¶׀°ׁ‚ׁ ׀÷׀½׀¾׀¿׀÷ׁƒ ׀µׁ‰ׁ‘ ׁ€׀°׀·'); setLS('maintenance_preaug_imported', false); return; }
+    if (!ok) { alert('⚠️ Ошибка сохранения — попробуйте нажать кнопку ещё раз'); setLS('maintenance_preaug_imported', false); return; }
   }
-  alert('ג… ׀˜׀¼׀¿׀¾ׁ€ׁ‚׀¸ׁ€׀¾׀²׀°׀½׀¾ ' + expenseCount + ' ׁ€׀°ׁׁ…׀¾׀´׀¾׀² ׀¸ ' + _MAINTENANCE_PREAUG_INCOME.length + ' ׀¿ׁ€׀¸ׁ…׀¾׀´׀¾׀² ׀·׀° ׀¼׀°ׁ€ׁ‚-׀°׀²׀³ׁƒׁׁ‚.');
+  alert('✅ Импортировано ' + expenseCount + ' расходов и ' + _MAINTENANCE_PREAUG_INCOME.length + ' приходов за март-август.');
+  render();
+}
+async function fixDeclinedInvoices() {
+  if (currentUser !== 'owner') return;
+  if (getLS('budget_declined_fixed')) { alert('Уже исправлено ранее.'); return; }
+  const ids = ['imported_maintenance_preaug_mar_48', 'imported_maintenance_preaug_may_131'];
+  const list = getBudgetTx('maintenance');
+  let fixed = 0;
+  list.forEach(t => {
+    if (ids.includes(t.id) && t.status !== 'rejected') { t.status = 'rejected'; fixed++; }
+  });
+  setBudgetTx('maintenance', list);
+  setLS('budget_declined_fixed', true);
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) { alert('⚠️ Ошибка сохранения — попробуйте нажать кнопку ещё раз'); setLS('budget_declined_fixed', false); return; }
+  }
+  alert('✅ Исправлено записей: ' + fixed + '. Счета, которые бухгалтер явно пометил "не оплачено" (с датой), теперь помечены как отклонённые.');
   render();
 }
 init();
