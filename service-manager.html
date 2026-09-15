@@ -8414,8 +8414,13 @@ function _fmtApprovalWhen(s) {
 // the running total through today. That's what makes browsing back to March show
 // March's own balance instead of today's, which is what a real ledger should do.
 function _budgetBalance(ledgerKey, throughMonthKey) {
-  let tx = getBudgetTx(ledgerKey).filter(t=>t.status!=='rejected');
-  if (throughMonthKey) tx = tx.filter(t => _budgetTxMonthKey(t) <= throughMonthKey);
+  // Note: rejected transactions are NOT filtered out here — the source Google Sheets count
+  // a rejected request's amount toward that month's own "Предварительный остаток" too (it's
+  // only excluded once actually resolved as unpaid history), and never toward "Фактический"
+  // since a rejected item is never marked paid. Excluding them entirely would under-count
+  // the forecast relative to the sheets.
+  const allTx = getBudgetTx(ledgerKey);
+  const tx = throughMonthKey ? allTx.filter(t => _budgetTxMonthKey(t) <= throughMonthKey) : allTx;
   let income = 0, expensePrelim = 0, expenseActual = 0;
   const byFund = {};
   tx.forEach(t => {
@@ -8434,7 +8439,32 @@ function _budgetBalance(ledgerKey, throughMonthKey) {
       }
     }
   });
-  return { income, expensePrelim, expenseActual, prelimBalance: income-expensePrelim, actualBalance: income-expenseActual, byFund };
+  const actualBalance = income - expenseActual;
+
+  // Предварительный остаток mirrors the source Google Sheets' own convention: each month's
+  // forecast resets to the PRIOR month's actual (paid-only) balance, then adds only this
+  // month's own income/expenses (pending, approved, or rejected alike) — so an old stuck
+  // item only ever shows as a drag in the month it happened, never forever after.
+  let prelimBalance;
+  if (throughMonthKey) {
+    let priorIncome = 0, priorPaidExp = 0, thisIncome = 0, thisExpAll = 0;
+    allTx.forEach(t => {
+      const amt = Number(t.amount)||0;
+      const mk = _budgetTxMonthKey(t);
+      if (mk < throughMonthKey) {
+        if (t.type === 'income' || t.type === 'refund') priorIncome += amt;
+        else if (t.accountantConfirm && t.accountantConfirm.paid) priorPaidExp += amt;
+      } else if (mk === throughMonthKey) {
+        if (t.type === 'income' || t.type === 'refund') thisIncome += amt;
+        else thisExpAll += amt;
+      }
+    });
+    prelimBalance = (priorIncome - priorPaidExp) + (thisIncome - thisExpAll);
+  } else {
+    prelimBalance = income - expensePrelim;
+  }
+
+  return { income, expensePrelim, expenseActual, prelimBalance, actualBalance, byFund };
 }
 
 function renderBudget() {
