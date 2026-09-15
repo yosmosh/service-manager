@@ -6576,7 +6576,14 @@ async function init() {
     document.querySelectorAll('input[type="date"]:not(.flatpickr-input)').forEach(function(el) {
       flatpickr(el, {
         locale: 'ru',
+        // dateFormat stays Y-m-d on purpose — it's what the underlying input's .value
+        // holds, and everything else in the app (filtering, sorting, month grouping)
+        // reads/compares dates in that exact form. altInput shows a separate,
+        // day-first field to the user without touching that stored value.
         dateFormat: 'Y-m-d',
+        altInput: true,
+        altInputClass: el.className,
+        altFormat: 'd.m.Y',
         allowInput: true,
         disableMobile: true
       });
