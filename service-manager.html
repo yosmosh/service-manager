@@ -8468,7 +8468,12 @@ function renderBudget() {
     <button class="btn btn-outline" style="font-size:12px;padding:6px 14px" onclick="importBudgetHistory()">📥 Импортировать историю</button>
   </div>` : '';
 
-  return releaseBar + importBar + tabBar + monthNav + _renderBudgetLedger(budgetLedger);
+  const reconcileBar = (isOwner && getLS('budget_history_imported') && !getLS('budget_amounts_reconciled')) ? `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+    <span style="font-size:12px;color:#991b1b">⚠️ Суммы округлены до целых рублей при импорте — есть расхождение в несколько рублей с Google Таблицами</span>
+    <button class="btn btn-outline" style="font-size:12px;padding:6px 14px" onclick="reconcileBudgetAmounts()">🎯 Уточнить суммы (копейки)</button>
+  </div>` : '';
+
+  return releaseBar + importBar + reconcileBar + tabBar + monthNav + _renderBudgetLedger(budgetLedger);
 }
 
 function switchBudgetLedger(k) { budgetLedger = k; render(); }
@@ -9048,6 +9053,41 @@ async function importKitchenPreSeptember() {
     if (!ok) { alert('⚠️ Ошибка сохранения — попробуйте нажать кнопку ещё раз'); setLS('kitchen_presep_imported', false); return; }
   }
   alert('✅ Импортировано ' + expenseCount + ' расходов и ' + _KITCHEN_PRESEP_INCOME.length + ' приходов за март-август. Баланс теперь должен совпадать с сентябрьским началом.');
+  render();
+}
+
+// ==============================
+// УТОЧНЕНИЕ СУММ (одноразовое) — импорт из CSV округлял суммы до целых рублей,
+// из-за чего остаток отличался от Google Таблиц на несколько рублей. Здесь суммы
+// заменяются на точные значения (с копейками) из исходных таблиц, по id записи.
+// ==============================
+const _BUDGET_AMOUNT_FIXES = {"kitchen":{"imported_kitchen_1":105728.29,"imported_kitchen_2":81435.4,"imported_kitchen_4":21218.73,"imported_kitchen_5":328092.45,"imported_kitchen_6":39744.3,"imported_kitchen_7":17817.27,"imported_kitchen_11":43297.24,"imported_kitchen_13":106985.88,"imported_kitchen_14":16770.65,"imported_kitchen_16":47305.7,"imported_kitchen_17":97247.66,"imported_kitchen_presep_mar_2":62073.48,"imported_kitchen_presep_mar_3":25760.6,"imported_kitchen_presep_mar_5":345219.14,"imported_kitchen_presep_mar_8":155327.93,"imported_kitchen_presep_mar_10":2976.36,"imported_kitchen_presep_mar_11":54045.42,"imported_kitchen_presep_mar_12":57788.3,"imported_kitchen_presep_mar_17":43571.5,"imported_kitchen_presep_mar_19":37198.34,"imported_kitchen_presep_mar_20":11356.88,"imported_kitchen_presep_mar_21":320147.87,"imported_kitchen_presep_mar_22":12828.01,"imported_kitchen_presep_mar_23":17346.88,"imported_kitchen_presep_mar_28":83797.46,"imported_kitchen_presep_mar_29":36581.61,"imported_kitchen_presep_mar_30":89745.74,"imported_kitchen_presep_mar_31":40781.12,"imported_kitchen_presep_mar_35":29536.97,"imported_kitchen_presep_mar_36":26280.8,"imported_kitchen_presep_mar_37":120589.74,"imported_kitchen_presep_mar_39":21968.61,"imported_kitchen_presep_mar_40":56602.48,"imported_kitchen_presep_mar_41":34770.45,"imported_kitchen_presep_apr_49":74817.87,"imported_kitchen_presep_apr_51":87890.4,"imported_kitchen_presep_apr_55":103644.33,"imported_kitchen_presep_apr_56":31962.22,"imported_kitchen_presep_apr_59":180608.32,"imported_kitchen_presep_apr_60":14209.22,"imported_kitchen_presep_apr_61":195730.41,"imported_kitchen_presep_apr_62":57047.2,"imported_kitchen_presep_apr_64":134670.18,"imported_kitchen_presep_apr_68":37236.05,"imported_kitchen_presep_apr_69":1808.52,"imported_kitchen_presep_apr_70":93923.86,"imported_kitchen_presep_apr_71":35583.24,"imported_kitchen_presep_may_80":143718.35,"imported_kitchen_presep_may_84":43688.44,"imported_kitchen_presep_may_86":444266.08,"imported_kitchen_presep_may_87":15042.1,"imported_kitchen_presep_may_88":14019.55,"imported_kitchen_presep_may_89":52357.06,"imported_kitchen_presep_may_93":94039.2,"imported_kitchen_presep_may_95":43004.83,"imported_kitchen_presep_may_98":106960.47,"imported_kitchen_presep_may_101":140622.19,"imported_kitchen_presep_may_104":40397.87,"imported_kitchen_presep_may_106":2048.6,"imported_kitchen_presep_may_111":73537.49,"imported_kitchen_presep_jun_118":112295.8,"imported_kitchen_presep_jun_119":3832.69,"imported_kitchen_presep_jun_121":14460.44,"imported_kitchen_presep_jun_122":20581.89,"imported_kitchen_presep_jun_123":23081.11,"imported_kitchen_presep_jun_124":158472.61,"imported_kitchen_presep_jun_125":280212.04,"imported_kitchen_presep_jun_126":24072.68,"imported_kitchen_presep_jun_127":68693.14,"imported_kitchen_presep_jun_130":12023.86,"imported_kitchen_presep_jun_131":58039.37,"imported_kitchen_presep_jun_134":90964.8,"imported_kitchen_presep_jun_135":105040.03,"imported_kitchen_presep_jun_136":129785.48,"imported_kitchen_presep_jun_137":41902.88,"imported_kitchen_presep_jun_138":21526.65,"imported_kitchen_presep_jun_141":90436.53,"imported_kitchen_presep_jun_146":12418.7,"imported_kitchen_presep_jun_147":35311.75,"imported_kitchen_presep_jun_148":201624.8,"imported_kitchen_presep_jun_150":3853.08,"imported_kitchen_presep_jun_151":54268.16,"imported_kitchen_presep_aug_153":123209.58,"imported_kitchen_presep_aug_156":28362.39,"imported_kitchen_presep_aug_157":265118.2,"imported_kitchen_presep_aug_158":133847.4,"imported_kitchen_presep_aug_162":76805.06,"imported_kitchen_presep_aug_163":94039.2,"imported_kitchen_presep_aug_164":53821.55,"imported_kitchen_presep_aug_165":3671.3,"imported_kitchen_presep_income_166":549236.89},"maintenance":{"imported_maintenance_3":66238.68,"imported_maintenance_11":114527.12,"imported_maintenance_16":33083.46,"imported_maintenance_20":15870.2,"imported_maintenance_23":171678.4,"imported_maintenance_25":9249.91,"imported_maintenance_29":923.6,"imported_maintenance_30":72249.26}};
+
+async function reconcileBudgetAmounts() {
+  if (currentUser !== 'owner') return;
+  if (getLS('budget_amounts_reconciled')) { alert('Суммы уже уточнены ранее.'); return; }
+  let fixedCount = 0;
+  Object.keys(_BUDGET_AMOUNT_FIXES).forEach(ledgerKey => {
+    const fixes = _BUDGET_AMOUNT_FIXES[ledgerKey];
+    const list = getBudgetTx(ledgerKey);
+    let changed = false;
+    list.forEach(t => {
+      if (Object.prototype.hasOwnProperty.call(fixes, t.id) && t.amount !== fixes[t.id]) {
+        t.amount = fixes[t.id];
+        changed = true;
+        fixedCount++;
+      }
+    });
+    if (changed) setBudgetTx(ledgerKey, list);
+  });
+  setLS('budget_amounts_reconciled', true);
+  if (_useFirebase) {
+    _showToast('💾 Уточняем суммы...', true);
+    clearTimeout(_saveTimer);
+    const ok = await _flushState();
+    if (!ok) { alert('⚠️ Ошибка сохранения — попробуйте нажать кнопку ещё раз'); setLS('budget_amounts_reconciled', false); return; }
+  }
+  alert('✅ Уточнено ' + fixedCount + ' сумм (копейки) — теперь совпадают на 100% с Google Таблицами.');
   render();
 }
 init();
