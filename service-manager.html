@@ -8529,9 +8529,31 @@ function _isLastDaysOfMonth(dateStr) {
   return d.getDate() >= lastDay - 1;
 }
 
-// Which month a transaction belongs to for the monthly view: once it's actually paid,
-// that's the date that matters (when the money left) — not whenever the expense was
-// first logged into the system, which can be a different, earlier month.
+// Historically-imported records (Kitchen/Maintenance, March-September) came from one
+// specific Google Sheets tab, and that tab — not the row's own date, and not whenever it
+// was later marked paid — is what the source spreadsheets' own month totals were built
+// from. A sheet regularly carries a very-late invoice into the FOLLOWING month's tab
+// (dated e.g. 31/03 but physically pasted into April's sheet), while keeping its own
+// paid-date column without ever moving the row to a later tab once paid. Using paid-date
+// or the raw entered date here — the right call for live, ongoing transactions — visibly
+// drifted every historical month away from the sheets once real paid-dates started
+// spreading across months (verified: switching a historical record to its true source tab
+// instead reproduces every month's sheet-stated Предварительный/Фактический остаток
+// exactly, for every month, on both ledgers). The import gave every record an id that
+// still encodes which tab it came from, recovered here.
+function _importedTabMonth(t) {
+  if (!t.imported) return null;
+  const m = /pre(?:sep|aug)_(mar|apr|may|jun|aug)_/.exec(t.id || '');
+  if (m) return {mar:'2026-03', apr:'2026-04', may:'2026-05', jun:'2026-06', aug:'2026-08'}[m[1]];
+  if (/^imported_(kitchen|maintenance)_\d+$/.test(t.id || '')) return '2026-09';
+  return null;
+}
+
+// Which month a transaction belongs to for the monthly view. Historically-imported
+// records always use their source tab (see _importedTabMonth above). For everything else
+// (live, ongoing transactions): once it's actually paid, that's the date that matters
+// (when the money left) — not whenever the expense was first logged into the system,
+// which can be a different, earlier month.
 //
 // An unpaid expense only rolls forward into the current open month if BOTH (a) its own
 // month has already closed and (b) it was entered in that month's last two days — i.e.
@@ -8553,11 +8575,13 @@ function _isLastDaysOfMonth(dateStr) {
 // nothing left to act on, so they should only ever count against the month they were
 // entered/rejected in — same as the source sheets — not keep resurfacing forever.
 function _budgetTxMonthKey(t) {
-  const paidDate = t.accountantConfirm && t.accountantConfirm.paid && t.accountantConfirm.date;
-  if (paidDate) return paidDate.slice(0,7);
   const entered = (t.date || '').slice(0,7);
   if (t.type === 'income' || t.type === 'refund') return entered;
+  const importedTab = _importedTabMonth(t);
+  if (importedTab) return importedTab;
   if (t.status === 'rejected') return entered;
+  const paidDate = t.accountantConfirm && t.accountantConfirm.paid && t.accountantConfirm.date;
+  if (paidDate) return paidDate.slice(0,7);
   const nowMk = _currentMonthKey();
   if (entered < nowMk && _isLastDaysOfMonth(t.date)) return nowMk;
   return entered;
