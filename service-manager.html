@@ -2560,7 +2560,7 @@ function onToggle() {
   const dg = document.getElementById('date-grp');
   dg.style.display = cb.checked ? '' : 'none';
   if (cb.checked && !document.getElementById('done-date').value)
-    document.getElementById('done-date').value = new Date().toISOString().slice(0,10);
+    document.getElementById('done-date').value = _todayLocal();
 }
 
 function onVisitToggle(vi) {
@@ -2590,7 +2590,7 @@ function onVisitToggle(vi) {
   lbl.textContent = cb.checked ? '✅ Выполнено' : '⏳ Не выполнено';
   dg.style.display = cb.checked ? '' : 'none';
   if (cb.checked && !document.getElementById(`v-date-${vi}`).value)
-    document.getElementById(`v-date-${vi}`).value = new Date().toISOString().slice(0,10);
+    document.getElementById(`v-date-${vi}`).value = _todayLocal();
 }
 
 function onVisitFilePick(vi, input) {
@@ -2812,6 +2812,16 @@ function fmtDate(d) {
   const parts = d.split('-');
   if (parts.length === 3) return parts[2] + '.' + parts[1] + '.' + parts[0];
   return d;
+}
+
+// "Today" as YYYY-MM-DD in the user's own LOCAL calendar day — NOT
+// new Date().toISOString().slice(0,10), which reports the date in UTC. In timezones
+// ahead of UTC (Israel included) that's flat wrong for part of every day: e.g. 1am on
+// the 16th locally is still 10pm on the 15th in UTC, so every "today" default across the
+// app was quietly pre-filling yesterday's date for a few hours every night.
+function _todayLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
 function fileEmoji(t) {
@@ -3438,7 +3448,7 @@ function openRequestModal(editId) {
     </div>
     <div class="form-group">
       <label>Дата</label>
-      <input type="date" class="form-control" id="req-date" value="${ex?.date||new Date().toISOString().slice(0,10)}">
+      <input type="date" class="form-control" id="req-date" value="${ex?.date||_todayLocal()}">
     </div>
     <div class="form-group">
       <label style="display:flex;align-items:center;justify-content:space-between">
@@ -3678,7 +3688,7 @@ function saveAdminResponse(reqId) {
   if (idx >= 0) {
     list[idx].status = status;
     list[idx].adminComment = comment;
-    list[idx].adminDate = new Date().toISOString().slice(0,10);
+    list[idx].adminDate = _todayLocal();
     // Reset owner decision when admin changes their answer
     if (list[idx].ownerApproval) { list[idx].ownerComment = ''; list[idx].ownerDate = ''; delete list[idx].ownerApproval; }
   }
@@ -3716,7 +3726,7 @@ function saveOwnerDecision(reqId, decision) {
   if (idx >= 0) {
     list[idx].status = decision;
     list[idx].ownerComment = comment;
-    list[idx].ownerDate = new Date().toISOString().slice(0,10);
+    list[idx].ownerDate = _todayLocal();
   }
   saveRequests(list);
   closeModal();
@@ -3757,7 +3767,7 @@ function exportCSV() {
   const blob = new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `export_${new Date().toISOString().slice(0,10)}.csv`;
+  a.href = url; a.download = `export_${_todayLocal()}.csv`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
@@ -5081,7 +5091,7 @@ function togglePayment(pid, yr, mo) {
   if (recs[key] && recs[key].paid) {
     delete recs[key];
   } else {
-    recs[key] = {paid:true, date: new Date().toISOString().slice(0,10)};
+    recs[key] = {paid:true, date: _todayLocal()};
   }
   setLS('payment_records', recs);
   if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
@@ -5251,7 +5261,7 @@ function openSosModal(editId) {
     </div>
     <div class="form-group">
       <label>Дата</label>
-      <input type="date" class="form-control" id="sos-date" value="${ex?.date||new Date().toISOString().slice(0,10)}">
+      <input type="date" class="form-control" id="sos-date" value="${ex?.date||_todayLocal()}">
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div class="form-group">
@@ -7317,7 +7327,7 @@ function _saveInvSnapshot() {
   const now = new Date();
   const mk = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   const snaps = getKitchenInvSnapshots();
-  snaps[mk] = {date: now.toISOString().slice(0,10), items: getKitchenInventory().map(it=>({...it}))};
+  snaps[mk] = {date: _todayLocal(), items: getKitchenInventory().map(it=>({...it}))};
   setLS('kitchen_inv_snapshots', snaps);
   if (_useFirebase) _scheduleSave();
 }
@@ -7334,7 +7344,7 @@ function _unitSel(val, onchange, style='') {
 function switchKitchenTab(t) { kitchenTab = t; render(); }
 
 function renderKitchenWorker() {
-  const today = new Date().toISOString().slice(0,10);
+  const today = _todayLocal();
   const suppliers = getKitchenSuppliers();
   const todayDeliveries = getKitchenDeliveries()
     .filter(d => (d.date||'').startsWith(today))
@@ -7591,7 +7601,7 @@ function openKitchenDeliveryModal(id) {
   const supOpts = suppliers.map(s=>`<option value="${s.id}" ${del.supplier_id===s.id?'selected':''}>${s.name}</option>`).join('');
   const stOpts = [['pending','⏳ Ожидается'],['received','✅ Получено'],['cancelled','❌ Отменено']]
     .map(([v,l])=>`<option value="${v}" ${(del.status||'pending')===v?'selected':''}>${l}</option>`).join('');
-  const today = new Date().toISOString().slice(0,10);
+  const today = _todayLocal();
 
   document.getElementById('modal-title').textContent = id?'✏️ Редактировать доставку':'🚚 Новая доставка';
   document.getElementById('modal-body').innerHTML = `
@@ -7740,7 +7750,7 @@ async function saveKitchenDelivery() {
 
 function _applyDeliveryToInventory(items) {
   const inv = getKitchenInventory();
-  const today = new Date().toISOString().slice(0,10);
+  const today = _todayLocal();
   items.forEach(it => {
     if (!it.name) return;
     const existing = inv.find(p=>p.name.trim().toLowerCase()===it.name.trim().toLowerCase());
@@ -7774,7 +7784,7 @@ function delKitchenDelivery(id) {
 // ---------- INVENTORY ----------
 
 function _invTable(inv, canEdit, readonly) {
-  const today = new Date().toISOString().slice(0,10);
+  const today = _todayLocal();
   const rows = inv.map(it => {
     const low = !readonly && it.min_qty!=='' && it.min_qty!==undefined && Number(it.qty||0)<=Number(it.min_qty||0);
     const expired = it.expiry && it.expiry < today;
@@ -7883,7 +7893,7 @@ async function saveKitchenInventoryItem() {
     unit: document.getElementById('ki-unit').value.trim(),
     min_qty: document.getElementById('ki-min').value,
     expiry: document.getElementById('ki-expiry').value,
-    updated: new Date().toISOString().slice(0,10),
+    updated: _todayLocal(),
   };
   const list = getKitchenInventory();
   if (_editingKitchenInventory) { const idx=list.findIndex(i=>i.id===_editingKitchenInventory); if(idx>=0)list[idx]=item;else list.push(item); }
@@ -7965,7 +7975,7 @@ function openKitchenInvoiceModal(id) {
   if (!_kitchenInvoiceItems.length) _kitchenInvoiceItems = [{name:'',qty:'',unit:'',price:''}];
   const suppliers = getKitchenSuppliers();
   const supOpts = suppliers.map(s=>`<option value="${s.id}" ${inv.supplier_id===s.id?'selected':''}>${s.name}</option>`).join('');
-  const today = new Date().toISOString().slice(0,10);
+  const today = _todayLocal();
 
   document.getElementById('modal-title').textContent = id?'✏️ Редактировать счёт':'🧾 Новый счёт';
   document.getElementById('modal-body').innerHTML = `
@@ -8172,7 +8182,7 @@ function openDeliveryFromInvoice(inv) {
       📄 Данные перенесены из накладной ${inv.invoice_num?'<b>#'+inv.invoice_num+'</b>':''} от ${inv.date||''}
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="kd-date" value="${inv.date||new Date().toISOString().slice(0,10)}"></div>
+      <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="kd-date" value="${inv.date||_todayLocal()}"></div>
       <div class="form-group"><label>Статус</label><select class="form-control" id="kd-status">${stOpts}</select></div>
     </div>
     <div class="form-group"><label>Поставщик</label>
@@ -8298,7 +8308,7 @@ function renderKitchenExpense() {
 function openDailyUsageModal() {
   const inv = getKitchenInventory().filter(it=>it.name);
   if (!inv.length) { alert('Склад пустой — нечего списывать'); return; }
-  const today = new Date().toISOString().slice(0,10);
+  const today = _todayLocal();
   document.getElementById('modal-title').textContent = '📋 Дневной расход';
   document.getElementById('modal-body').innerHTML = `
     <div class="form-group"><label>Дата</label><input type="date" class="form-control" id="du-date" value="${today}"></div>
@@ -8336,7 +8346,7 @@ async function saveDailyUsage(count) {
   if (!items.length) { alert('Укажите хотя бы одну позицию'); return; }
   if (overLimit.length && !confirm('⚠️ Количество больше, чем есть на складе:\n\n' + overLimit.join('\n') + '\n\nОстаток уйдёт в 0 вместо отрицательного значения. Продолжить?')) return;
   const inv = getKitchenInventory();
-  const today = new Date().toISOString().slice(0,10);
+  const today = _todayLocal();
   items.forEach(it => {
     const p = inv.find(x=>x.name===it.name);
     if (p) { p.qty = Math.max(0,(Number(p.qty)||0)-it.qty); p.updated=today; }
@@ -8359,7 +8369,7 @@ function openWriteoffModal() {
   if (!inv.length) { alert('Склад пустой'); return; }
   _kitchenWriteoffItems = [{name:'',qty:'',unit:''}];
   _kitchenWriteoffPhoto = null;
-  const today = new Date().toISOString().slice(0,10);
+  const today = _todayLocal();
   const reasons = ['Просрочено','Испорчено / брак','Разбито / повреждено','Возврат поставщику','Другое'];
   const invOpts = inv.map(it=>`<option value="${it.name}|${it.unit||''}">${it.name} (${it.qty||0} ${it.unit||''})</option>`).join('');
   document.getElementById('modal-title').textContent = '🗑 Списание';
@@ -8469,7 +8479,7 @@ async function approveWriteoff(id) {
   wo.approvedAt = new Date().toISOString();
   setLS('kitchen_writeoffs', list);
   const inv = getKitchenInventory();
-  const today = new Date().toISOString().slice(0,10);
+  const today = _todayLocal();
   (wo.items||[]).forEach(it=>{
     const p = inv.find(x=>x.name===it.name);
     if (p) { p.qty = Math.max(0,(Number(p.qty)||0)-Number(it.qty||0)); p.updated=today; }
@@ -8970,7 +8980,7 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   const t = id ? (getBudgetTx(ledgerKey).find(x=>x.id===id)||{}) : {};
   _editingBudgetTx = id || null;
   window._budgetTxFile = t.fileRef || null;
-  const today = new Date().toISOString().slice(0,10);
+  const today = _todayLocal();
   const nowTime = new Date().toTimeString().slice(0,5);
   const type = t.type || defaultType || 'expense';
   const fundOpts = cfg.useFunds ? getBudgetFunds().map(f=>`<option value="${f.name}" ${t.fund===f.name?'selected':''}>${f.name}</option>`).join('') : '';
