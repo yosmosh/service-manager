@@ -9036,6 +9036,14 @@ async function saveBudgetTx(ledgerKey) {
     createdBy: existing ? existing.createdBy : currentUser,
     createdAt: existing ? existing.createdAt : new Date().toISOString(),
   };
+  // Only notify approvers when there's actually something new for them to look at: a
+  // brand-new expense, or an edit that changed one of the fields that matters for the
+  // approval decision itself. Re-saving unchanged, or only touching the note/receipt,
+  // still resets the approval chain (see above) but shouldn't also re-alert everyone —
+  // that's exactly the "unnecessary email" pattern to avoid.
+  const materialChange = !existing || existing.amount !== Number(amount) || existing.vendor !== vendor ||
+    existing.date !== date || (existing.fund||null) !== (fund||null);
+
   if (_editingBudgetTx) { const idx=list.findIndex(x=>x.id===_editingBudgetTx); if(idx>=0)list[idx]=record; else list.push(record); }
   else list.push(record);
   setBudgetTx(ledgerKey, list);
@@ -9045,9 +9053,7 @@ async function saveBudgetTx(ledgerKey) {
     const ok = await _flushState();
     if (!ok) return; // keep modal open so the user can retry without re-entering data
   }
-  // A new (or edited — the approval chain resets either way) expense needs every
-  // required approver's attention, not just whoever happens to open the app next.
-  if (type === 'expense') {
+  if (type === 'expense' && materialChange) {
     const label = FINANCE_LEDGERS[ledgerKey].label;
     _notifyBudgetApprovers(ledgerKey, `💰 Заявка на оплату — ${label}`, _getFromName(), `${vendor} · ₽${Number(amount).toLocaleString('ru-RU')}`);
   }
