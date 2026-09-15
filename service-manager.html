@@ -1390,12 +1390,36 @@ let _state = {};
 let _filesReadyResolve;
 const _filesReadyPromise = new Promise(res => { _filesReadyResolve = res; });
 
+// Multiple roles are routinely logged in at once on different devices (owner, admin,
+// kitchen, accountant, Alexander), each with its own in-memory copy of `_state.files`
+// loaded once at page load. Flushing that whole copy every time ANY of them saves
+// ANYTHING — the old behavior — meant a long-open session with a now-stale copy would
+// silently overwrite (and appear to "delete") files every other session had uploaded
+// since. `_filesBaseline` is a snapshot of `_state.files` as last known to match the
+// server; setLS('files', ...) diffs against it to track only what THIS session actually
+// added/removed, so _doFlushState can send a surgical merge instead of the full map.
+let _filesBaseline = {};
+const _filesDirty = new Set();
+const _filesDeleted = new Set();
+
 const getLS = k => {
   if (_useFirebase) return _state[k] !== undefined ? _state[k] : null;
   try { return JSON.parse(localStorage.getItem(k)||'null'); } catch { return null; }
 };
 const setLS = (k, v) => {
-  if (_useFirebase) { _state[k] = v; _scheduleSave(); }
+  if (_useFirebase) {
+    if (k === 'files') {
+      const before = _filesBaseline || {};
+      const after = v || {};
+      Object.keys(after).forEach(id => {
+        if (JSON.stringify(before[id]) !== JSON.stringify(after[id])) { _filesDirty.add(id); _filesDeleted.delete(id); }
+      });
+      Object.keys(before).forEach(id => {
+        if (!(id in after)) { _filesDeleted.add(id); _filesDirty.delete(id); }
+      });
+    }
+    _state[k] = v; _scheduleSave();
+  }
   else localStorage.setItem(k, JSON.stringify(v));
 };
 
@@ -1478,8 +1502,22 @@ async function _doFlushState() {
     // state first (the old order) could succeed while the files_registry write then failed,
     // leaving a record pointing at photos that were never actually registered. That's
     // exactly how thumbnails across the app stopped opening.
-    if (filesPart !== undefined) {
-      await _firestoreDB.collection('appdata').doc('files_registry').set({files: filesPart});
+    //
+    // The write itself is a MERGE of only what this session's _filesDirty/_filesDeleted
+    // say actually changed locally — never the full filesPart map. With several roles
+    // routinely logged in at once on different devices, each holding its own in-memory
+    // copy of the registry loaded at page load, sending the whole map on every flush
+    // meant a long-open session with a stale copy would silently overwrite (erasing, in
+    // effect) every file another session had added since — exactly the "images keep
+    // disappearing" reports this was causing repeatedly.
+    if (filesPart !== undefined && (_filesDirty.size || _filesDeleted.size)) {
+      const filesUpdate = {};
+      _filesDirty.forEach(id => { if (filesPart[id] !== undefined) filesUpdate[id] = filesPart[id]; });
+      _filesDeleted.forEach(id => { filesUpdate[id] = firebase.firestore.FieldValue.delete(); });
+      await _firestoreDB.collection('appdata').doc('files_registry').set({files: filesUpdate}, {merge: true});
+      _filesDirty.clear();
+      _filesDeleted.clear();
+      _filesBaseline = JSON.parse(JSON.stringify(filesPart));
     }
     await _firestoreDB.collection('appdata').doc('state').set(statePart);
     _showToast('✅ Сохранено', true);
@@ -1505,7 +1543,10 @@ async function _loadState() {
           // One-time migration: this account still has the old layout, where `files`
           // was embedded inline in appdata/state. Split it out now so the shared
           // document stops carrying it — the next flush writes it to its own document.
+          // The registry doc doesn't exist yet, so every entry here is genuinely new to
+          // it — mark all of them dirty so the merge-write below actually sends them.
           console.log('[MIGRATE] Splitting files registry out of appdata/state...');
+          Object.keys(_state.files).forEach(id => _filesDirty.add(id));
           await _flushState();
         } else {
           _state.files = _state.files || {};
@@ -1522,6 +1563,10 @@ async function _loadState() {
       }
       await _flushState();
     }
+    // Baseline = what the server actually has right now (post-migration if that ran
+    // above) — every local setLS('files', ...) from here on diffs against this, so only
+    // genuine local changes ever get marked dirty and sent.
+    _filesBaseline = JSON.parse(JSON.stringify(_state.files || {}));
   } catch(e) { console.error('Ошибка загрузки:', e); }
   finally { _filesReadyResolve(); }
 }
