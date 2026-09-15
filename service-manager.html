@@ -907,8 +907,21 @@ function applyUserLayout() {
     const navBudget = document.getElementById('nav-budget');
     if (navBudget && !getBudgetReleased()) navBudget.style.display = 'none';
   } else if (currentUser === 'kitchen') {
-    sidebar.style.display = 'none';
+    // Kitchen gets a real (but heavily restricted) sidebar, same pattern as Alexander:
+    // her own kitchen management screen, plus Бюджет (Кухня ledger only — she's the one
+    // feeding it data) once the owner has published it.
+    sidebar.style.display = '';
     document.getElementById('user-label').textContent = '🍽️ Менеджер кухни';
+    document.querySelectorAll('.nav-item').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.sidebar-section-title').forEach(el => el.style.display = 'none');
+    const mainSectionTitle = sidebar.querySelector('.sidebar-section-title');
+    if (mainSectionTitle) mainSectionTitle.style.display = '';
+    ['nav-kitchen','nav-budget'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'flex';
+    });
+    const navBudgetKitchen = document.getElementById('nav-budget');
+    if (navBudgetKitchen && !getBudgetReleased()) navBudgetKitchen.style.display = 'none';
   } else if (currentUser === 'kitchen_worker') {
     sidebar.style.display = 'none';
     document.getElementById('user-label').textContent = '👨‍🍳 Сотрудник кухни';
@@ -1994,10 +2007,11 @@ function render() {
     content.innerHTML = renderKitchenWorker();
     return;
   }
-  // accountant sees ONLY the payment queue — no other views. Alexander has a wider
-  // (but still narrow) sidebar — see the view dispatcher below.
+  // accountant sees ONLY the budget screen (all three ledgers, full month browsing) —
+  // no other views. Alexander has a wider (but still narrow) sidebar — see the view
+  // dispatcher below.
   if (currentUser === 'accountant') {
-    title.textContent = '🧾 Подтверждение оплаты';
+    title.textContent = '💰 Бюджет';
     content.innerHTML = renderBudget();
     return;
   }
@@ -2059,8 +2073,8 @@ function render() {
     title.textContent = '🍽️ Управление кухней';
     content.innerHTML = renderKitchen();
   } else if (view === 'budget') {
-    if (currentUser !== 'owner' && currentUser !== 'admin' && currentUser !== 'alexander') { showView('dashboard'); return; }
-    if ((currentUser === 'admin' || currentUser === 'alexander') && !getBudgetReleased()) { showView('dashboard'); return; }
+    if (currentUser !== 'owner' && currentUser !== 'admin' && currentUser !== 'alexander' && currentUser !== 'kitchen') { showView('dashboard'); return; }
+    if ((currentUser === 'admin' || currentUser === 'alexander' || currentUser === 'kitchen') && !getBudgetReleased()) { showView('dashboard'); return; }
     title.textContent = '💰 Бюджет';
     content.innerHTML = renderBudget();
   }
@@ -8483,10 +8497,21 @@ function renderKitchenAnalytics() {
 // БЮДЖЕТ (multi-stage approval ledgers — kitchen / maintenance / personal)
 // ==============================
 const FINANCE_LEDGERS = {
-  kitchen:     { label:'🍽️ Кухня',        approvers:['alexander','owner'], useFunds:false, canCreate:['owner','admin'] },
+  kitchen:     { label:'🍽️ Кухня',        approvers:['alexander','owner'], useFunds:false, canCreate:['owner','kitchen'] },
   maintenance: { label:'🔧 ТО и зарплаты', approvers:['alexander','owner'], useFunds:false, canCreate:['owner','admin'] },
-  personal:    { label:'👤 Личный бюджет', approvers:['owner'],             useFunds:true,  canCreate:['owner'] },
+  personal:    { label:'👤 Личный бюджет', approvers:['owner'],             useFunds:true,  canCreate:['owner','admin'] },
 };
+
+// Who can see which ledger tabs at all (separate from canCreate above, which is about
+// who can log a new expense within a ledger they can already see): each data-entry role
+// only needs the budget(s) it actually feeds data into — Kitchen's login only ever
+// touches Кухня, admin only ever touches ТО и зарплаты/Личный бюджет — everyone else
+// (owner, accountant) sees all three.
+function _budgetVisibleLedgers(role) {
+  if (role === 'admin') return ['maintenance', 'personal'];
+  if (role === 'kitchen') return ['kitchen'];
+  return ['kitchen', 'maintenance', 'personal'];
+}
 let budgetLedger = 'kitchen';
 let budgetMonth = new Date().getMonth()+1;
 let budgetYear = new Date().getFullYear();
@@ -8665,10 +8690,9 @@ function _budgetBalance(ledgerKey, throughMonthKey) {
 
 function renderBudget() {
   if (currentUser === 'alexander') return _renderBudgetApproverQueue('alexander');
-  if (currentUser === 'accountant') return _renderBudgetAccountantQueue();
 
   const isOwner = currentUser === 'owner';
-  const ledgerKeys = Object.keys(FINANCE_LEDGERS).filter(k => !(k==='personal' && !isOwner));
+  const ledgerKeys = _budgetVisibleLedgers(currentUser);
   if (!ledgerKeys.includes(budgetLedger)) budgetLedger = ledgerKeys[0];
   const tabs = ledgerKeys.map(k => `<button class="kitchen-tab-btn${budgetLedger===k?' active':''}" onclick="switchBudgetLedger('${k}')">${FINANCE_LEDGERS[k].label}</button>`).join('');
 
@@ -8686,7 +8710,7 @@ function renderBudget() {
   const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0">${tabs}</div>`;
 
   const releaseBar = isOwner ? (getBudgetReleased()
-    ? `<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#166534;font-weight:600">✅ Опубликовано — доступно администратору, Александру и бухгалтеру</div>`
+    ? `<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#166534;font-weight:600">✅ Опубликовано — доступно администратору, Александру, бухгалтеру и кухне</div>`
     : `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
         <span style="font-size:12px;color:#92400e;font-weight:600">🔒 Видно только вам — проверьте данные перед публикацией</span>
         <button class="btn btn-primary" style="font-size:12px;padding:6px 14px" onclick="releaseBudgetToEveryone()">🚀 Опубликовать для всех</button>
@@ -9134,52 +9158,6 @@ function _renderBudgetApproverQueue(role) {
   const pendingHtml = pending.length ? `<div style="text-align:center;margin:16px 0 10px"><div style="font-size:15px;font-weight:700">Ожидают согласования (${pending.length})</div></div>${pending.map(x=>_card(x,false)).join('')}` : '';
   const approvedHtml = approvedByMe.length ? `<div style="text-align:center;margin:20px 0 10px"><div style="font-size:13px;font-weight:700;color:#166534">Согласовано вами, ожидает остальных (${approvedByMe.length})</div></div>${approvedByMe.map(x=>_card(x,true)).join('')}` : '';
   return `<div style="max-width:600px;margin:0 auto;padding:16px">${pendingHtml}${approvedHtml}</div>`;
-}
-
-function _renderBudgetAccountantQueue() {
-  const items = [];
-  Object.keys(FINANCE_LEDGERS).forEach(k => {
-    const cfg = FINANCE_LEDGERS[k];
-    getBudgetTx(k).forEach(t => {
-      if (t.type !== 'expense' || t.status === 'rejected') return;
-      if (t.accountantConfirm && t.accountantConfirm.paid) return;
-      const allApproved = cfg.approvers.every(role => (t.approvals||{})[role] && (t.approvals||{})[role].approved);
-      if (allApproved) items.push({ledgerKey:k, t});
-    });
-  });
-  items.sort((a,b)=>(a.t.date||'').localeCompare(b.t.date||''));
-
-  if (!items.length) {
-    return `<div style="max-width:600px;margin:0 auto;padding:16px"><div style="text-align:center;padding:60px 20px;color:#94a3b8">
-      <div style="font-size:48px;margin-bottom:12px">🧾</div>
-      <div style="font-size:15px">Нет операций, ожидающих оплаты</div></div></div>`;
-  }
-  const cards = items.map(({ledgerKey,t}) => {
-    const approvalStatus = FINANCE_LEDGERS[ledgerKey].approvers.map(r => {
-      const a = (t.approvals||{})[r];
-      const label = r==='alexander' ? 'Александр' : 'Йосеф';
-      return `<span class="badge badge-success" style="font-size:10px">✅ ${label} · ${_fmtApprovalWhen(a.date)}</span>`;
-    }).join(' ');
-    return `
-    <div class="kitch-card">
-      <div style="font-size:11px;color:#6b7280;margin-bottom:4px">${FINANCE_LEDGERS[ledgerKey].label}</div>
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
-        <div>
-          <div style="font-weight:700">${fmtDate(t.date)} · ${t.vendor||''}</div>
-          ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
-          ${t.fileRef?`<div style="margin-top:4px"><a href="${_kFileUrl(t.fileRef)}" target="_blank" style="font-size:12px;color:#2563eb">📎 ${t.fileRef.name||'Документ'}</a></div>`:''}
-          <div style="margin-top:6px">${approvalStatus}</div>
-        </div>
-        <div style="font-weight:700;font-size:16px;color:#dc2626;flex-shrink:0">−₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <button class="btn btn-primary" style="flex:1;justify-content:center;background:#16a34a;border-color:#16a34a" onclick="confirmBudgetPaid('${ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>
-        <button class="btn btn-outline" style="flex:1;justify-content:center;color:#dc2626" onclick="declineBudgetPaid('${ledgerKey}','${t.id}')">❌ Отказать в оплате</button>
-      </div>
-    </div>`;
-  }).join('');
-  return `<div style="max-width:600px;margin:0 auto;padding:16px">
-    <div style="text-align:center;margin-bottom:16px"><div style="font-size:15px;font-weight:700">Согласовано, ожидает оплаты (${items.length})</div></div>${cards}</div>`;
 }
 
 function openBudgetFundsModal() {
