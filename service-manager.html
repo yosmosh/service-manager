@@ -8585,9 +8585,20 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   // since income there can come from different places.
   const vendorNeeded = cfg.useFunds || type !== 'income';
 
+  // saveBudgetTx() always resets approvals + paid status on edit (so a changed amount
+  // can't slip through under a stale sign-off) — but for an ALREADY-PAID transaction
+  // that also silently un-pays it, which is a bigger deal than losing approvals and
+  // deserves its own explicit warning, not just the generic one.
+  const isPaid = t.accountantConfirm && t.accountantConfirm.paid;
+  const editWarning = !id ? '' : (type === 'expense'
+    ? (isPaid
+        ? '<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#991b1b">⚠️ Эта операция уже ОПЛАЧЕНА. Изменение сбросит согласования И статус оплаты — бухгалтеру нужно будет подтвердить оплату заново.</div>'
+        : '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#92400e">⚠️ Изменение операции сбросит все согласования — потребуется согласовать заново</div>')
+    : '');
+
   document.getElementById('modal-title').textContent = id ? '✏️ Редактировать операцию' : (type==='income'?'💰 Новый приход':'💸 Новый расход');
   document.getElementById('modal-body').innerHTML = `
-    ${id?'<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#92400e">⚠️ Изменение операции сбросит все согласования — потребуется согласовать заново</div>':''}
+    ${editWarning}
     <div class="form-group"><label>Тип</label>
       <select class="form-control" id="bt-type" onchange="_toggleBudgetVendorField('${ledgerKey}')">
         <option value="expense" ${type==='expense'?'selected':''}>Расход</option>
@@ -8716,11 +8727,17 @@ async function approveBudgetTx(ledgerKey, id) {
 }
 
 async function rejectBudgetTx(ledgerKey, id) {
-  const reason = prompt('Причина отклонения (необязательно):');
-  if (reason === null) return;
+  // Every other budget action (approve, confirm-paid, delete) checks the caller's
+  // role before doing anything — this one didn't, and also didn't block rejecting
+  // something that's already been paid (money already moved by then).
+  const myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : null;
+  if (!myRole || !FINANCE_LEDGERS[ledgerKey].approvers.includes(myRole)) return;
   const list = getBudgetTx(ledgerKey);
   const t = list.find(x=>x.id===id);
   if (!t) return;
+  if (t.accountantConfirm && t.accountantConfirm.paid) { alert('Уже оплачено — отклонить нельзя'); return; }
+  const reason = prompt('Причина отклонения (необязательно):');
+  if (reason === null) return;
   t.status = 'rejected';
   t.rejectReason = reason;
   t.rejectedBy = currentUser;
@@ -8940,7 +8957,7 @@ function _convImportedTx(raw, ledgerKey, idx, isPersonal) {
 async function importBudgetHistory() {
   if (currentUser !== 'owner') return;
   if (getLS('budget_history_imported')) { alert('История уже была импортирована ранее. Если нужно повторить — обратитесь к разработчику.'); return; }
-  if (!confirm('Импортировать историю операций из Google Таблиц (Кухня: 20, ТО и зарплаты: 36, Личный бюджет: 36 — итого 92 операции)?\\n\\nВАЖНО: приход/баланс НЕ будет соответствовать таблицам — импортированы только расходы, видимые в текущей вкладке каждой таблицы. Баланс нужно будет скорректировать вручную.\\n\\nЭто разовое действие — повторный запуск будет заблокирован.')) return;
+  if (!confirm('Импортировать историю операций из Google Таблиц (Кухня: 20, ТО и зарплаты: 36, Личный бюджет: 36 — итого 92 операции)?\n\nВАЖНО: приход/баланс НЕ будет соответствовать таблицам — импортированы только расходы, видимые в текущей вкладке каждой таблицы. Баланс нужно будет скорректировать вручную.\n\nЭто разовое действие — повторный запуск будет заблокирован.')) return;
 
   ['kitchen','maintenance'].forEach(lk => {
     const list = getBudgetTx(lk);
