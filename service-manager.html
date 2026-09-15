@@ -8409,8 +8409,13 @@ function _fmtApprovalWhen(s) {
   return fmtDate(s);
 }
 
-function _budgetBalance(ledgerKey) {
-  const tx = getBudgetTx(ledgerKey).filter(t=>t.status!=='rejected');
+// throughMonthKey (e.g. "2026-03"), when given, computes the balance AS IT STOOD at
+// the end of that month — i.e. every transaction up to and including it — instead of
+// the running total through today. That's what makes browsing back to March show
+// March's own balance instead of today's, which is what a real ledger should do.
+function _budgetBalance(ledgerKey, throughMonthKey) {
+  let tx = getBudgetTx(ledgerKey).filter(t=>t.status!=='rejected');
+  if (throughMonthKey) tx = tx.filter(t => _budgetTxMonthKey(t) <= throughMonthKey);
   let income = 0, expensePrelim = 0, expenseActual = 0;
   const byFund = {};
   tx.forEach(t => {
@@ -8477,13 +8482,13 @@ function _renderBudgetLedger(ledgerKey) {
   const monthTx = getBudgetTx(ledgerKey)
     .filter(t=>_budgetTxMonthKey(t)===mk)
     .sort((a,b)=> (_isIncomeType(b)-_isIncomeType(a)) || (b.date||'').localeCompare(a.date||'')||(b.time||'').localeCompare(a.time||''));
-  const bal = _budgetBalance(ledgerKey);
+  const bal = _budgetBalance(ledgerKey, mk);
   const canCreate = cfg.canCreate.includes(currentUser);
   const fmt = n => (Number(n)||0).toLocaleString('ru-RU',{maximumFractionDigits:2});
 
   const summaryCards = `<div class="stats-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:12px">
-    <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:20px">₽${fmt(bal.prelimBalance)}</div><div class="stat-label">Предварительный остаток</div></div>
-    <div class="stat-card"><div class="stat-value" style="color:#16a34a;font-size:20px">₽${fmt(bal.actualBalance)}</div><div class="stat-label">Фактический остаток</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:20px">₽${fmt(bal.prelimBalance)}</div><div class="stat-label">Предварительный остаток — на конец ${MONTHS[budgetMonth-1]}</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:#16a34a;font-size:20px">₽${fmt(bal.actualBalance)}</div><div class="stat-label">Фактический остаток — на конец ${MONTHS[budgetMonth-1]}</div></div>
   </div>`;
 
   const fundBreakdown = cfg.useFunds ? `<div class="card" style="margin-bottom:12px"><div class="card-header"><h3>💰 По фондам</h3></div>
