@@ -911,8 +911,20 @@ function applyUserLayout() {
     sidebar.style.display = 'none';
     document.getElementById('user-label').textContent = '👨‍🍳 Сотрудник кухни';
   } else if (currentUser === 'alexander') {
-    sidebar.style.display = 'none';
+    // Alexander gets a real (but heavily restricted) sidebar: view-only Журнал визитов
+    // and Обслуживание территории, plus his Бюджет approval queue — nothing else.
+    // The two "view-only" sections already hide their own edit/add controls for anyone
+    // who isn't 'owner'/'admin', so no extra gating is needed there.
+    sidebar.style.display = '';
     document.getElementById('user-label').textContent = '✅ Александр';
+    document.querySelectorAll('.nav-item').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.sidebar-section-title').forEach(el => el.style.display = 'none');
+    const mainSectionTitle = sidebar.querySelector('.sidebar-section-title');
+    if (mainSectionTitle) mainSectionTitle.style.display = '';
+    ['nav-journal','nav-maint','nav-budget'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'flex';
+    });
   } else if (currentUser === 'accountant') {
     sidebar.style.display = 'none';
     document.getElementById('user-label').textContent = '🧾 Бухгалтер';
@@ -1846,9 +1858,10 @@ function render() {
     content.innerHTML = renderKitchenWorker();
     return;
   }
-  // alexander/accountant see ONLY their budget approval/payment queue — no other views
-  if (currentUser === 'alexander' || currentUser === 'accountant') {
-    title.textContent = currentUser === 'alexander' ? '✅ Согласование расходов' : '🧾 Подтверждение оплаты';
+  // accountant sees ONLY the payment queue — no other views. Alexander has a wider
+  // (but still narrow) sidebar — see the view dispatcher below.
+  if (currentUser === 'accountant') {
+    title.textContent = '🧾 Подтверждение оплаты';
     content.innerHTML = renderBudget();
     return;
   }
@@ -1910,8 +1923,8 @@ function render() {
     title.textContent = '🍽️ Управление кухней';
     content.innerHTML = renderKitchen();
   } else if (view === 'budget') {
-    if (currentUser !== 'owner' && currentUser !== 'admin') { showView('dashboard'); return; }
-    if (currentUser === 'admin' && !getBudgetReleased()) { showView('dashboard'); return; }
+    if (currentUser !== 'owner' && currentUser !== 'admin' && currentUser !== 'alexander') { showView('dashboard'); return; }
+    if ((currentUser === 'admin' || currentUser === 'alexander') && !getBudgetReleased()) { showView('dashboard'); return; }
     title.textContent = '💰 Бюджет';
     content.innerHTML = renderBudget();
   }
