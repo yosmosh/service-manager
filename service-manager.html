@@ -8638,14 +8638,23 @@ const getBudgetFunds = () => getLS('finance_funds') || [];
 // for a one-off vendor. Built live from the ledger's own expense history, so it updates
 // itself as new suppliers show up — no separate list to maintain by hand.
 function _budgetVendorSuggestions(ledgerKey) {
-  const counts = {};
+  // Group by lowercase so "Озон"/"ОЗОН"/"озон" count as the SAME supplier instead of
+  // three separate entries — different rows really do use inconsistent casing for the
+  // same real vendor. Keep whichever exact casing was actually used most often as the
+  // one shown, so the suggestion still looks like something a person actually typed.
+  const byKey = {}; // lowercased -> { counts: {exactForm: n}, total }
   getBudgetTx(ledgerKey).forEach(t => {
     if (t.type !== 'expense') return;
     const v = (t.vendor||'').trim();
     if (!v) return;
-    counts[v] = (counts[v]||0) + 1;
+    const key = v.toLowerCase();
+    if (!byKey[key]) byKey[key] = { counts: {}, total: 0 };
+    byKey[key].counts[v] = (byKey[key].counts[v]||0) + 1;
+    byKey[key].total++;
   });
-  return Object.keys(counts).sort((a,b) => counts[b]-counts[a]);
+  return Object.values(byKey)
+    .sort((a,b) => b.total - a.total)
+    .map(entry => Object.keys(entry.counts).sort((a,b) => entry.counts[b]-entry.counts[a])[0]);
 }
 
 function _currentMonthKey() {
@@ -9016,8 +9025,8 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
       <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="bt-date" value="${t.date||today}"></div>
       <div class="form-group"><label>Время</label><input type="time" class="form-control" id="bt-time" value="${t.time||nowTime}"></div>
     </div>
-    <div class="form-group" id="bt-vendor-group" ${vendorNeeded?'':'hidden'}><label id="bt-vendor-label">${type==='income'?'Источник дохода *':'Наименование / поставщик *'}</label><input class="form-control" id="bt-vendor" list="bt-vendor-list" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="Поставщик, сотрудник, назначение...">
-      <datalist id="bt-vendor-list">${_budgetVendorSuggestions(ledgerKey).map(v=>`<option value="${v.replace(/"/g,'&quot;')}">`).join('')}</datalist>
+    <div class="form-group" id="bt-vendor-group" ${vendorNeeded?'':'hidden'}><label id="bt-vendor-label">${type==='income'?'Источник дохода *':'Наименование / поставщик *'}</label><input class="form-control" id="bt-vendor" list="bt-vendor-list-${ledgerKey}" name="bt-vendor-${ledgerKey}" autocomplete="off-${ledgerKey}" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="Поставщик, сотрудник, назначение...">
+      <datalist id="bt-vendor-list-${ledgerKey}">${_budgetVendorSuggestions(ledgerKey).map(v=>`<option value="${v.replace(/"/g,'&quot;')}">`).join('')}</datalist>
     </div>
     <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="bt-amount" value="${t.amount||''}" min="0" step="0.01"></div>
     ${cfg.useFunds ? `<div class="form-group"><label>Фонд *</label><select class="form-control" id="bt-fund"><option value="">— Выберите —</option>${fundOpts}</select></div>` : ''}
