@@ -8634,9 +8634,10 @@ function _budgetBalance(ledgerKey, throughMonthKey) {
   // forecast resets to the PRIOR month's actual (paid-only) balance, then adds only this
   // month's own income/expenses (pending, approved, or rejected alike) — so an old stuck
   // item only ever shows as a drag in the month it happened, never forever after.
-  let prelimBalance;
+  let prelimBalance, thisIncome = income, thisExpenseAll = expensePrelim, thisExpensePaid = expenseActual;
   if (throughMonthKey) {
-    let priorIncome = 0, priorPaidExp = 0, thisIncome = 0, thisExpAll = 0;
+    let priorIncome = 0, priorPaidExp = 0;
+    thisIncome = 0; thisExpenseAll = 0; thisExpensePaid = 0;
     allTx.forEach(t => {
       const amt = Number(t.amount)||0;
       const mk = _budgetTxMonthKey(t);
@@ -8645,15 +8646,21 @@ function _budgetBalance(ledgerKey, throughMonthKey) {
         else if (t.accountantConfirm && t.accountantConfirm.paid) priorPaidExp += amt;
       } else if (mk === throughMonthKey) {
         if (t.type === 'income' || t.type === 'refund') thisIncome += amt;
-        else thisExpAll += amt;
+        else {
+          thisExpenseAll += amt;
+          if (t.accountantConfirm && t.accountantConfirm.paid) thisExpensePaid += amt;
+        }
       }
     });
-    prelimBalance = (priorIncome - priorPaidExp) + (thisIncome - thisExpAll);
+    prelimBalance = (priorIncome - priorPaidExp) + (thisIncome - thisExpenseAll);
   } else {
     prelimBalance = income - expensePrelim;
   }
 
-  return { income, expensePrelim, expenseActual, prelimBalance, actualBalance, byFund };
+  // thisIncome/thisExpenseAll/thisExpensePaid are this SPECIFIC month's own totals (what
+  // the sheets show as Приход/Расход for that month's tab) — distinct from income/
+  // expensePrelim/expenseActual above, which are cumulative through this month.
+  return { income, expensePrelim, expenseActual, prelimBalance, actualBalance, byFund, thisIncome, thisExpenseAll, thisExpensePaid };
 }
 
 function renderBudget() {
@@ -8718,7 +8725,13 @@ function _renderBudgetLedger(ledgerKey) {
   const canCreate = cfg.canCreate.includes(currentUser);
   const fmt = n => (Number(n)||0).toLocaleString('ru-RU',{maximumFractionDigits:2});
 
+  // Приход/Расход are THIS month's own totals (mirrors the sheets' own two top rows per
+  // tab) — Расход specifically is the paid-only total, same definition the sheets use for
+  // that row. They're computed live from whatever expense/income records currently fall
+  // in this month, so they move automatically as records are added, paid, or reclassified.
   const summaryCards = `<div class="stats-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:12px">
+    <div class="stat-card"><div class="stat-value" style="color:#16a34a;font-size:18px">₽${fmt(bal.thisIncome)}</div><div class="stat-label">Приход — ${MONTHS[budgetMonth-1]}</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:#dc2626;font-size:18px">₽${fmt(bal.thisExpensePaid)}</div><div class="stat-label">Расход — ${MONTHS[budgetMonth-1]}</div></div>
     <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:20px">₽${fmt(bal.prelimBalance)}</div><div class="stat-label">Предварительный остаток — на конец ${MONTHS[budgetMonth-1]}</div></div>
     <div class="stat-card"><div class="stat-value" style="color:#16a34a;font-size:20px">₽${fmt(bal.actualBalance)}</div><div class="stat-label">Фактический остаток — на конец ${MONTHS[budgetMonth-1]}</div></div>
   </div>`;
