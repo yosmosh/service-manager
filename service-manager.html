@@ -8655,6 +8655,19 @@ const getBudgetTx = (ledgerKey) => getLS('finance_tx_'+ledgerKey) || [];
 const setBudgetTx = (ledgerKey, list) => setLS('finance_tx_'+ledgerKey, list);
 const getBudgetFunds = () => getLS('finance_funds') || [];
 
+// Matches each fund's own color banner in the source Личный бюджет spreadsheet, so a
+// fund reads the same way in the app as it always has in the sheet. A fund added later
+// through ⚙️ Фонды that isn't in this map just falls back to a neutral gray — nothing
+// breaks, it just isn't color-coded like the original five.
+const _FUND_COLORS = {
+  'МБФ ОР АВНЕР': '#CC0000',
+  'РООИ-ММЕО': '#38761D',
+  'БФ 770': '#1C4587',
+  'Наличные': '#E69138',
+  'путевки в лагерь 2026': '#E91E63',
+};
+const _fundColor = name => _FUND_COLORS[name] || '#64748b';
+
 // Recurring suppliers for this specific ledger, most-used first — lets whoever's
 // entering an expense just click the right name instead of retyping it every time,
 // while a plain <input> (with this as its <datalist>) still takes free text just fine
@@ -8915,7 +8928,7 @@ function _renderBudgetLedger(ledgerKey) {
 
   const fundBreakdown = cfg.useFunds ? `<div class="card" style="margin-bottom:12px"><div class="card-header"><h3>💰 По фондам</h3></div>
     <div style="padding:12px 16px">${Object.entries(bal.byFund).map(([fund,v])=>`
-      <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f1f5f9;font-size:13px">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f1f5f9;font-size:13px;border-left:4px solid ${_fundColor(fund)};padding-left:8px">
         <span style="font-weight:600">${fund}</span>
         <span>факт: <b style="color:${(v.income-v.actual)>=0?'#16a34a':'#dc2626'}">₽${fmt(v.income-v.actual)}</b></span>
       </div>`).join('') || '<div style="color:#94a3b8;font-size:13px">Нет данных</div>'}
@@ -9004,7 +9017,7 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
           <span style="font-weight:700">${fmtDate(t.date)}</span>
           ${t.time?`<span style="font-size:11px;color:#94a3b8">${t.time}</span>`:''}
           <span class="badge badge-gray" style="font-size:10px">${typeLabel}</span>
-          ${t.fund?`<span class="badge badge-blue" style="font-size:10px">${t.fund}</span>`:''}
+          ${t.fund?`<span class="badge" style="font-size:10px;background:${_fundColor(t.fund)};color:#fff">${t.fund}</span>`:''}
         </div>
         <div style="font-weight:600;font-size:14px">${t.vendor||''}</div>
         ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
@@ -9025,7 +9038,7 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   const today = _todayLocal();
   const nowTime = new Date().toTimeString().slice(0,5);
   const type = t.type || defaultType || 'expense';
-  const fundOpts = cfg.useFunds ? getBudgetFunds().map(f=>`<option value="${f.name}" ${t.fund===f.name?'selected':''}>${f.name}</option>`).join('') : '';
+  const fundOpts = cfg.useFunds ? getBudgetFunds().map(f=>`<option value="${f.name}" ${t.fund===f.name?'selected':''} style="color:${_fundColor(f.name)};font-weight:600">${f.name}</option>`).join('') : '';
 
   // Kitchen/maintenance income has exactly one source in practice — no point asking
   // for a name/recipient on those. Funded ledgers (personal budget) keep the field
@@ -9363,7 +9376,7 @@ function openBudgetFundsModal() {
 
 function _renderBudgetFundsList(funds) {
   if (!funds.length) return '<div style="color:#94a3b8;font-size:13px">Фондов пока нет</div>';
-  return funds.map(f => `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9">
+  return funds.map(f => `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;border-left:4px solid ${_fundColor(f.name)};padding-left:8px">
     <span style="font-size:13px">${f.name}</span>
     <button onclick="delBudgetFund('${f.id}')" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px">✕</button>
   </div>`).join('');
