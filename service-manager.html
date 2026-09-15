@@ -451,6 +451,7 @@ img{max-width:100%;height:auto}
     <div class="nav-item owner-only" id="nav-export" onclick="exportCSV()">📊 Экспорт данных (CSV)</div>
     <div class="nav-item owner-only" id="recompress-btn" onclick="recompressExistingImages()" style="color:#f59e0b">🗜️ דחוס תמונות קיימות</div>
     <div class="nav-item owner-only" id="migrate-kitchen-btn" onclick="migrateKitchenPhotosToStorage()" style="color:#dc2626;font-weight:600">📦 Перенести фото кухни в хранилище</div>
+    <div class="nav-item owner-only" id="fix-disposition-btn" onclick="fixFileDispositions()" style="color:#0891b2">🔗 Исправить открытие файлов</div>
   </div>
   <div>
     <div class="sidebar-section-title owner-only">Кухня</div>
@@ -1632,7 +1633,11 @@ async function dbSave(fileData, fileIdx, totalFiles) {
     const ref = _storageRoot.child(`files/${id}`);
     _showUploadBar(fileData.name, 0, fileIdx, totalFiles);
     await new Promise((resolve, reject) => {
-      const task = ref.put(blob, { contentType: fileData.type, contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(fileData.name)}` });
+      // inline, not attachment — clicking a file link should open/preview it in the
+      // browser, not force a download. Images already displayed fine via <img> tags
+      // (which ignore Content-Disposition), but plain <a href> links to PDFs/docs were
+      // downloading instead of opening because of this.
+      const task = ref.put(blob, { contentType: fileData.type, contentDisposition: `inline; filename*=UTF-8''${encodeURIComponent(fileData.name)}` });
       task.on('state_changed',
         snap => _showUploadBar(null, snap.bytesTransferred / snap.totalBytes * 100),
         reject,
@@ -1745,6 +1750,35 @@ async function recompressExistingImages() {
   await _flushState();
   if (btn) { btn.disabled = false; btn.textContent = '🗜️ דחוס תמונות קיימות'; }
   _showToast(`✅ הסתיים! חסכנו ${fmtSize(savedBytes)} מ-${imgs.length} תמונות`, true);
+}
+
+// One-time fix for files uploaded before dbSave() switched from
+// Content-Disposition: attachment to inline — clicking their links forced a download
+// instead of opening/previewing in the browser. Only updates Storage metadata (no
+// re-upload of the file bytes needed), so this is fast even with many files.
+async function fixFileDispositions() {
+  if (currentUser !== 'owner') return;
+  if (!_useFirebase) { _showToast('Работает только с Firebase', false); return; }
+  const files = getLS('files') || {};
+  const ids = Object.keys(files);
+  if (!ids.length) { _showToast('Файлов не найдено', false); return; }
+  if (!confirm(`Исправить открытие файлов (${ids.length} шт.), чтобы они открывались в браузере вместо скачивания?`)) return;
+
+  const btn = document.getElementById('fix-disposition-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Исправляем...'; }
+  let done = 0, failed = 0;
+  for (const id of ids) {
+    try {
+      const meta = files[id] || {};
+      await _storageRoot.child(`files/${id}`).updateMetadata({
+        contentDisposition: `inline; filename*=UTF-8''${encodeURIComponent(meta.name||'file')}`
+      });
+      done++;
+    } catch(e) { failed++; }
+    if ((done+failed) % 15 === 0) _showToast(`⏳ ${done+failed}/${ids.length}...`, true);
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '🔗 Исправить открытие файлов'; }
+  _showToast(`✅ Готово: исправлено ${done}${failed?`, ошибок: ${failed}`:''}`, true);
 }
 
 // Resolve a kitchen photo/file field to a displayable URL, whether it's an OLD inline
