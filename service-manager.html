@@ -8904,7 +8904,7 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
       <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="bt-date" value="${t.date||today}"></div>
       <div class="form-group"><label>Время</label><input type="time" class="form-control" id="bt-time" value="${t.time||nowTime}"></div>
     </div>
-    <div class="form-group" id="bt-vendor-group" ${vendorNeeded?'':'hidden'}><label>Название / получатель *</label><input class="form-control" id="bt-vendor" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="Поставщик, сотрудник, назначение..."></div>
+    <div class="form-group" id="bt-vendor-group" ${vendorNeeded?'':'hidden'}><label id="bt-vendor-label">${type==='income'?'Источник дохода *':'Наименование / поставщик *'}</label><input class="form-control" id="bt-vendor" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="Поставщик, сотрудник, назначение..."></div>
     <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="bt-amount" value="${t.amount||''}" min="0" step="0.01"></div>
     ${cfg.useFunds ? `<div class="form-group"><label>Фонд *</label><select class="form-control" id="bt-fund"><option value="">— Выберите —</option>${fundOpts}</select></div>` : ''}
     <div class="form-group">
@@ -8926,6 +8926,8 @@ function _toggleBudgetVendorField(ledgerKey) {
   const group = document.getElementById('bt-vendor-group');
   if (!group) return;
   group.hidden = !(cfg.useFunds || type !== 'income');
+  const label = document.getElementById('bt-vendor-label');
+  if (label) label.textContent = type==='income' ? 'Источник дохода *' : 'Наименование / поставщик *';
 }
 
 function onBudgetFileSelect(input) {
