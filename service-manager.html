@@ -8389,13 +8389,25 @@ const getBudgetTx = (ledgerKey) => getLS('finance_tx_'+ledgerKey) || [];
 const setBudgetTx = (ledgerKey, list) => setLS('finance_tx_'+ledgerKey, list);
 const getBudgetFunds = () => getLS('finance_funds') || [];
 
+function _currentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+}
+
 // Which month a transaction belongs to for the monthly view: once it's actually paid,
 // that's the date that matters (when the money left) — not whenever the expense was
-// first logged into the system, which can be a different, earlier month. Anything
-// not yet paid falls back to its entry date so it still shows up somewhere.
+// first logged into the system, which can be a different, earlier month. Anything not
+// yet paid falls back to its entry date — UNLESS that month has already closed (is
+// before the current real month), in which case it rolls forward to the current open
+// month automatically. Otherwise an old unpaid item just sits invisible in a closed
+// past month forever; this way it keeps resurfacing in the live month until someone
+// actually deals with it.
 function _budgetTxMonthKey(t) {
   const paidDate = t.accountantConfirm && t.accountantConfirm.paid && t.accountantConfirm.date;
-  return ((paidDate || t.date || '')).slice(0,7);
+  if (paidDate) return paidDate.slice(0,7);
+  const entered = (t.date || '').slice(0,7);
+  const nowMk = _currentMonthKey();
+  return entered < nowMk ? nowMk : entered;
 }
 
 // Approval timestamps may be a full ISO datetime (live actions) or a bare date
@@ -8478,11 +8490,14 @@ function renderBudget() {
 
   const realNow = new Date();
   const isCurrent = budgetMonth===(realNow.getMonth()+1) && budgetYear===realNow.getFullYear();
+  const navMk = `${budgetYear}-${String(budgetMonth).padStart(2,'0')}`;
+  const navMonthClosed = navMk < _currentMonthKey();
   const monthNav = `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:white;border-radius:12px;border:1px solid #e2e8f0;margin-bottom:10px">
     <button class="year-btn" onclick="budgetMonth--;if(budgetMonth<1){budgetMonth=12;budgetYear--}render()">◄</button>
     <div style="font-size:16px;font-weight:700;color:#1e293b;min-width:160px;text-align:center">${MONTHS[budgetMonth-1]} ${budgetYear}</div>
     <button class="year-btn" onclick="budgetMonth++;if(budgetMonth>12){budgetMonth=1;budgetYear++}render()">►</button>
     ${isCurrent?'<span class="badge badge-blue">Текущий месяц</span>':''}
+    ${navMonthClosed?'<span class="badge" style="background:#f1f5f9;color:#64748b">🔒 Закрыт</span>':''}
   </div>`;
   const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0">${tabs}</div>`;
 
@@ -8534,13 +8549,22 @@ function _renderBudgetLedger(ledgerKey) {
       </div>`).join('') || '<div style="color:#94a3b8;font-size:13px">Нет данных</div>'}
     </div></div>` : '';
 
+  // A month closes the instant the next one starts — no new operations can be logged
+  // into it any more (existing ones can still be approved/paid, just not created).
+  const monthClosed = mk < _currentMonthKey();
+
   // Income can only be entered by the owner — everyone else with access to this ledger
   // (e.g. admin) can view income but not record it themselves.
-  const addBtn = (canCreate || currentUser==='owner') ? `<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+  const addBtn = monthClosed
+    ? `<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:8px 14px;margin-bottom:10px;font-size:12px;color:#64748b;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>🔒 Месяц закрыт — новые операции можно добавлять только в текущем месяце</span>
+        ${cfg.useFunds && currentUser==='owner'?`<button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="openBudgetFundsModal()">⚙️ Фонды</button>`:''}
+      </div>`
+    : ((canCreate || currentUser==='owner') ? `<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
     ${canCreate?`<button class="btn btn-primary" onclick="openBudgetTxModal('${ledgerKey}',null,'expense')">+ Расход</button>`:''}
     ${currentUser==='owner'?`<button class="btn btn-outline" onclick="openBudgetTxModal('${ledgerKey}',null,'income')">+ Приход</button>`:''}
     ${cfg.useFunds && currentUser==='owner'?`<button class="btn btn-outline" onclick="openBudgetFundsModal()">⚙️ Фонды</button>`:''}
-  </div>` : '';
+  </div>` : '');
 
   const kitchenPresepBar = (ledgerKey==='kitchen' && currentUser==='owner' && !getLS('kitchen_presep_imported')) ? `<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
     <span style="font-size:12px;color:#1e40af">📥 История Кухни за март–август 2026 ещё не импортирована</span>
@@ -8701,6 +8725,13 @@ async function saveBudgetTx(ledgerKey) {
   if (type === 'income' && currentUser !== 'owner') { alert('Приход может вносить только владелец'); return; }
   const date = document.getElementById('bt-date').value;
   if (!date) { alert('Укажите дату'); return; }
+  // A month closes the moment the next one begins — new operations can only be logged
+  // into the current (or a future) month. Editing an existing record is still allowed
+  // regardless of its date, since that's exactly how an old unpaid item gets resolved.
+  if (!_editingBudgetTx && date.slice(0,7) < _currentMonthKey()) {
+    alert('⛔ Этот месяц уже закрыт — новые операции можно добавлять только в текущий месяц (или будущей датой).');
+    return;
+  }
   const vendorNeeded = cfg.useFunds || type !== 'income';
   const vendor = vendorNeeded ? (document.getElementById('bt-vendor').value||'').trim() : 'Приход';
   if (vendorNeeded && !vendor) { alert('Укажите название/получателя'); return; }
