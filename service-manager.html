@@ -8437,9 +8437,12 @@ function switchBudgetLedger(k) { budgetLedger = k; render(); }
 function _renderBudgetLedger(ledgerKey) {
   const cfg = FINANCE_LEDGERS[ledgerKey];
   const mk = `${budgetYear}-${String(budgetMonth).padStart(2,'0')}`;
+  // Income/refund entries sort first, regardless of date — they're rare and important,
+  // and were getting lost scrolling past a long list of same-day expenses otherwise.
+  const _isIncomeType = t => t.type==='income' || t.type==='refund';
   const monthTx = getBudgetTx(ledgerKey)
     .filter(t=>_budgetTxMonthKey(t)===mk)
-    .sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.time||'').localeCompare(a.time||''));
+    .sort((a,b)=> (_isIncomeType(b)-_isIncomeType(a)) || (b.date||'').localeCompare(a.date||'')||(b.time||'').localeCompare(a.time||''));
   const bal = _budgetBalance(ledgerKey);
   const canCreate = cfg.canCreate.includes(currentUser);
   const fmt = n => (Number(n)||0).toLocaleString('ru-RU',{maximumFractionDigits:2});
@@ -8510,7 +8513,7 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
     <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="delBudgetTx('${ledgerKey}','${t.id}')">🗑</button>
   </div>` : '';
 
-  return `<div class="kitch-card">
+  return `<div class="kitch-card" style="border-left:4px solid ${isIncome?'#16a34a':'#e2e8f0'};${isIncome?'background:#f0fdf4':''}">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
       <div style="flex:1;min-width:200px">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
