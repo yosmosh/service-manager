@@ -8532,11 +8532,16 @@ function _currentMonthKey() {
 // satisfy "not yet paid" and roll into the current month right along with genuinely
 // stuck expenses — which is exactly what happened and dragged every month's income to
 // zero except the current one. Income always belongs to the month it was received.
+//
+// Rejected expenses are ALSO exempt: they've already been resolved (as a "no"), there's
+// nothing left to act on, so they should only ever count against the month they were
+// entered/rejected in — same as the source sheets — not keep resurfacing forever.
 function _budgetTxMonthKey(t) {
   const paidDate = t.accountantConfirm && t.accountantConfirm.paid && t.accountantConfirm.date;
   if (paidDate) return paidDate.slice(0,7);
   const entered = (t.date || '').slice(0,7);
   if (t.type === 'income' || t.type === 'refund') return entered;
+  if (t.status === 'rejected') return entered;
   const nowMk = _currentMonthKey();
   return entered < nowMk ? nowMk : entered;
 }
