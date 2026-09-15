@@ -452,6 +452,7 @@ img{max-width:100%;height:auto}
     <div class="nav-item owner-only" id="recompress-btn" onclick="recompressExistingImages()" style="color:#f59e0b">🗜️ דחוס תמונות קיימות</div>
     <div class="nav-item owner-only" id="migrate-kitchen-btn" onclick="migrateKitchenPhotosToStorage()" style="color:#dc2626;font-weight:600">📦 Перенести фото кухни в хранилище</div>
     <div class="nav-item owner-only" id="fix-disposition-btn" onclick="fixFileDispositions()" style="color:#0891b2">🔗 Исправить открытие файлов</div>
+    <div class="nav-item owner-only" id="recover-files-btn" onclick="recoverMissingFileRegistry()" style="color:#dc2626;font-weight:600">🩹 Восстановить пропавшие файлы</div>
   </div>
   <div>
     <div class="sidebar-section-title owner-only">Кухня</div>
@@ -1412,7 +1413,21 @@ function _showPersistentError(msg) {
   b.innerHTML = '<span>⚠️ ' + msg + '</span><button onclick="this.parentElement.remove()" style="background:rgba(255,255,255,.25);border:none;color:white;border-radius:6px;padding:4px 10px;cursor:pointer;font-weight:700;flex-shrink:0">✕ Закрыть</button>';
 }
 
-async function _flushState() {
+// Every call is chained through this single queue instead of running independently.
+// dbSave() reschedules a flush after EACH uploaded file, and callers also flush
+// explicitly right after — without serializing them, two overlapping flushes could
+// finish out of order and the slower-but-earlier one (with fewer files written so
+// far) would silently overwrite the faster-but-later one, dropping file registry
+// entries a save had already reported as successful. Chaining guarantees flushes
+// always complete in the order they were requested, each one picking up whatever is
+// in `_state` at the moment it actually runs (which only ever grows in the meantime).
+let _flushChain = Promise.resolve(true);
+function _flushState() {
+  _flushChain = _flushChain.catch(() => {}).then(_doFlushState);
+  return _flushChain;
+}
+
+async function _doFlushState() {
   if (!_firestoreDB) return true;
   _isOwnFlush = true;
   try {
@@ -1435,10 +1450,15 @@ async function _flushState() {
       console.warn('[FLUSH] Size near Firestore 1MB document limit — state:', stateSize, 'files:', filesSize);
       _showPersistentError('База данных почти заполнена (state: ' + Math.round(stateSize/1024) + ' КБ, files: ' + Math.round(filesSize/1024) + ' КБ из ~1024 КБ макс. каждый) — сохранения могут перестать работать! Сообщите администратору.');
     }
-    await _firestoreDB.collection('appdata').doc('state').set(statePart);
+    // files_registry first, state second: if a record's fileIds are about to be written
+    // into `state`, the files they point at must already exist in the registry — writing
+    // state first (the old order) could succeed while the files_registry write then failed,
+    // leaving a record pointing at photos that were never actually registered. That's
+    // exactly how thumbnails across the app stopped opening.
     if (filesPart !== undefined) {
       await _firestoreDB.collection('appdata').doc('files_registry').set({files: filesPart});
     }
+    await _firestoreDB.collection('appdata').doc('state').set(statePart);
     _showToast('✅ Сохранено', true);
     return true;
   } catch(e) {
@@ -1779,6 +1799,83 @@ async function fixFileDispositions() {
   }
   if (btn) { btn.disabled = false; btn.textContent = '🔗 Исправить открытие файлов'; }
   _showToast(`✅ Готово: исправлено ${done}${failed?`, ошибок: ${failed}`:''}`, true);
+}
+
+// One-off repair for the underlying bug: a save could report success while the file's
+// entry in the shared `files` registry never actually got written (an earlier flush
+// finishing after a later one, or the registry write failing while the record's own
+// save succeeded) — the record keeps its fileId/fileName/fileType, but nothing in the
+// registry resolves that id to a URL, so the thumbnail/file silently refuses to open
+// anywhere in the app. _flushState() no longer allows that (queued + files written
+// before the record that points at them), but this recovers records broken before
+// that fix: it walks every collection for file references, and for any id missing
+// from the registry, checks whether the actual blob still exists in Storage (uploads
+// always completed there first) and re-adds its registry entry using the name/type
+// already saved alongside the id on the record itself.
+async function recoverMissingFileRegistry() {
+  if (currentUser !== 'owner') return;
+  if (!_useFirebase) { _showToast('Работает только с Firebase', false); return; }
+  if (!confirm('Просканировать все разделы приложения и попытаться восстановить ссылки на файлы, которые записаны в карточках, но отсутствуют в реестре файлов (из-за чего фото/файлы не открываются)?\n\nЭто может занять некоторое время в зависимости от количества файлов.')) return;
+
+  const btn = document.getElementById('recover-files-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Сканируем...'; }
+
+  const files = getLS('files') || {};
+  const candidates = new Map(); // id -> {name, type}
+  const addCand = (id, name, type) => {
+    if (!id || typeof id !== 'string' || files[id]) return;
+    if (!candidates.has(id)) candidates.set(id, { name: name || 'Файл', type: type || 'application/octet-stream' });
+  };
+  const walk = node => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) { node.forEach(walk); return; }
+    if (Array.isArray(node.fileIds)) {
+      node.fileIds.forEach((id, i) => addCand(id, (node.fileNames||[])[i], (node.fileTypes||[])[i]));
+    }
+    for (const k in node) {
+      if (k === 'fileIds' || k === 'fileNames' || k === 'fileTypes' || k === 'files') continue;
+      const v = node[k];
+      if (v && typeof v === 'object' && !Array.isArray(v) && typeof v.id === 'string' && typeof v.type === 'string' && !v.url && !v.data) {
+        addCand(v.id, v.name, v.type);
+      }
+      walk(v);
+    }
+  };
+  walk(_state);
+
+  if (!candidates.size) {
+    if (btn) { btn.disabled = false; btn.textContent = '🩹 Восстановить пропавшие файлы'; }
+    alert('✅ Пропавших ссылок не найдено — реестр файлов в порядке.');
+    return;
+  }
+
+  let recovered = 0;
+  const stillMissing = [];
+  let i = 0;
+  for (const [id, meta] of candidates) {
+    i++;
+    if (btn) btn.textContent = `⏳ ${i}/${candidates.size}...`;
+    try {
+      const url = await _storageRoot.child('files/'+id).getDownloadURL();
+      files[id] = { id, name: meta.name, type: meta.type, size: 0, url };
+      recovered++;
+    } catch(e) {
+      stillMissing.push(`${meta.name} (${id})`);
+    }
+  }
+  setLS('files', files);
+  clearTimeout(_saveTimer);
+  const ok = await _flushState();
+  if (btn) { btn.disabled = false; btn.textContent = '🩹 Восстановить пропавшие файлы'; }
+  if (!ok) { alert('⚠️ Ошибка сохранения восстановленного реестра — попробуйте нажать ещё раз.'); return; }
+
+  let msg = `✅ Найдено пропавших ссылок: ${candidates.size}. Восстановлено: ${recovered}.`;
+  if (stillMissing.length) {
+    msg += `\n\n❌ Не найдены и в самом хранилище (реально утеряны): ${stillMissing.length}\n` +
+      stillMissing.slice(0,25).join('\n') + (stillMissing.length>25 ? `\n...и ещё ${stillMissing.length-25}` : '');
+  }
+  alert(msg);
+  render();
 }
 
 // Resolve a kitchen photo/file field to a displayable URL, whether it's an OLD inline
@@ -3009,9 +3106,13 @@ async function saveRecord2(pid, yr, mo, visitCount) {
         }
       }
     }
-    if (!anyFile && _useFirebase) {
+    // Always flush explicitly once uploads finish — relying on the debounced auto-save
+    // alone left uploaded files sitting only in memory if the tab closed before it fired,
+    // or their registry entries could be silently overwritten by an overlapping flush.
+    if (_useFirebase) {
       clearTimeout(_saveTimer);
-      await _flushState();
+      const ok = await _flushState();
+      if (!ok) _showToast('⚠️ Не удалось сохранить файлы на сервере — откройте запись ещё раз и повторите загрузку', false);
     }
   } catch(e) {
     console.error('[SAVE] saveRecord2 error:', e);
@@ -3425,9 +3526,13 @@ async function saveRequest(editId) {
         _showToast('⚠️ Файл не загружен: ' + fe.message, false);
       }
     }
-    if (savedFiles.length === 0 && _useFirebase) {
+    // Always flush explicitly once uploads finish (previously only when there were no
+    // files at all) — otherwise uploaded files depended purely on the debounced
+    // auto-save, easy to lose if the tab closed first or an overlapping flush won.
+    if (_useFirebase) {
       clearTimeout(_saveTimer);
-      await _flushState();
+      const ok = await _flushState();
+      if (!ok) _showToast('⚠️ Не удалось сохранить файлы на сервере — откройте заявку ещё раз и повторите загрузку', false);
     }
   } catch(e) {
     console.error('saveRequest error:', e);
@@ -4484,7 +4589,15 @@ async function saveMaint(editId) {
       // Move: remove from maint_works (it now lives in the provider journal)
       setLS('maint_works', getMaintWorks().filter(w => w.id !== workId));
     }
-    if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
+    if (_useFirebase) {
+      clearTimeout(_saveTimer);
+      const ok = await _flushState();
+      if (!ok) {
+        if (btn) { btn.disabled = false; btn.textContent = '💾 Сохранить'; }
+        alert('⚠️ Не удалось сохранить на сервере — попробуйте нажать «Сохранить» ещё раз, иначе данные (включая загруженные файлы) будут потеряны.');
+        return;
+      }
+    }
     const _maintDetail = title + (description ? ' — ' + description.slice(0,120) : '') + ' · ' + date;
     _notifyOwner('🏗️ Обслуживание территории', _getFromName(), _maintDetail);
     addActivity('maint', _getFromName(), title, _maintDetail);
@@ -5106,6 +5219,11 @@ async function saveSOS(editId) {
     }
 
     setLS('sos_items', list);
+    if (_useFirebase) {
+      clearTimeout(_saveTimer);
+      const ok = await _flushState();
+      if (!ok) { alert('⚠️ Не удалось сохранить на сервере — попробуйте нажать «Сохранить» ещё раз, иначе данные (включая загруженные файлы) будут потеряны.'); return; }
+    }
     const _sosDetail = title + (description ? ' — ' + description.slice(0,120) : '');
     if (!editId) _notifyOwner('🚨 Экстренное ТО (SOS)', _getFromName(), _sosDetail);
     addActivity('sos', _getFromName(), title, _sosDetail);
