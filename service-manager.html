@@ -1128,6 +1128,14 @@ function openSettingsModal() {
             <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Email владельца</div>
             <input class="form-control" id="notif-email" value="${nc.owner_email||''}" placeholder="your@email.com" style="font-size:12px">
           </div>
+          <div>
+            <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Email Александра (заявки на согласование)</div>
+            <input class="form-control" id="notif-email-alexander" value="${nc.alexander_email||''}" placeholder="alexander@email.com" style="font-size:12px">
+          </div>
+          <div>
+            <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Email бухгалтера (готово к оплате)</div>
+            <input class="form-control" id="notif-email-accountant" value="${nc.accountant_email||''}" placeholder="accountant@email.com" style="font-size:12px">
+          </div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary" style="flex:1;justify-content:center;font-size:12px" onclick="saveNotifyConfig()">💾 Сохранить</button>
@@ -1174,6 +1182,8 @@ function saveNotifyConfig() {
   c.emailjs_service  = (document.getElementById('notif-svc')?.value||'').trim();
   c.emailjs_template = (document.getElementById('notif-tpl')?.value||'').trim();
   c.owner_email      = (document.getElementById('notif-email')?.value||'').trim();
+  c.alexander_email  = (document.getElementById('notif-email-alexander')?.value||'').trim();
+  c.accountant_email = (document.getElementById('notif-email-accountant')?.value||'').trim();
   setLS('notify_config', c);
   if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
   _showToast('✅ Настройки уведомлений сохранены', false);
@@ -1541,6 +1551,7 @@ const getPaymentRecords  = () => getLS('payment_records')    || {};
 // ==============================
 const getNotifyCfg = () => getLS('notify_config') || {
   enabled: false, owner_email: 'yosmosh10@gmail.com',
+  alexander_email: '', accountant_email: '',
   emailjs_key: '', emailjs_service: '', emailjs_template: '',
   fcm_vapid: '', fcm_token: ''
 };
@@ -1568,8 +1579,9 @@ async function _initFCM() {
   } catch(e) { console.warn('[FCM] init failed:', e.message); }
 }
 
-async function _notifyOwner(eventType, fromName, details) {
-  if (currentUser === 'owner') return; // owner doesn't notify himself
+// Shared by every _notify* below — a browser notification (best-effort) plus an email to
+// one specific address via EmailJS, if both are configured.
+async function _notifyEmail(toEmail, eventType, fromName, details) {
   const cfg = getNotifyCfg();
 
   // Browser notification (works when app is open or in background)
@@ -1583,24 +1595,52 @@ async function _notifyOwner(eventType, fromName, details) {
   }
 
   // Email via EmailJS
-  if (!cfg.enabled || !cfg.emailjs_key || !cfg.emailjs_service || !cfg.emailjs_template) return;
+  if (!cfg.enabled || !toEmail || !cfg.emailjs_key || !cfg.emailjs_service || !cfg.emailjs_template) return;
   try {
     await emailjs.send(cfg.emailjs_service, cfg.emailjs_template, {
-      to_email:   cfg.owner_email,
+      to_email:   toEmail,
       subject:    '[Управление услугами] ' + eventType,
       from_name:  fromName,
       event_type: eventType,
       details:    details,
       time:       new Date().toLocaleString('ru-RU')
     }, cfg.emailjs_key);
-    console.log('[NOTIFY] Email sent:', eventType);
+    console.log('[NOTIFY] Email sent:', eventType, '→', toEmail);
   } catch(e) {
     console.warn('[NOTIFY] Email error:', e.text || e.message || e);
   }
 }
 
+async function _notifyOwner(eventType, fromName, details) {
+  if (currentUser === 'owner') return; // owner doesn't notify himself
+  await _notifyEmail(getNotifyCfg().owner_email, eventType, fromName, details);
+}
+
+async function _notifyAlexander(eventType, fromName, details) {
+  if (currentUser === 'alexander') return; // Alexander doesn't notify himself
+  await _notifyEmail(getNotifyCfg().alexander_email, eventType, fromName, details);
+}
+
+async function _notifyAccountant(eventType, fromName, details) {
+  if (currentUser === 'accountant') return; // accountant doesn't notify herself
+  await _notifyEmail(getNotifyCfg().accountant_email, eventType, fromName, details);
+}
+
+// A new expense needs every required approver's attention — not just the owner's, which
+// is all _notifyOwner alone ever covered. Notifies the owner, plus Alexander when he's
+// actually an approver on this specific ledger (he isn't for Личный бюджет).
+async function _notifyBudgetApprovers(ledgerKey, eventType, fromName, details) {
+  await _notifyOwner(eventType, fromName, details);
+  if (FINANCE_LEDGERS[ledgerKey].approvers.includes('alexander')) {
+    await _notifyAlexander(eventType, fromName, details);
+  }
+}
+
 function _getFromName() {
   if (currentUser === 'admin') return 'Администратор';
+  if (currentUser === 'kitchen') return 'Кухня';
+  if (currentUser === 'alexander') return 'Александр';
+  if (currentUser === 'accountant') return 'Бухгалтер';
   const p = PROVIDERS.find(x => x.id === currentUser);
   return p ? p.name : currentUser;
 }
@@ -9005,6 +9045,12 @@ async function saveBudgetTx(ledgerKey) {
     const ok = await _flushState();
     if (!ok) return; // keep modal open so the user can retry without re-entering data
   }
+  // A new (or edited — the approval chain resets either way) expense needs every
+  // required approver's attention, not just whoever happens to open the app next.
+  if (type === 'expense') {
+    const label = FINANCE_LEDGERS[ledgerKey].label;
+    _notifyBudgetApprovers(ledgerKey, `💰 Заявка на оплату — ${label}`, _getFromName(), `${vendor} · ₽${Number(amount).toLocaleString('ru-RU')}`);
+  }
   closeModal(); _showToast('✅ Операция сохранена', true); render();
 }
 
@@ -9031,6 +9077,15 @@ async function approveBudgetTx(ledgerKey, id) {
     clearTimeout(_saveTimer);
     const ok = await _flushState();
     if (!ok) { render(); return; }
+  }
+  // The accountant otherwise has no way to know a transaction just became payable —
+  // only notify on the approval that actually completes the chain (every required
+  // approver signed off), not on every single approve click.
+  if (!alreadyApproved) {
+    const nowAllApproved = FINANCE_LEDGERS[ledgerKey].approvers.every(role => t.approvals[role] && t.approvals[role].approved);
+    if (nowAllApproved) {
+      _notifyAccountant(`🧾 Готово к оплате — ${FINANCE_LEDGERS[ledgerKey].label}`, _getFromName(), `${t.vendor||''} · ₽${(Number(t.amount)||0).toLocaleString('ru-RU')}`);
+    }
   }
   _showToast(alreadyApproved ? '↩️ Согласование отменено' : '✅ Согласовано', true); render();
 }
