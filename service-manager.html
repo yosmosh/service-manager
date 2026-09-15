@@ -8979,10 +8979,11 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   document.getElementById('modal-body').innerHTML = `
     ${editWarning}
     <div class="form-group"><label>Тип</label>
-      <select class="form-control" id="bt-type" onchange="_toggleBudgetVendorField('${ledgerKey}')">
+      <select class="form-control" id="bt-type" onchange="_toggleBudgetVendorField('${ledgerKey}')" ${currentUser==='owner'?'':'disabled'}>
         <option value="expense" ${type==='expense'?'selected':''}>Расход</option>
+        ${currentUser==='owner' ? `
         <option value="income" ${type==='income'?'selected':''}>Приход</option>
-        <option value="refund" ${type==='refund'?'selected':''}>Возврат средств</option>
+        <option value="refund" ${type==='refund'?'selected':''}>Возврат средств</option>` : ''}
       </select>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -9029,7 +9030,10 @@ async function saveBudgetTx(ledgerKey) {
   const type = document.getElementById('bt-type').value;
   // Income can only be recorded by the owner — others with access to this ledger
   // (e.g. admin) can view it but not create or edit it.
-  if (type === 'income' && currentUser !== 'owner') { alert('Приход может вносить только владелец'); return; }
+  // Приход and Возврат средств are both income-side entries — only the owner records
+  // either. The type dropdown already hides both options for everyone else; this is the
+  // save-time backstop in case that value ever reaches here some other way.
+  if ((type === 'income' || type === 'refund') && currentUser !== 'owner') { alert('Приход и возврат средств может вносить только владелец'); return; }
   const date = document.getElementById('bt-date').value;
   if (!date) { alert('Укажите дату'); return; }
   // A month closes the moment the next one begins — new operations can only be logged
