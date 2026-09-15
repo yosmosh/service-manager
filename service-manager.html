@@ -8956,13 +8956,19 @@ async function saveBudgetTx(ledgerKey) {
   }
   const vendorNeeded = cfg.useFunds || type !== 'income';
   const vendor = vendorNeeded ? (document.getElementById('bt-vendor').value||'').trim() : 'Приход';
-  if (vendorNeeded && !vendor) { alert('Укажите название/получателя'); return; }
+  if (vendorNeeded && !vendor) { alert('Укажите наименование/поставщика'); return; }
   const amount = document.getElementById('bt-amount').value;
   if (!amount || Number(amount) <= 0) { alert('Укажите сумму'); return; }
   let fund = '';
   if (cfg.useFunds) {
     fund = document.getElementById('bt-fund').value;
     if (!fund) { alert('Укажите фонд'); return; }
+  }
+  // No scanned invoice/receipt, no payment request — approvers and the accountant need
+  // something to actually check before signing off, not just a typed-in amount.
+  if (type === 'expense' && !window._budgetTxFile) {
+    alert('📎 Загрузите скан счёта/чека — без документа заявку на оплату отправить нельзя');
+    return;
   }
 
   let fileRef = window._budgetTxFile;
