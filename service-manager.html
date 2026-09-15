@@ -8660,6 +8660,15 @@ const getBudgetFunds = () => getLS('finance_funds') || [];
 // while a plain <input> (with this as its <datalist>) still takes free text just fine
 // for a one-off vendor. Built live from the ledger's own expense history, so it updates
 // itself as new suppliers show up — no separate list to maintain by hand.
+// Suggestion-only exclusions — specific vendor spellings that shouldn't keep appearing
+// in the picker, without touching the underlying transaction records they came from or
+// how a brand-new vendor typed by anyone still gets picked up and suggested from then
+// on (that collection logic below is untouched; this is just a display-time filter).
+const _BUDGET_VENDOR_SUGGESTION_BLOCKLIST = [
+  'ИП МУРАДЯН М.М.',
+  'Индивидуальный предприниматель Мурадян Марк Матевосович',
+].map(v => v.toLowerCase());
+
 function _budgetVendorSuggestions(ledgerKey) {
   // Group by lowercase so "Озон"/"ОЗОН"/"озон" count as the SAME supplier instead of
   // three separate entries — different rows really do use inconsistent casing for the
@@ -8671,6 +8680,7 @@ function _budgetVendorSuggestions(ledgerKey) {
     const v = (t.vendor||'').trim();
     if (!v) return;
     const key = v.toLowerCase();
+    if (_BUDGET_VENDOR_SUGGESTION_BLOCKLIST.includes(key)) return;
     if (!byKey[key]) byKey[key] = { counts: {}, total: 0 };
     byKey[key].counts[v] = (byKey[key].counts[v]||0) + 1;
     byKey[key].total++;
