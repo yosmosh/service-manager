@@ -1852,6 +1852,10 @@ async function recoverMissingFileRegistry() {
   let recovered = 0;
   const stillMissing = [];
   let i = 0;
+  // With hundreds of candidates, each needing its own network round-trip, this can take
+  // a while — checkpoint progress every 30 files instead of only flushing once at the
+  // very end, so an interrupted run (closed tab, lost connection) doesn't throw away
+  // everything it already found just because it never reached the last one.
   for (const [id, meta] of candidates) {
     i++;
     if (btn) btn.textContent = `⏳ ${i}/${candidates.size}...`;
@@ -1862,6 +1866,7 @@ async function recoverMissingFileRegistry() {
     } catch(e) {
       stillMissing.push(`${meta.name} (${id})`);
     }
+    if (i % 30 === 0) { setLS('files', files); await _flushState(); }
   }
   setLS('files', files);
   clearTimeout(_saveTimer);
