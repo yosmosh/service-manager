@@ -1394,6 +1394,17 @@ const _filesReadyPromise = new Promise(res => { _filesReadyResolve = res; });
 let _filesBaseline = {};
 const _filesDirty = new Set();
 const _filesDeleted = new Set();
+// Same reasoning as the files registry above, generalized to every other field in the
+// shared state document: multiple roles are routinely logged in at once, each holding its
+// own in-memory `_state` loaded at page load (and kept loosely fresh via the onSnapshot
+// listener in _setupSync, which can lag behind by a save cycle or more). `_doFlushState`
+// used to send the ENTIRE `_state` as a full overwrite on every save, so any session whose
+// copy of a field (say, owner_username/owner_pwd, or an imported budget flag) was even
+// slightly behind would silently revert that field the next time it saved anything at all -
+// exactly how the budget import flags and login credentials went missing in production.
+// `_stateDirty` tracks only the keys THIS session's own setLS() calls actually changed, so
+// the flush can merge-write just those, never fields it merely happens to be holding stale.
+const _stateDirty = new Set();
 
 const getLS = k => {
   if (_useFirebase) return _state[k] !== undefined ? _state[k] : null;
@@ -1410,6 +1421,8 @@ const setLS = (k, v) => {
       Object.keys(before).forEach(id => {
         if (!(id in after)) { _filesDeleted.add(id); _filesDirty.delete(id); }
       });
+    } else {
+      _stateDirty.add(k);
     }
     _state[k] = v; _scheduleSave();
   }
@@ -1481,10 +1494,10 @@ async function _doFlushState() {
     // already living in Storage instead of inline; this just applies it one level up,
     // to the registry of references itself.
     const filesPart = _state.files;
-    const statePart = {..._state};
-    delete statePart.files;
+    const fullStateForSizeCheck = {..._state};
+    delete fullStateForSizeCheck.files;
 
-    const stateSize = JSON.stringify(statePart).length;
+    const stateSize = JSON.stringify(fullStateForSizeCheck).length;
     const filesSize = JSON.stringify(filesPart||{}).length;
     if (stateSize > 900000 || filesSize > 900000) {
       console.warn('[FLUSH] Size near Firestore 1MB document limit — state:', stateSize, 'files:', filesSize);
@@ -1512,7 +1525,18 @@ async function _doFlushState() {
       _filesDeleted.clear();
       _filesBaseline = JSON.parse(JSON.stringify(filesPart));
     }
-    await _firestoreDB.collection('appdata').doc('state').set(statePart);
+    // Same merge principle as the files write above, generalized: send only the specific
+    // top-level keys THIS session actually changed via setLS() since its last flush, via
+    // {merge:true} — never the full _state snapshot. A session holding a stale in-memory
+    // copy of a field it never itself touched (say, owner_username, or another role's
+    // budget-import flag) can then no longer overwrite that field just by saving something
+    // unrelated — it simply never includes that field in its write at all.
+    if (_stateDirty.size) {
+      const statePart = {};
+      _stateDirty.forEach(k => { if (k !== 'files' && _state[k] !== undefined) statePart[k] = _state[k]; });
+      await _firestoreDB.collection('appdata').doc('state').set(statePart, {merge: true});
+      _stateDirty.clear();
+    }
     _showToast('✅ Сохранено', true);
     return true;
   } catch(e) {
@@ -1552,7 +1576,7 @@ async function _loadState() {
         'sos_items','purchase_requests','svc_records','maint_works','notify_config','activity_log',
         'provider_contacts','payment_records'];
       for (const k of keys) {
-        try { const v = JSON.parse(localStorage.getItem(k)||'null'); if (v !== null) _state[k] = v; } catch(e) {}
+        try { const v = JSON.parse(localStorage.getItem(k)||'null'); if (v !== null) setLS(k, v); } catch(e) {}
       }
       await _flushState();
     }
