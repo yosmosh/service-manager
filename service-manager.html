@@ -8608,7 +8608,7 @@ let _editingBudgetTx = null;
 const getBudgetReleased = () => !!getLS('budget_released');
 async function releaseBudgetToEveryone() {
   if (currentUser !== 'owner') return;
-  if (!confirm('Опубликовать раздел "Бюджет" для администратора, Александра и бухгалтера?\n\nОни получат доступ немедленно.')) return;
+  if (!confirm('Опубликовать раздел "Бюджет" для администратора, Александра, бухгалтера и кухни?\n\nОни получат доступ немедленно.')) return;
   setLS('budget_released', true);
   if (_useFirebase) {
     clearTimeout(_saveTimer);
