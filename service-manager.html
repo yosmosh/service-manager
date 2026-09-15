@@ -445,14 +445,7 @@ img{max-width:100%;height:auto}
     <div class="sidebar-section-title">Управление</div>
     <div class="nav-item" id="nav-contacts" onclick="showView('contacts')">📞 Контакты поставщиков</div>
     <div class="nav-item admin-or-owner" id="nav-settings" onclick="openSettingsModal()">⚙️ Настройки доступа</div>
-    <div class="nav-item owner-only" id="nav-report" onclick="shareMonthlyReport()" style="color:#7c3aed;font-weight:600">📊 Отчёт онлайн</div>
-    <div class="nav-item owner-only" id="nav-quarterly" onclick="shareQuarterlyReport()" style="color:#16a34a;font-weight:600">📋 Квартальный отчёт</div>
-    <div class="nav-item owner-only" id="nav-custom-report" onclick="openCustomReportModal()" style="color:#0891b2;font-weight:600">📑 Выборочный отчёт</div>
-    <div class="nav-item owner-only" id="nav-export" onclick="exportCSV()">📊 Экспорт данных (CSV)</div>
-    <div class="nav-item owner-only" id="recompress-btn" onclick="recompressExistingImages()" style="color:#f59e0b">🗜️ דחוס תמונות קיימות</div>
-    <div class="nav-item owner-only" id="migrate-kitchen-btn" onclick="migrateKitchenPhotosToStorage()" style="color:#dc2626;font-weight:600">📦 Перенести фото кухни в хранилище</div>
-    <div class="nav-item owner-only" id="fix-disposition-btn" onclick="fixFileDispositions()" style="color:#0891b2">🔗 Исправить открытие файлов</div>
-    <div class="nav-item owner-only" id="recover-files-btn" onclick="recoverMissingFileRegistry()" style="color:#dc2626;font-weight:600">🩹 Восстановить пропавшие файлы</div>
+    <div class="nav-item owner-only" id="nav-file-utils" onclick="openFileUtilitiesModal()" style="color:#0891b2;font-weight:600">🛠️ Обслуживание файлов</div>
   </div>
   <div>
     <div class="sidebar-section-title owner-only">Кухня</div>
@@ -1821,6 +1814,26 @@ function _replaceFileId(oldId, newId) {
   const reqs = getLS('purchase_requests') || [];
   reqs.forEach(r => { if (r.files) r.files = r.files.map(id => id === oldId ? newId : id); });
   setLS('purchase_requests', reqs);
+}
+
+// One place for the handful of one-off, owner-only file/photo maintenance tools —
+// previously four separate top-level sidebar rows, most of which are only ever needed
+// once in a while (or once, ever). Each button below keeps the exact id the function
+// itself looks up for its own progress text, so nothing about how they report progress
+// had to change — just where they live.
+function openFileUtilitiesModal() {
+  if (currentUser !== 'owner') return;
+  document.getElementById('modal-title').textContent = '🛠️ Обслуживание файлов';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-size:12px;color:#6b7280;margin-bottom:12px">Разовые инструменты для файлов/фото — обычно не нужны при обычной работе приложения.</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-outline" id="recover-files-btn" style="justify-content:flex-start;color:#dc2626;font-weight:600" onclick="recoverMissingFileRegistry()">🩹 Восстановить пропавшие файлы</button>
+      <button class="btn btn-outline" id="fix-disposition-btn" style="justify-content:flex-start;color:#0891b2" onclick="fixFileDispositions()">🔗 Исправить открытие файлов</button>
+      <button class="btn btn-outline" id="migrate-kitchen-btn" style="justify-content:flex-start;color:#dc2626;font-weight:600" onclick="migrateKitchenPhotosToStorage()">📦 Перенести фото кухни в хранилище</button>
+      <button class="btn btn-outline" id="recompress-btn" style="justify-content:flex-start;color:#f59e0b" onclick="recompressExistingImages()">🗜️ Сжать существующие изображения</button>
+    </div>`;
+  document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal()">Закрыть</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
 async function recompressExistingImages() {
@@ -7118,10 +7131,20 @@ function renderReports() {
       + '</tr>';
   }).join('');
 
+  var shareButtons = currentUser === 'owner'
+    ? '<button class="btn btn-outline" style="font-size:12px;color:#7c3aed" onclick="shareMonthlyReport()">📊 Отчёт онлайн</button>'
+    + '<button class="btn btn-outline" style="font-size:12px;color:#16a34a" onclick="shareQuarterlyReport()">📋 Квартальный</button>'
+    + '<button class="btn btn-outline" style="font-size:12px;color:#0891b2" onclick="openCustomReportModal()">📑 Выборочный</button>'
+    + '<button class="btn btn-outline" style="font-size:12px" onclick="exportCSV()">💾 CSV</button>'
+    : '';
+
   return '<div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap">'
     + '<div style="font-size:15px;font-weight:700">Отчёт за '+cy+' год</div>'
     + '<div class="year-nav"><button class="year-btn" onclick="displayYear--;render()">◄</button><div class="year-display">'+cy+'</div><button class="year-btn" onclick="displayYear++;render()">►</button></div>'
-    + '<button class="btn btn-outline" style="margin-left:auto;font-size:12px" onclick="printReport()">🖨️ Печать</button>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-left:auto">'
+    + shareButtons
+    + '<button class="btn btn-outline" style="font-size:12px" onclick="printReport()">🖨️ Печать</button>'
+    + '</div>'
     + '</div>'
     + '<div class="stats-grid" style="margin-bottom:18px">'
     + '<div class="stat-card" style="border-left:4px solid '+yColor+'"><div class="stat-value" style="color:'+yColor+'">'+pctYear+'%</div><div class="stat-label">Выполнение плана за год</div></div>'
