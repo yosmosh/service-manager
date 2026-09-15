@@ -8565,7 +8565,7 @@ async function saveBudgetTx(ledgerKey) {
     type, date,
     time: document.getElementById('bt-time').value||'',
     vendor, amount: Number(amount),
-    fund: fund||undefined,
+    fund: fund||null,
     notes: (document.getElementById('bt-notes').value||'').trim(),
     fileRef: fileRef||null,
     // Any save (new or edit) starts/resets the approval chain — editing an already
@@ -8790,7 +8790,7 @@ function _convImportedTx(raw, ledgerKey, idx, isPersonal) {
     date: raw.date, time: raw.time||'',
     vendor: raw.vendor||'—',
     amount: raw.amount,
-    fund: raw.fund||undefined,
+    fund: raw.fund||null,
     notes: raw.notes||'',
     fileRef: raw.link ? {url:raw.link, name:'Открыть документ (Google Drive)'} : null,
     status: rejected ? 'rejected' : 'pending',
