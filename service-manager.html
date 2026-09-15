@@ -8520,10 +8520,18 @@ function _currentMonthKey() {
 // month automatically. Otherwise an old unpaid item just sits invisible in a closed
 // past month forever; this way it keeps resurfacing in the live month until someone
 // actually deals with it.
+//
+// Income/refunds are EXEMPT from that roll-forward: they're never "unpaid" in the same
+// sense (accountantConfirm.paid just never gets set for them at all, since there's no
+// payout to confirm), so without this exemption every historical income entry would
+// satisfy "not yet paid" and roll into the current month right along with genuinely
+// stuck expenses — which is exactly what happened and dragged every month's income to
+// zero except the current one. Income always belongs to the month it was received.
 function _budgetTxMonthKey(t) {
   const paidDate = t.accountantConfirm && t.accountantConfirm.paid && t.accountantConfirm.date;
   if (paidDate) return paidDate.slice(0,7);
   const entered = (t.date || '').slice(0,7);
+  if (t.type === 'income' || t.type === 'refund') return entered;
   const nowMk = _currentMonthKey();
   return entered < nowMk ? nowMk : entered;
 }
