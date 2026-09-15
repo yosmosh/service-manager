@@ -8517,21 +8517,37 @@ function _currentMonthKey() {
   return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 }
 
+// True only for the last 2 calendar days of the month a date falls in — e.g. 29-30 for a
+// 30-day month, 30-31 for a 31-day month. Used below to decide which unpaid expenses were
+// merely too late to process in time, versus ones that sat unapproved for most of a month
+// and were, in practice, never going anywhere.
+function _isLastDaysOfMonth(dateStr) {
+  if (!dateStr) return false;
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d.getTime())) return false;
+  const lastDay = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
+  return d.getDate() >= lastDay - 1;
+}
+
 // Which month a transaction belongs to for the monthly view: once it's actually paid,
 // that's the date that matters (when the money left) — not whenever the expense was
-// first logged into the system, which can be a different, earlier month. Anything not
-// yet paid falls back to its entry date — UNLESS that month has already closed (is
-// before the current real month), in which case it rolls forward to the current open
-// month automatically. Otherwise an old unpaid item just sits invisible in a closed
-// past month forever; this way it keeps resurfacing in the live month until someone
-// actually deals with it.
+// first logged into the system, which can be a different, earlier month.
 //
-// Income/refunds are EXEMPT from that roll-forward: they're never "unpaid" in the same
-// sense (accountantConfirm.paid just never gets set for them at all, since there's no
+// An unpaid expense only rolls forward into the current open month if BOTH (a) its own
+// month has already closed and (b) it was entered in that month's last two days — i.e.
+// it simply ran out of time to be processed, a purely technical delay, not a decision.
+// An expense that sat unapproved in the MIDDLE of a closed month is, in practice, never
+// going to be approved — chasing it every month forever would just be noise; on the rare
+// case it does get approved later, it's simpler to re-enter it by hand in the current
+// month than to keep dragging every old mid-month stub forward automatically. So it stays
+// attributed to its own (closed) month instead, out of the current month's forecast/queue.
+//
+// Income/refunds are EXEMPT from rolling forward at all: they're never "unpaid" in the
+// same sense (accountantConfirm.paid just never gets set for them, since there's no
 // payout to confirm), so without this exemption every historical income entry would
-// satisfy "not yet paid" and roll into the current month right along with genuinely
-// stuck expenses — which is exactly what happened and dragged every month's income to
-// zero except the current one. Income always belongs to the month it was received.
+// satisfy "not yet paid" and roll into the current month right along with stuck expenses
+// — which is exactly what happened and dragged every month's income to zero except the
+// current one. Income always belongs to the month it was received.
 //
 // Rejected expenses are ALSO exempt: they've already been resolved (as a "no"), there's
 // nothing left to act on, so they should only ever count against the month they were
@@ -8543,7 +8559,8 @@ function _budgetTxMonthKey(t) {
   if (t.type === 'income' || t.type === 'refund') return entered;
   if (t.status === 'rejected') return entered;
   const nowMk = _currentMonthKey();
-  return entered < nowMk ? nowMk : entered;
+  if (entered < nowMk && _isLastDaysOfMonth(t.date)) return nowMk;
+  return entered;
 }
 
 // Approval timestamps may be a full ISO datetime (live actions) or a bare date
