@@ -781,6 +781,8 @@ function getAccountantUser()    { return getLS('accountant_username')     || 'ac
 function getAccountantPwd()     { return getLS('accountant_pwd')          || 'buh123'; }
 function getManagementUser()    { return getLS('management_username')     || 'management'; }
 function getManagementPwd()     { return getLS('management_pwd')          || 'board2026'; }
+function getAdmin2User()        { return getLS('admin2_username')         || 'admin2'; }
+function getAdmin2Pwd()         { return getLS('admin2_pwd')              || 'lichny2026'; }
 
 function doLogin() {
   const username = (document.getElementById('login-username').value || '').trim().toLowerCase();
@@ -853,6 +855,16 @@ function doLogin() {
     document.getElementById('login-screen').style.display = 'none';
     applyUserLayout();
     showView('journal');
+    return;
+  }
+
+  // Check admin2 (personal-budget data entry only — enters expenses/invoices into
+  // Личный бюджет, nothing else in the app) — same release gate as the other budget roles.
+  if (getBudgetReleased() && username === getAdmin2User().toLowerCase() && pwd === getAdmin2Pwd()) {
+    currentUser = 'admin2';
+    document.getElementById('login-screen').style.display = 'none';
+    applyUserLayout();
+    showView('budget');
     return;
   }
 
@@ -968,6 +980,18 @@ function applyUserLayout() {
     });
     const navBudgetMgmt = document.getElementById('nav-budget');
     if (navBudgetMgmt && !getBudgetReleased()) navBudgetMgmt.style.display = 'none';
+  } else if (currentUser === 'admin2') {
+    // Data-entry-only account: nothing but Бюджет, and _budgetVisibleLedgers restricts
+    // that to the Личный бюджет ledger alone.
+    sidebar.style.display = '';
+    document.getElementById('user-label').textContent = '👤 Личный бюджет (ввод)';
+    document.querySelectorAll('.nav-item').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.sidebar-section-title').forEach(el => el.style.display = 'none');
+    const mainSectionTitleAdmin2 = sidebar.querySelector('.sidebar-section-title');
+    if (mainSectionTitleAdmin2) mainSectionTitleAdmin2.style.display = '';
+    const navBudgetAdmin2 = document.getElementById('nav-budget');
+    if (navBudgetAdmin2) navBudgetAdmin2.style.display = 'flex';
+    if (navBudgetAdmin2 && !getBudgetReleased()) navBudgetAdmin2.style.display = 'none';
   } else {
     sidebar.style.display = 'none';
     if (provReqBtn) provReqBtn.style.display = '';
@@ -1128,6 +1152,21 @@ function openSettingsModal() {
         </div>
       </div>
       <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveManagementCreds()">💾 Сохранить данные руководства</button>
+    </div>
+    <div style="margin-bottom:16px;padding:12px 14px;background:#fff7ed;border:1px solid #fdba74;border-radius:10px">
+      <div style="font-size:12px;font-weight:700;color:#9a3412;margin-bottom:4px">👤 Учётная запись admin2 (только Личный бюджет)</div>
+      <div style="font-size:11px;color:#9a3412;margin-bottom:8px">Вводит расходы/счета только в Личный бюджет — больше ничего в системе не видит</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
+          <input type="text" class="form-control" id="admin2-cred-user" value="${getAdmin2User()}" placeholder="admin2">
+        </div>
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
+          <input type="text" class="form-control" id="admin2-cred-pwd" value="${getAdmin2Pwd()}" placeholder="Пароль...">
+        </div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveAdmin2Creds()">💾 Сохранить данные admin2</button>
     </div>` : '';
 
   const nc = getNotifyCfg();
@@ -1335,6 +1374,17 @@ function saveManagementCreds() {
   setLS('management_pwd', p);
   if (_useFirebase) _scheduleSave();
   alert('Данные руководства сохранены');
+}
+
+function saveAdmin2Creds() {
+  const u = (document.getElementById('admin2-cred-user').value||'').trim();
+  const p = (document.getElementById('admin2-cred-pwd').value||'').trim();
+  if (!u) { alert('Введите имя пользователя'); return; }
+  if (!p) { alert('Введите пароль'); return; }
+  setLS('admin2_username', u);
+  setLS('admin2_pwd', p);
+  if (_useFirebase) _scheduleSave();
+  alert('Данные второго администратора сохранены');
 }
 
 function saveAnthropicKey() {
@@ -2253,8 +2303,8 @@ function render() {
     title.textContent = '🍽️ Управление кухней';
     content.innerHTML = renderKitchen();
   } else if (view === 'budget') {
-    if (currentUser !== 'owner' && currentUser !== 'admin' && currentUser !== 'alexander' && currentUser !== 'kitchen' && currentUser !== 'management') { showView('dashboard'); return; }
-    if ((currentUser === 'admin' || currentUser === 'alexander' || currentUser === 'kitchen' || currentUser === 'management') && !getBudgetReleased()) { showView('dashboard'); return; }
+    if (currentUser !== 'owner' && currentUser !== 'admin' && currentUser !== 'admin2' && currentUser !== 'alexander' && currentUser !== 'kitchen' && currentUser !== 'management') { showView('dashboard'); return; }
+    if ((currentUser === 'admin' || currentUser === 'admin2' || currentUser === 'alexander' || currentUser === 'kitchen' || currentUser === 'management') && !getBudgetReleased()) { showView('dashboard'); return; }
     title.textContent = '💰 Бюджет';
     content.innerHTML = renderBudget();
   }
@@ -8674,7 +8724,7 @@ function renderKitchenAnalytics() {
 const FINANCE_LEDGERS = {
   kitchen:     { label:'🍽️ Кухня',        approvers:['alexander','owner'], useFunds:false, canCreate:['owner','kitchen'] },
   maintenance: { label:'🔧 ТО и зарплаты', approvers:['alexander','owner'], useFunds:false, canCreate:['owner','admin'] },
-  personal:    { label:'👤 Личный бюджет', approvers:['owner'],             useFunds:true,  canCreate:['owner','admin'] },
+  personal:    { label:'👤 Личный бюджет', approvers:['owner'],             useFunds:true,  canCreate:['owner','admin','admin2'] },
 };
 
 // Who can see which ledger tabs at all (separate from canCreate above, which is about
@@ -8684,6 +8734,7 @@ const FINANCE_LEDGERS = {
 // (owner, accountant) sees all three.
 function _budgetVisibleLedgers(role) {
   if (role === 'admin') return ['maintenance', 'personal'];
+  if (role === 'admin2') return ['personal'];
   if (role === 'kitchen') return ['kitchen'];
   if (role === 'management') return ['kitchen', 'maintenance'];
   return ['kitchen', 'maintenance', 'personal'];
