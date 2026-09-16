@@ -9231,7 +9231,15 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
         <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="declineBudgetPaid('${ledgerKey}','${t.id}')">❌ Отказать в оплате</button>`:''}
     </div>`;
   }
-  const editActions = currentUser==='owner' ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+  // Whoever submitted the invoice (admin/admin2/kitchen) can still fix or pull it
+  // themselves — but only before anyone has actually signed off on it. Once a single
+  // approval exists, further changes go through the owner alone (that approval was
+  // given against a specific set of numbers).
+  const noApprovalsYet = !Object.keys(t.approvals||{}).some(r => t.approvals[r] && t.approvals[r].approved);
+  const creatorCanEdit = t.type === 'expense' && t.status !== 'rejected' && currentUser !== 'owner' &&
+    t.createdBy === currentUser && cfg.canCreate.includes(currentUser) &&
+    !(t.accountantConfirm && t.accountantConfirm.paid) && noApprovalsYet;
+  const editActions = (currentUser==='owner' || creatorCanEdit) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
     <button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="openBudgetTxModal('${ledgerKey}','${t.id}')">✏️</button>
     <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="delBudgetTx('${ledgerKey}','${t.id}')">🗑</button>
   </div>` : '';
@@ -9277,11 +9285,13 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   // cosmetic fix (typo, swapped receipt) by the owner himself keeps the status as-is,
   // since he already has full authority over both approval and payment anyway.
   const isPaid = t.accountantConfirm && t.accountantConfirm.paid;
+  const hasAnyApproval = Object.keys(t.approvals||{}).some(r => t.approvals[r] && t.approvals[r].approved);
   const editWarning = !id ? '' : (type === 'expense'
     ? (isPaid
         ? (currentUser === 'owner'
             ? '<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#1e40af">ℹ️ Эта операция уже ОПЛАЧЕНА. Если вы поменяете сумму/поставщика/дату/фонд — статус оплаты сбросится. Правка примечания или чека статус не тронет.</div>'
             : '<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#991b1b">⚠️ Эта операция уже ОПЛАЧЕНА. Изменение сбросит согласования И статус оплаты — бухгалтеру нужно будет подтвердить оплату заново.</div>')
+        : !hasAnyApproval ? '' // nothing approved yet — a fix here has nothing to reset, no need to alarm the person who submitted it
         : (currentUser === 'owner'
             ? '<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#1e40af">ℹ️ Изменение суммы/поставщика/даты/фонда сбросит согласования — правка примечания или чека их не тронет.</div>'
             : '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#92400e">⚠️ Изменение операции сбросит все согласования — потребуется согласовать заново</div>'))
@@ -9693,7 +9703,14 @@ async function declineBudgetPaid(ledgerKey, id) {
 }
 
 async function delBudgetTx(ledgerKey, id) {
-  if (currentUser !== 'owner') return;
+  const cfg = FINANCE_LEDGERS[ledgerKey];
+  const t = getBudgetTx(ledgerKey).find(x=>x.id===id);
+  if (!t) return;
+  const noApprovalsYet = !Object.keys(t.approvals||{}).some(r => t.approvals[r] && t.approvals[r].approved);
+  const isOwnUnapprovedSubmission = t.type === 'expense' && t.status !== 'rejected' &&
+    t.createdBy === currentUser && cfg.canCreate.includes(currentUser) &&
+    !(t.accountantConfirm && t.accountantConfirm.paid) && noApprovalsYet;
+  if (currentUser !== 'owner' && !isOwnUnapprovedSubmission) return;
   if (!confirm('Удалить операцию безвозвратно?')) return;
   setBudgetTx(ledgerKey, getBudgetTx(ledgerKey).filter(x=>x.id!==id));
   if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
