@@ -9446,7 +9446,12 @@ async function approveBudgetTx(ledgerKey, id, asRole) {
     delete t.approvals[myRole];
   } else {
     if (!confirm(forAlexander ? 'Согласовать эту операцию за Александра?' : 'Согласовать эту операцию?')) return;
-    t.approvals[myRole] = {approved:true, date:new Date().toISOString(), byOwner:forAlexander||undefined};
+    // Firestore rejects a literal `undefined` field value outright (that's exactly
+    // what just broke every normal approval save) — only add byOwner when it's true,
+    // never write the key at all otherwise.
+    const approvalRec = {approved:true, date:new Date().toISOString()};
+    if (forAlexander) approvalRec.byOwner = true;
+    t.approvals[myRole] = approvalRec;
   }
   setBudgetTx(ledgerKey, list);
   if (_useFirebase) {
