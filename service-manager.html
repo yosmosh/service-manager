@@ -9208,11 +9208,18 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
     const myApproved = isMyRoleRequired && (t.approvals||{})[myRole] && (t.approvals||{})[myRole].approved;
     const notPaidYet = !(t.accountantConfirm && t.accountantConfirm.paid);
     const canConfirmPaid = currentUser==='accountant' && allApproved && notPaidYet;
+    // The owner can stand in for Alexander's approval and for the accountant's payment
+    // confirmation — a backup path for when either of them is unavailable.
+    const alexApproved = (t.approvals||{}).alexander && (t.approvals||{}).alexander.approved;
+    const canActForAlexander = currentUser==='owner' && cfg.approvers.includes('alexander') && notPaidYet;
+    const canConfirmPaidAsOwner = currentUser==='owner' && allApproved && notPaidYet;
     actionsHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
       ${isMyRoleRequired && notPaidYet && !myApproved?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">✅ Согласовать</button>
         <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="rejectBudgetTx('${ledgerKey}','${t.id}')">❌ Отклонить</button>`:''}
       ${isMyRoleRequired && notPaidYet && myApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#d97706" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">↩️ Отменить своё согласование</button>`:''}
-      ${canConfirmPaid?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="confirmBudgetPaid('${ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>
+      ${canActForAlexander && !alexApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="approveBudgetTx('${ledgerKey}','${t.id}','alexander')">✅ Согласовать за Александра</button>`:''}
+      ${canActForAlexander && alexApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#d97706" onclick="approveBudgetTx('${ledgerKey}','${t.id}','alexander')">↩️ Отменить согласование Александра</button>`:''}
+      ${canConfirmPaid || canConfirmPaidAsOwner?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="confirmBudgetPaid('${ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>
         <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="declineBudgetPaid('${ledgerKey}','${t.id}')">❌ Отказать в оплате</button>`:''}
     </div>`;
   }
@@ -9404,8 +9411,11 @@ async function saveBudgetTx(ledgerKey) {
   closeModal(); _showToast('✅ Операция сохранена', true); render();
 }
 
-async function approveBudgetTx(ledgerKey, id) {
-  const myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : null;
+async function approveBudgetTx(ledgerKey, id, asRole) {
+  // The owner can stand in for Alexander (e.g. while he's unavailable) and approve
+  // on his behalf — but only the owner gets that override, and only for his slot.
+  let myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : null;
+  if (asRole === 'alexander' && currentUser === 'owner') myRole = 'alexander';
   if (!myRole) return;
   const list = getBudgetTx(ledgerKey);
   const t = list.find(x=>x.id===id);
@@ -9415,12 +9425,13 @@ async function approveBudgetTx(ledgerKey, id) {
   const alreadyApproved = t.approvals[myRole] && t.approvals[myRole].approved;
   // Toggle: approving is not a one-way door — the same button lets you take back
   // your own approval, as long as it hasn't been paid yet.
+  const forAlexander = myRole === 'alexander' && currentUser === 'owner';
   if (alreadyApproved) {
-    if (!confirm('Отменить своё согласование этой операции?')) return;
+    if (!confirm(forAlexander ? 'Отменить согласование за Александра?' : 'Отменить своё согласование этой операции?')) return;
     delete t.approvals[myRole];
   } else {
-    if (!confirm('Согласовать эту операцию?')) return;
-    t.approvals[myRole] = {approved:true, date:new Date().toISOString()};
+    if (!confirm(forAlexander ? 'Согласовать эту операцию за Александра?' : 'Согласовать эту операцию?')) return;
+    t.approvals[myRole] = {approved:true, date:new Date().toISOString(), byOwner:forAlexander||undefined};
   }
   setBudgetTx(ledgerKey, list);
   if (_useFirebase) {
@@ -9619,7 +9630,7 @@ async function _acctQueueDeclinePaid(ledgerKey, id) {
 }
 
 async function confirmBudgetPaid(ledgerKey, id) {
-  if (currentUser !== 'accountant') return;
+  if (currentUser !== 'accountant' && currentUser !== 'owner') return;
   if (!confirm('Подтвердить оплату?')) return;
   const list = getBudgetTx(ledgerKey);
   const t = list.find(x=>x.id===id);
@@ -9641,7 +9652,7 @@ async function confirmBudgetPaid(ledgerKey, id) {
 // already keeps out of every future month's forecast, instead of just sitting unconfirmed
 // forever and quietly dragging every later month down.
 async function declineBudgetPaid(ledgerKey, id) {
-  if (currentUser !== 'accountant') return;
+  if (currentUser !== 'accountant' && currentUser !== 'owner') return;
   const list = getBudgetTx(ledgerKey);
   const t = list.find(x=>x.id===id);
   if (!t) return;
