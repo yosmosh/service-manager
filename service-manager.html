@@ -1815,6 +1815,20 @@ function _getFromName() {
   return p ? p.name : currentUser;
 }
 
+// Maps a stored `createdBy` role value (any role string, or 'import' for historical
+// records) to a human-readable name — used so the owner can tell WHO entered a given
+// Личный бюджет request, e.g. distinguishing admin from admin2.
+function _roleDisplayName(role) {
+  const names = {
+    owner: 'Владелец', admin: 'Администратор', admin2: 'Администратор 2',
+    kitchen: 'Кухня', kitchen_worker: 'Сотрудник кухни', alexander: 'Александр',
+    accountant: 'Бухгалтер', management: 'Руководство', import: 'Импорт (история)',
+  };
+  if (names[role]) return names[role];
+  const p = PROVIDERS.find(x => x.id === role);
+  return p ? p.name : (role || '—');
+}
+
 function getRecord(pid, yr, mo) {
   return (getRecords())[`${pid}_${yr}_${mo}`] || {};
 }
@@ -9132,6 +9146,7 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
           ${t.time?`<span style="font-size:11px;color:#94a3b8">${t.time}</span>`:''}
           <span class="badge badge-gray" style="font-size:10px">${typeLabel}</span>
           ${t.fund?`<span class="badge" style="font-size:10px;background:${_fundColor(t.fund)};color:#fff">${t.fund}</span>`:''}
+          ${cfg.useFunds && t.createdBy ? `<span class="badge badge-gray" style="font-size:10px">✍️ ${_roleDisplayName(t.createdBy)}</span>` : ''}
         </div>
         <div style="font-weight:600;font-size:14px">${t.vendor||''}</div>
         ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
