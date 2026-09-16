@@ -9264,15 +9264,19 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   // since income there can come from different places.
   const vendorNeeded = cfg.useFunds || type !== 'income';
 
-  // saveBudgetTx() always resets approvals + paid status on edit (so a changed amount
-  // can't slip through under a stale sign-off) — but for an ALREADY-PAID transaction
-  // that also silently un-pays it, which is a bigger deal than losing approvals and
-  // deserves its own explicit warning, not just the generic one.
+  // saveBudgetTx() resets approvals + paid status on any MATERIAL edit (amount/vendor/
+  // date/fund) so a changed amount can't slip through under a stale sign-off — but a
+  // cosmetic fix (typo, swapped receipt) by the owner himself keeps the status as-is,
+  // since he already has full authority over both approval and payment anyway.
   const isPaid = t.accountantConfirm && t.accountantConfirm.paid;
   const editWarning = !id ? '' : (type === 'expense'
     ? (isPaid
-        ? '<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#991b1b">⚠️ Эта операция уже ОПЛАЧЕНА. Изменение сбросит согласования И статус оплаты — бухгалтеру нужно будет подтвердить оплату заново.</div>'
-        : '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#92400e">⚠️ Изменение операции сбросит все согласования — потребуется согласовать заново</div>')
+        ? (currentUser === 'owner'
+            ? '<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#1e40af">ℹ️ Эта операция уже ОПЛАЧЕНА. Если вы поменяете сумму/поставщика/дату/фонд — статус оплаты сбросится. Правка примечания или чека статус не тронет.</div>'
+            : '<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#991b1b">⚠️ Эта операция уже ОПЛАЧЕНА. Изменение сбросит согласования И статус оплаты — бухгалтеру нужно будет подтвердить оплату заново.</div>')
+        : (currentUser === 'owner'
+            ? '<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#1e40af">ℹ️ Изменение суммы/поставщика/даты/фонда сбросит согласования — правка примечания или чека их не тронет.</div>'
+            : '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#92400e">⚠️ Изменение операции сбросит все согласования — потребуется согласовать заново</div>'))
     : '');
 
   document.getElementById('modal-title').textContent = id ? '✏️ Редактировать операцию' : (type==='income'?'💰 Новый приход':'💸 Новый расход');
@@ -9370,6 +9374,19 @@ async function saveBudgetTx(ledgerKey) {
 
   const list = getBudgetTx(ledgerKey);
   const existing = _editingBudgetTx ? list.find(x=>x.id===_editingBudgetTx) : null;
+  // Only notify approvers when there's actually something new for them to look at: a
+  // brand-new expense, or an edit that changed one of the fields that matters for the
+  // approval decision itself. Re-saving unchanged, or only touching the note/receipt,
+  // still resets the approval chain (see below) but shouldn't also re-alert everyone —
+  // that's exactly the "unnecessary email" pattern to avoid.
+  const materialChange = !existing || existing.amount !== Number(amount) || existing.vendor !== vendor ||
+    existing.date !== date || (existing.fund||null) !== (fund||null);
+  // The owner already has full authority to approve and to mark paid on his own — so a
+  // cosmetic fix (typo, swapped receipt) he makes to an already-settled record shouldn't
+  // force him through the whole approve-for-Alexander-then-pay dance again. Anyone else's
+  // edit, or any edit that actually changes the amount/vendor/date/fund, still resets the
+  // chain — that safety net is for everyone but him.
+  const keepStatus = existing && !materialChange && currentUser === 'owner';
   const record = {
     id: _editingBudgetTx || Date.now().toString(36),
     type, date,
@@ -9378,22 +9395,12 @@ async function saveBudgetTx(ledgerKey) {
     fund: fund||null,
     notes: (document.getElementById('bt-notes').value||'').trim(),
     fileRef: fileRef||null,
-    // Any save (new or edit) starts/resets the approval chain — editing an already
-    // approved amount/vendor without forcing re-approval would let changes slip
-    // through under a stale sign-off.
-    status: 'pending',
-    approvals: {},
-    accountantConfirm: {paid:false},
+    status: keepStatus ? existing.status : 'pending',
+    approvals: keepStatus ? existing.approvals : {},
+    accountantConfirm: keepStatus ? existing.accountantConfirm : {paid:false},
     createdBy: existing ? existing.createdBy : currentUser,
     createdAt: existing ? existing.createdAt : new Date().toISOString(),
   };
-  // Only notify approvers when there's actually something new for them to look at: a
-  // brand-new expense, or an edit that changed one of the fields that matters for the
-  // approval decision itself. Re-saving unchanged, or only touching the note/receipt,
-  // still resets the approval chain (see above) but shouldn't also re-alert everyone —
-  // that's exactly the "unnecessary email" pattern to avoid.
-  const materialChange = !existing || existing.amount !== Number(amount) || existing.vendor !== vendor ||
-    existing.date !== date || (existing.fund||null) !== (fund||null);
 
   if (_editingBudgetTx) { const idx=list.findIndex(x=>x.id===_editingBudgetTx); if(idx>=0)list[idx]=record; else list.push(record); }
   else list.push(record);
