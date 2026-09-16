@@ -911,6 +911,14 @@ function logout() {
 function applyUserLayout() {
   const sidebar = document.getElementById('sidebar');
   const provReqBtn = document.getElementById('provider-req-btn');
+  // Restricted roles (alexander/kitchen/management/admin2) hide every .nav-item and
+  // .sidebar-section-title, then whitelist their own few — but that inline style stuck
+  // around on the shared DOM if the same tab later switched to owner/admin, which never
+  // re-show them individually. Reset both back to their stylesheet default first, so
+  // owner/admin always start from "everything visible" regardless of who was logged in
+  // here before.
+  document.querySelectorAll('.nav-item').forEach(el => el.style.display = '');
+  document.querySelectorAll('.sidebar-section-title').forEach(el => el.style.display = '');
   document.querySelectorAll('.owner-only').forEach(el => el.style.display = 'none');
   document.querySelectorAll('.admin-or-owner').forEach(el => el.style.display = 'flex');
   if (provReqBtn) provReqBtn.style.display = 'none';
