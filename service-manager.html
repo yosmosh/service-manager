@@ -9108,7 +9108,7 @@ function _renderBudgetLedger(ledgerKey) {
   // Same fund display order as the fund-management screen and the source sheet's own
   // color legend (_FUND_COLORS' own key order); anything outside that list sorts after.
   const _fundOrder = Object.keys(_FUND_COLORS);
-  const _sortedFundNames = Object.keys(bal.byFund).sort((a,b) => {
+  const _sortedFundNames = Object.keys(bal.byFund).filter(f => f && f !== '—').sort((a,b) => {
     const ia = _fundOrder.indexOf(a), ib = _fundOrder.indexOf(b);
     if (ia === -1 && ib === -1) return a.localeCompare(b);
     if (ia === -1) return 1;
