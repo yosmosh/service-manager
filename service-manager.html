@@ -9122,13 +9122,13 @@ function _renderBudgetLedger(ledgerKey) {
   });
   const fundBreakdown = cfg.useFunds ? (_sortedFundNames.length ? _sortedFundNames.map(fund => {
     const v = bal.byFund[fund];
-    return `<div class="card" style="margin-bottom:10px;border-left:4px solid ${_fundColor(fund)}">
-      <div class="card-header"><h3 style="color:${_fundColor(fund)}">${fund}</h3></div>
-      <div style="padding:10px 16px;display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
-        <div><div style="font-size:11px;color:#94a3b8">Приход — ${MONTHS[budgetMonth-1]}</div><div style="font-weight:700;color:#16a34a;font-size:15px">₽${fmt(v.thisIncome)}</div></div>
-        <div><div style="font-size:11px;color:#94a3b8">Расход — ${MONTHS[budgetMonth-1]}</div><div style="font-weight:700;color:#dc2626;font-size:15px">₽${fmt(v.thisExpensePaid)}</div></div>
-        <div><div style="font-size:11px;color:#94a3b8">Предварительный остаток</div><div style="font-weight:700;color:#2563eb;font-size:15px">₽${fmt(v.prelimBalance)}</div></div>
-        <div><div style="font-size:11px;color:#94a3b8">Фактический остаток</div><div style="font-weight:700;color:${v.actualBalance>=0?'#16a34a':'#dc2626'};font-size:15px">₽${fmt(v.actualBalance)}</div></div>
+    return `<div class="card" style="margin-bottom:6px;border-left:4px solid ${_fundColor(fund)};padding:8px 14px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <div style="font-weight:700;color:${_fundColor(fund)};font-size:13px;min-width:110px;flex-shrink:0">${fund}</div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;flex:1;justify-content:flex-end">
+        <div style="text-align:right"><div style="font-size:10px;color:#94a3b8">Приход</div><div style="font-weight:700;color:#16a34a;font-size:13px">₽${fmt(v.thisIncome)}</div></div>
+        <div style="text-align:right"><div style="font-size:10px;color:#94a3b8">Расход</div><div style="font-weight:700;color:#dc2626;font-size:13px">₽${fmt(v.thisExpensePaid)}</div></div>
+        <div style="text-align:right"><div style="font-size:10px;color:#94a3b8">Предв. остаток</div><div style="font-weight:700;color:#2563eb;font-size:13px">₽${fmt(v.prelimBalance)}</div></div>
+        <div style="text-align:right"><div style="font-size:10px;color:#94a3b8">Факт. остаток</div><div style="font-weight:700;color:${v.actualBalance>=0?'#16a34a':'#dc2626'};font-size:13px">₽${fmt(v.actualBalance)}</div></div>
       </div>
     </div>`;
   }).join('') : '<div class="card" style="margin-bottom:12px"><div style="padding:16px;color:#94a3b8;font-size:13px;text-align:center">Нет данных</div></div>') : '';
