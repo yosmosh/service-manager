@@ -9120,18 +9120,25 @@ function _renderBudgetLedger(ledgerKey) {
     if (ib === -1) return -1;
     return ia - ib;
   });
-  const fundBreakdown = cfg.useFunds ? (_sortedFundNames.length ? _sortedFundNames.map(fund => {
-    const v = bal.byFund[fund];
-    return `<div class="card" style="margin-bottom:6px;border-left:4px solid ${_fundColor(fund)};padding:8px 14px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-      <div style="font-weight:700;color:${_fundColor(fund)};font-size:13px;min-width:110px;flex-shrink:0">${fund}</div>
-      <div style="display:flex;gap:18px;flex-wrap:wrap;flex:1;justify-content:flex-end">
-        <div style="text-align:right"><div style="font-size:10px;color:#94a3b8">Приход</div><div style="font-weight:700;color:#16a34a;font-size:13px">₽${fmt(v.thisIncome)}</div></div>
-        <div style="text-align:right"><div style="font-size:10px;color:#94a3b8">Расход</div><div style="font-weight:700;color:#dc2626;font-size:13px">₽${fmt(v.thisExpensePaid)}</div></div>
-        <div style="text-align:right"><div style="font-size:10px;color:#94a3b8">Предв. остаток</div><div style="font-weight:700;color:#2563eb;font-size:13px">₽${fmt(v.prelimBalance)}</div></div>
-        <div style="text-align:right"><div style="font-size:10px;color:#94a3b8">Факт. остаток</div><div style="font-weight:700;color:${v.actualBalance>=0?'#16a34a':'#dc2626'};font-size:13px">₽${fmt(v.actualBalance)}</div></div>
-      </div>
-    </div>`;
-  }).join('') : '<div class="card" style="margin-bottom:12px"><div style="padding:16px;color:#94a3b8;font-size:13px;text-align:center">Нет данных</div></div>') : '';
+  // A single grid-aligned table (fixed column template shared by the header and every
+  // fund row) so all the numbers line up vertically and can be scanned column-by-column,
+  // instead of each card wrapping its own labels independently.
+  const _fbCols = 'minmax(90px,1fr) repeat(4,minmax(80px,1fr))';
+  const fundBreakdown = cfg.useFunds ? (_sortedFundNames.length ? `<div class="card" style="margin-bottom:10px;overflow-x:auto">
+    <div style="display:grid;grid-template-columns:${_fbCols};gap:4px;padding:6px 14px;font-size:10px;color:#94a3b8;border-bottom:1px solid #e2e8f0;min-width:480px">
+      <div></div><div style="text-align:right">Приход</div><div style="text-align:right">Расход</div><div style="text-align:right">Предв.</div><div style="text-align:right">Факт.</div>
+    </div>
+    ${_sortedFundNames.map(fund => {
+      const v = bal.byFund[fund];
+      return `<div style="display:grid;grid-template-columns:${_fbCols};gap:4px;align-items:center;padding:7px 14px;border-left:4px solid ${_fundColor(fund)};border-bottom:1px solid #f1f5f9;min-width:480px">
+        <div style="font-weight:700;color:${_fundColor(fund)};font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${fund}</div>
+        <div style="text-align:right;font-weight:700;color:#16a34a;font-size:13px">₽${fmt(v.thisIncome)}</div>
+        <div style="text-align:right;font-weight:700;color:#dc2626;font-size:13px">₽${fmt(v.thisExpensePaid)}</div>
+        <div style="text-align:right;font-weight:700;color:#2563eb;font-size:13px">₽${fmt(v.prelimBalance)}</div>
+        <div style="text-align:right;font-weight:700;color:${v.actualBalance>=0?'#16a34a':'#dc2626'};font-size:13px">₽${fmt(v.actualBalance)}</div>
+      </div>`;
+    }).join('')}
+  </div>` : '<div class="card" style="margin-bottom:12px"><div style="padding:16px;color:#94a3b8;font-size:13px;text-align:center">Нет данных</div></div>') : '';
 
   // A month closes the instant the next one starts — no new operations can be logged
   // into it any more (existing ones can still be approved/paid, just not created).
