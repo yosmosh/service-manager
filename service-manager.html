@@ -779,6 +779,8 @@ function getAlexanderUser()     { return getLS('alexander_username')      || 'al
 function getAlexanderPwd()      { return getLS('alexander_pwd')           || 'alex123'; }
 function getAccountantUser()    { return getLS('accountant_username')     || 'accountant'; }
 function getAccountantPwd()     { return getLS('accountant_pwd')          || 'buh123'; }
+function getManagementUser()    { return getLS('management_username')     || 'management'; }
+function getManagementPwd()     { return getLS('management_pwd')          || 'board2026'; }
 
 function doLogin() {
   const username = (document.getElementById('login-username').value || '').trim().toLowerCase();
@@ -840,6 +842,17 @@ function doLogin() {
     document.getElementById('login-screen').style.display = 'none';
     applyUserLayout();
     showView('budget');
+    return;
+  }
+
+  // Check community management (read-only: Журнал визитов, Обслуживание территории,
+  // Бюджет — maintenance+kitchen ledgers only, never personal) — same release gate as
+  // Alexander/accountant so it doesn't see an unpublished budget.
+  if (getBudgetReleased() && username === getManagementUser().toLowerCase() && pwd === getManagementPwd()) {
+    currentUser = 'management';
+    document.getElementById('login-screen').style.display = 'none';
+    applyUserLayout();
+    showView('journal');
     return;
   }
 
@@ -936,6 +949,25 @@ function applyUserLayout() {
   } else if (currentUser === 'accountant') {
     sidebar.style.display = 'none';
     document.getElementById('user-label').textContent = '🧾 Бухгалтер';
+  } else if (currentUser === 'management') {
+    // Pure view-only account for community leadership: same three sections as Alexander
+    // (Журнал визитов, Обслуживание территории already hide their edit controls for
+    // anyone who isn't 'owner'/'admin' — nothing extra needed there), but Бюджет is
+    // restricted to just the kitchen+maintenance ledgers (never personal) via
+    // _budgetVisibleLedgers, and this role is never added to any approvers/canCreate
+    // array so it never sees an action button.
+    sidebar.style.display = '';
+    document.getElementById('user-label').textContent = '👁️ Руководство (просмотр)';
+    document.querySelectorAll('.nav-item').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.sidebar-section-title').forEach(el => el.style.display = 'none');
+    const mainSectionTitleMgmt = sidebar.querySelector('.sidebar-section-title');
+    if (mainSectionTitleMgmt) mainSectionTitleMgmt.style.display = '';
+    ['nav-journal','nav-maint','nav-budget'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'flex';
+    });
+    const navBudgetMgmt = document.getElementById('nav-budget');
+    if (navBudgetMgmt && !getBudgetReleased()) navBudgetMgmt.style.display = 'none';
   } else {
     sidebar.style.display = 'none';
     if (provReqBtn) provReqBtn.style.display = '';
@@ -1081,6 +1113,21 @@ function openSettingsModal() {
         </div>
       </div>
       <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveAccountantCreds()">💾 Сохранить данные бухгалтера</button>
+    </div>
+    <div style="margin-bottom:16px;padding:12px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:10px">
+      <div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:4px">👁️ Учётная запись руководства (только просмотр)</div>
+      <div style="font-size:11px;color:#334155;margin-bottom:8px">Без права редактирования: Журнал визитов, Обслуживание территории, Бюджет (ТО и зарплаты + Кухня, без личного бюджета)</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
+          <input type="text" class="form-control" id="management-cred-user" value="${getManagementUser()}" placeholder="management">
+        </div>
+        <div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
+          <input type="text" class="form-control" id="management-cred-pwd" value="${getManagementPwd()}" placeholder="Пароль...">
+        </div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveManagementCreds()">💾 Сохранить данные руководства</button>
     </div>` : '';
 
   const nc = getNotifyCfg();
@@ -1277,6 +1324,17 @@ function saveAccountantCreds() {
   setLS('accountant_pwd', p);
   if (_useFirebase) _scheduleSave();
   alert('Данные бухгалтера сохранены');
+}
+
+function saveManagementCreds() {
+  const u = (document.getElementById('management-cred-user').value||'').trim();
+  const p = (document.getElementById('management-cred-pwd').value||'').trim();
+  if (!u) { alert('Введите имя пользователя'); return; }
+  if (!p) { alert('Введите пароль'); return; }
+  setLS('management_username', u);
+  setLS('management_pwd', p);
+  if (_useFirebase) _scheduleSave();
+  alert('Данные руководства сохранены');
 }
 
 function saveAnthropicKey() {
@@ -2195,8 +2253,8 @@ function render() {
     title.textContent = '🍽️ Управление кухней';
     content.innerHTML = renderKitchen();
   } else if (view === 'budget') {
-    if (currentUser !== 'owner' && currentUser !== 'admin' && currentUser !== 'alexander' && currentUser !== 'kitchen') { showView('dashboard'); return; }
-    if ((currentUser === 'admin' || currentUser === 'alexander' || currentUser === 'kitchen') && !getBudgetReleased()) { showView('dashboard'); return; }
+    if (currentUser !== 'owner' && currentUser !== 'admin' && currentUser !== 'alexander' && currentUser !== 'kitchen' && currentUser !== 'management') { showView('dashboard'); return; }
+    if ((currentUser === 'admin' || currentUser === 'alexander' || currentUser === 'kitchen' || currentUser === 'management') && !getBudgetReleased()) { showView('dashboard'); return; }
     title.textContent = '💰 Бюджет';
     content.innerHTML = renderBudget();
   }
@@ -8627,6 +8685,7 @@ const FINANCE_LEDGERS = {
 function _budgetVisibleLedgers(role) {
   if (role === 'admin') return ['maintenance', 'personal'];
   if (role === 'kitchen') return ['kitchen'];
+  if (role === 'management') return ['kitchen', 'maintenance'];
   return ['kitchen', 'maintenance', 'personal'];
 }
 let budgetLedger = 'kitchen';
