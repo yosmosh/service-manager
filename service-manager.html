@@ -8958,32 +8958,56 @@ function _budgetBalance(ledgerKey, throughMonthKey) {
     }
   });
   const actualBalance = income - expenseActual;
+  Object.keys(byFund).forEach(fund => { byFund[fund].actualBalance = byFund[fund].income - byFund[fund].actual; });
 
   // Предварительный остаток mirrors the source Google Sheets' own convention: each month's
   // forecast resets to the PRIOR month's actual (paid-only) balance, then adds only this
   // month's own income/expenses (pending, approved, or rejected alike) — so an old stuck
   // item only ever shows as a drag in the month it happened, never forever after.
+  //
+  // The source Личный бюджет sheet reports every one of these figures PER FUND, side by
+  // side — one Приход/Расход/Предварительный/Фактический block per fund, not pooled into
+  // one ledger-wide number — so the same prior/this-month split done here for the ledger
+  // total is repeated per fund and attached onto byFund[fund] below.
   let prelimBalance, thisIncome = income, thisExpenseAll = expensePrelim, thisExpensePaid = expenseActual;
   if (throughMonthKey) {
     let priorIncome = 0, priorPaidExp = 0;
+    const priorByFund = {}, byFundThisMonth = {};
     thisIncome = 0; thisExpenseAll = 0; thisExpensePaid = 0;
     allTx.forEach(t => {
       const amt = Number(t.amount)||0;
+      const fund = t.fund || '—';
       const mk = _budgetTxMonthKey(t);
       if (mk < throughMonthKey) {
-        if (t.type === 'income' || t.type === 'refund') priorIncome += amt;
-        else if (t.accountantConfirm && t.accountantConfirm.paid) priorPaidExp += amt;
+        if (!priorByFund[fund]) priorByFund[fund] = {income:0, paidExp:0};
+        if (t.type === 'income' || t.type === 'refund') { priorIncome += amt; priorByFund[fund].income += amt; }
+        else if (t.accountantConfirm && t.accountantConfirm.paid) { priorPaidExp += amt; priorByFund[fund].paidExp += amt; }
       } else if (mk === throughMonthKey) {
-        if (t.type === 'income' || t.type === 'refund') thisIncome += amt;
+        if (!byFundThisMonth[fund]) byFundThisMonth[fund] = {thisIncome:0, thisExpenseAll:0, thisExpensePaid:0};
+        if (t.type === 'income' || t.type === 'refund') { thisIncome += amt; byFundThisMonth[fund].thisIncome += amt; }
         else {
-          thisExpenseAll += amt;
-          if (t.accountantConfirm && t.accountantConfirm.paid) thisExpensePaid += amt;
+          thisExpenseAll += amt; byFundThisMonth[fund].thisExpenseAll += amt;
+          if (t.accountantConfirm && t.accountantConfirm.paid) { thisExpensePaid += amt; byFundThisMonth[fund].thisExpensePaid += amt; }
         }
       }
     });
     prelimBalance = (priorIncome - priorPaidExp) + (thisIncome - thisExpenseAll);
+    Object.keys(byFund).forEach(fund => {
+      const prior = priorByFund[fund] || {income:0, paidExp:0};
+      const thisM = byFundThisMonth[fund] || {thisIncome:0, thisExpenseAll:0, thisExpensePaid:0};
+      byFund[fund].thisIncome = thisM.thisIncome;
+      byFund[fund].thisExpenseAll = thisM.thisExpenseAll;
+      byFund[fund].thisExpensePaid = thisM.thisExpensePaid;
+      byFund[fund].prelimBalance = (prior.income - prior.paidExp) + (thisM.thisIncome - thisM.thisExpenseAll);
+    });
   } else {
     prelimBalance = income - expensePrelim;
+    Object.keys(byFund).forEach(fund => {
+      byFund[fund].thisIncome = byFund[fund].income;
+      byFund[fund].thisExpenseAll = byFund[fund].prelim;
+      byFund[fund].thisExpensePaid = byFund[fund].actual;
+      byFund[fund].prelimBalance = byFund[fund].income - byFund[fund].prelim;
+    });
   }
 
   // thisIncome/thisExpenseAll/thisExpensePaid are this SPECIFIC month's own totals (what
@@ -9074,20 +9098,35 @@ function _renderBudgetLedger(ledgerKey) {
   // tab) — Расход specifically is the paid-only total, same definition the sheets use for
   // that row. They're computed live from whatever expense/income records currently fall
   // in this month, so they move automatically as records are added, paid, or reclassified.
-  const summaryCards = `<div class="stats-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:12px">
+  const summaryCards = cfg.useFunds ? '' : `<div class="stats-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:12px">
     <div class="stat-card"><div class="stat-value" style="color:#16a34a;font-size:18px">₽${fmt(bal.thisIncome)}</div><div class="stat-label">Приход — ${MONTHS[budgetMonth-1]}</div></div>
     <div class="stat-card"><div class="stat-value" style="color:#dc2626;font-size:18px">₽${fmt(bal.thisExpensePaid)}</div><div class="stat-label">Расход — ${MONTHS[budgetMonth-1]}</div></div>
     <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:20px">₽${fmt(bal.prelimBalance)}</div><div class="stat-label">Предварительный остаток — на конец ${MONTHS[budgetMonth-1]}</div></div>
     <div class="stat-card"><div class="stat-value" style="color:#16a34a;font-size:20px">₽${fmt(bal.actualBalance)}</div><div class="stat-label">Фактический остаток — на конец ${MONTHS[budgetMonth-1]}</div></div>
   </div>`;
 
-  const fundBreakdown = cfg.useFunds ? `<div class="card" style="margin-bottom:12px"><div class="card-header"><h3>💰 По фондам</h3></div>
-    <div style="padding:12px 16px">${Object.entries(bal.byFund).map(([fund,v])=>`
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f1f5f9;font-size:13px;border-left:4px solid ${_fundColor(fund)};padding-left:8px">
-        <span style="font-weight:600">${fund}</span>
-        <span>факт: <b style="color:${(v.income-v.actual)>=0?'#16a34a':'#dc2626'}">₽${fmt(v.income-v.actual)}</b></span>
-      </div>`).join('') || '<div style="color:#94a3b8;font-size:13px">Нет данных</div>'}
-    </div></div>` : '';
+  // Same fund display order as the fund-management screen and the source sheet's own
+  // color legend (_FUND_COLORS' own key order); anything outside that list sorts after.
+  const _fundOrder = Object.keys(_FUND_COLORS);
+  const _sortedFundNames = Object.keys(bal.byFund).sort((a,b) => {
+    const ia = _fundOrder.indexOf(a), ib = _fundOrder.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+  const fundBreakdown = cfg.useFunds ? (_sortedFundNames.length ? _sortedFundNames.map(fund => {
+    const v = bal.byFund[fund];
+    return `<div class="card" style="margin-bottom:10px;border-left:4px solid ${_fundColor(fund)}">
+      <div class="card-header"><h3 style="color:${_fundColor(fund)}">${fund}</h3></div>
+      <div style="padding:10px 16px;display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+        <div><div style="font-size:11px;color:#94a3b8">Приход — ${MONTHS[budgetMonth-1]}</div><div style="font-weight:700;color:#16a34a;font-size:15px">₽${fmt(v.thisIncome)}</div></div>
+        <div><div style="font-size:11px;color:#94a3b8">Расход — ${MONTHS[budgetMonth-1]}</div><div style="font-weight:700;color:#dc2626;font-size:15px">₽${fmt(v.thisExpensePaid)}</div></div>
+        <div><div style="font-size:11px;color:#94a3b8">Предварительный остаток</div><div style="font-weight:700;color:#2563eb;font-size:15px">₽${fmt(v.prelimBalance)}</div></div>
+        <div><div style="font-size:11px;color:#94a3b8">Фактический остаток</div><div style="font-weight:700;color:${v.actualBalance>=0?'#16a34a':'#dc2626'};font-size:15px">₽${fmt(v.actualBalance)}</div></div>
+      </div>
+    </div>`;
+  }).join('') : '<div class="card" style="margin-bottom:12px"><div style="padding:16px;color:#94a3b8;font-size:13px;text-align:center">Нет данных</div></div>') : '';
 
   // A month closes the instant the next one starts — no new operations can be logged
   // into it any more (existing ones can still be approved/paid, just not created).
