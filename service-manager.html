@@ -9348,9 +9348,18 @@ async function approveBudgetTx(ledgerKey, id) {
   // The accountant otherwise has no way to know a transaction just became payable —
   // only notify on the approval that actually completes the chain (every required
   // approver signed off), not on every single approve click.
+  //
+  // Личный бюджет is the one exception: the accountant never handles cash there — it's
+  // the owner's own approval that IS the payment, so completing the (single-approver)
+  // chain marks it paid immediately instead of waiting on a separate accountant
+  // confirmation that will never come.
   if (!alreadyApproved) {
     const nowAllApproved = FINANCE_LEDGERS[ledgerKey].approvers.every(role => t.approvals[role] && t.approvals[role].approved);
-    if (nowAllApproved) {
+    if (nowAllApproved && ledgerKey === 'personal') {
+      t.accountantConfirm = {paid:true, date:new Date().toISOString()};
+      setBudgetTx(ledgerKey, list);
+      if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
+    } else if (nowAllApproved) {
       _notifyAccountant(`🧾 Готово к оплате — ${FINANCE_LEDGERS[ledgerKey].label}`, _getFromName(), `${t.vendor||''} · ₽${(Number(t.amount)||0).toLocaleString('ru-RU')}`);
     }
   }
