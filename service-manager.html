@@ -9082,8 +9082,13 @@ function _renderBudgetLedger(ledgerKey) {
     && !(t.accountantConfirm && t.accountantConfirm.paid)
     && cfg.approvers.every(role => t.approvals && t.approvals[role] && t.approvals[role].approved);
   const acctSort = currentUser === 'accountant' && _acctSortUnpaidFirst;
+  // Admin / admin2 only ever enter expenses (invoices) — income management is the
+  // owner's call alone, so hiding income/refund entries from their view avoids any
+  // confusion about who's responsible for what.
+  const _incomeHiddenFromMe = (currentUser==='admin' || currentUser==='admin2');
   const monthTx = getBudgetTx(ledgerKey)
     .filter(t=>_budgetTxMonthKey(t)===mk)
+    .filter(t=> !(_incomeHiddenFromMe && _isIncomeType(t)))
     .sort((a,b)=> (acctSort ? (_readyForPayment(b)-_readyForPayment(a)) : 0) || (_isIncomeType(b)-_isIncomeType(a)) || (b.date||'').localeCompare(a.date||'')||(b.time||'').localeCompare(a.time||''));
   const bal = _budgetBalance(ledgerKey, mk);
   const canCreate = cfg.canCreate.includes(currentUser);
