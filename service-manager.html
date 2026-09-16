@@ -9349,13 +9349,15 @@ async function approveBudgetTx(ledgerKey, id) {
   // only notify on the approval that actually completes the chain (every required
   // approver signed off), not on every single approve click.
   //
-  // Личный бюджет is the one exception: the accountant never handles cash there — it's
-  // the owner's own approval that IS the payment, so completing the (single-approver)
-  // chain marks it paid immediately instead of waiting on a separate accountant
-  // confirmation that will never come.
+  // Личный бюджет's "Наличные" (cash) fund is the one exception: the accountant never
+  // handles cash — it's the owner's own approval that IS the payment there, so completing
+  // the (single-approver) chain marks it paid immediately instead of waiting on a separate
+  // accountant confirmation that will never come. Every OTHER fund in this ledger (bank
+  // transfers, institutional funds) still goes through the accountant exactly like
+  // Kitchen/Maintenance.
   if (!alreadyApproved) {
     const nowAllApproved = FINANCE_LEDGERS[ledgerKey].approvers.every(role => t.approvals[role] && t.approvals[role].approved);
-    if (nowAllApproved && ledgerKey === 'personal') {
+    if (nowAllApproved && ledgerKey === 'personal' && t.fund === 'Наличные') {
       t.accountantConfirm = {paid:true, date:new Date().toISOString()};
       setBudgetTx(ledgerKey, list);
       if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
