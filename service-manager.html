@@ -1538,7 +1538,6 @@ const setLS = (k, v) => {
 };
 
 let _saveTimer = null;
-let _isOwnFlush = false;
 function _scheduleSave() {
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(_flushState, 2000);
@@ -1590,7 +1589,6 @@ function _flushState() {
 
 async function _doFlushState() {
   if (!_firestoreDB) return true;
-  _isOwnFlush = true;
   try {
     // Firestore caps a single document at ~1MB. This app used to keep the entire
     // `files` registry (one entry per file ever uploaded, across every department)
@@ -1648,7 +1646,6 @@ async function _doFlushState() {
     _showToast('✅ Сохранено', true);
     return true;
   } catch(e) {
-    _isOwnFlush = false;
     console.error('[FLUSH] Save failed:', e);
     _showPersistentError('ОШИБКА СОХРАНЕНИЯ: ' + e.message + ' — данные НЕ сохранены на сервере! Попробуйте ещё раз, иначе изменения будут потеряны.');
     return false;
@@ -1704,7 +1701,15 @@ function _setupSync() {
       const filesBackup = _state.files;
       _state = doc.data() || {};
       _state.files = filesBackup;
-      if (_isOwnFlush) { _isOwnFlush = false; return; }
+      // This used to skip re-rendering on the snapshot that echoed THIS session's own
+      // write (tracked via a single shared _isOwnFlush flag), to avoid one redundant
+      // render. But if a truly external change from another session landed while that
+      // flag was still set (a real possibility with several roles saving concurrently),
+      // this session would silently swallow it — which is exactly why balance changes
+      // and other updates sometimes only showed up after a manual reload. Always
+      // re-rendering (modal-open guard aside, so an in-progress form never gets wiped
+      // out from under someone) costs one redundant render on your own saves and fixes
+      // that class of missed live update entirely.
       if (document.querySelector('.modal-overlay')) return;
       if (currentUser) render();
     }
