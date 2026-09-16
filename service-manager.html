@@ -2250,6 +2250,13 @@ function showView(v, pid) {
   if (navEl) navEl.classList.add('active');
   closeMobileSidebar();
   render();
+  // render() only swaps #content's innerHTML — the scrollable ancestor (.main on
+  // desktop, the whole page on the mobile layout) keeps whatever scroll position it
+  // had on the PREVIOUS page, so switching views while scrolled down used to land you
+  // mid-page on the new one instead of at the top.
+  const mainEl = document.querySelector('.main');
+  if (mainEl) mainEl.scrollTop = 0;
+  window.scrollTo(0, 0);
   // Surface what needs attention right now instead of making the owner/accountant scan
   // three ledgers' worth of history to spot it — only on actually navigating to Бюджет
   // (not on every live-sync re-render), and only if there's something to show.
