@@ -2242,6 +2242,10 @@ function showView(v, pid) {
   if (navEl) navEl.classList.add('active');
   closeMobileSidebar();
   render();
+  // Surface what needs the owner's attention right now instead of making him scan three
+  // ledgers' worth of history to spot it — only on actually navigating to Бюджет (not on
+  // every live-sync re-render), and only if there's something to show.
+  if (v === 'budget' && currentUser === 'owner') openOwnerApprovalQueueModal();
 }
 
 function render() {
@@ -8762,6 +8766,11 @@ let budgetLedger = 'kitchen';
 let budgetMonth = new Date().getMonth()+1;
 let budgetYear = new Date().getFullYear();
 let _editingBudgetTx = null;
+// The accountant's actual job is working through whatever's fully approved and still
+// unpaid — defaults on for her specifically so she isn't scanning a whole month's history
+// to find what needs her, but stays a toggle since she may still want the plain
+// chronological view sometimes.
+let _acctSortUnpaidFirst = true;
 
 // Staged rollout: while unreleased, only the owner can see/use Бюджет at all —
 // admin's nav item stays hidden and alexander/accountant logins are refused, so the
@@ -9030,18 +9039,35 @@ function renderBudget() {
 
 function switchBudgetLedger(k) { budgetLedger = k; render(); }
 
+function _toggleAcctSort() {
+  _acctSortUnpaidFirst = !_acctSortUnpaidFirst;
+  render();
+}
+
 function _renderBudgetLedger(ledgerKey) {
   const cfg = FINANCE_LEDGERS[ledgerKey];
   const mk = `${budgetYear}-${String(budgetMonth).padStart(2,'0')}`;
   // Income/refund entries sort first, regardless of date — they're rare and important,
   // and were getting lost scrolling past a long list of same-day expenses otherwise.
   const _isIncomeType = t => t.type==='income' || t.type==='refund';
+  // Ready-for-payment = fully approved by everyone required, not rejected, not yet paid —
+  // exactly what the accountant needs to act on. Sorting these first (when her toggle is
+  // on) turns "scan the whole month for what needs me" into "start at the top."
+  const _readyForPayment = t => t.type==='expense' && t.status!=='rejected'
+    && !(t.accountantConfirm && t.accountantConfirm.paid)
+    && cfg.approvers.every(role => t.approvals && t.approvals[role] && t.approvals[role].approved);
+  const acctSort = currentUser === 'accountant' && _acctSortUnpaidFirst;
   const monthTx = getBudgetTx(ledgerKey)
     .filter(t=>_budgetTxMonthKey(t)===mk)
-    .sort((a,b)=> (_isIncomeType(b)-_isIncomeType(a)) || (b.date||'').localeCompare(a.date||'')||(b.time||'').localeCompare(a.time||''));
+    .sort((a,b)=> (acctSort ? (_readyForPayment(b)-_readyForPayment(a)) : 0) || (_isIncomeType(b)-_isIncomeType(a)) || (b.date||'').localeCompare(a.date||'')||(b.time||'').localeCompare(a.time||''));
   const bal = _budgetBalance(ledgerKey, mk);
   const canCreate = cfg.canCreate.includes(currentUser);
   const fmt = n => (Number(n)||0).toLocaleString('ru-RU',{maximumFractionDigits:2});
+  const acctSortToggle = currentUser === 'accountant' ? `<div style="margin-bottom:10px">
+    <button class="btn btn-outline" style="font-size:12px;padding:6px 12px" onclick="_toggleAcctSort()">
+      ${_acctSortUnpaidFirst ? '🔀 Сначала неоплаченные (вкл.)' : '🔀 Сначала неоплаченные (выкл.)'}
+    </button>
+  </div>` : '';
 
   // Приход/Расход are THIS month's own totals (mirrors the sheets' own two top rows per
   // tab) — Расход specifically is the paid-only total, same definition the sheets use for
@@ -9095,13 +9121,13 @@ function _renderBudgetLedger(ledgerKey) {
   </div>` : '';
 
   if (!monthTx.length) {
-    return summaryCards + fundBreakdown + kitchenPresepBar + maintPreaugBar + personalPreaugBar + addBtn + `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
+    return summaryCards + fundBreakdown + kitchenPresepBar + maintPreaugBar + personalPreaugBar + acctSortToggle + addBtn + `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
       <div style="font-size:48px;margin-bottom:12px">🏦</div>
       <div style="font-size:14px">Нет операций за ${MONTHS[budgetMonth-1]} ${budgetYear}</div></div></div>`;
   }
 
   const rows = monthTx.map(t => _renderBudgetTxCard(ledgerKey, t, cfg)).join('');
-  return summaryCards + fundBreakdown + kitchenPresepBar + maintPreaugBar + personalPreaugBar + addBtn + rows;
+  return summaryCards + fundBreakdown + kitchenPresepBar + maintPreaugBar + personalPreaugBar + acctSortToggle + addBtn + rows;
 }
 
 function _renderBudgetTxCard(ledgerKey, t, cfg) {
@@ -9396,6 +9422,78 @@ async function rejectBudgetTx(ledgerKey, id) {
     if (!ok) { render(); return; }
   }
   _showToast('❌ Отклонено', false); render();
+}
+
+// Owner's "what needs my attention right now" queue: every not-yet-rejected, not-yet-paid
+// expense across all three ledgers where the owner specifically hasn't approved yet. Pops
+// up automatically on navigating to Бюджет (see showView()) so the owner works through a
+// fresh list each time instead of having to scan three tabs' worth of history to spot what
+// actually needs him.
+function _ownerPendingApprovalItems() {
+  const items = [];
+  Object.keys(FINANCE_LEDGERS).forEach(lk => {
+    const cfg = FINANCE_LEDGERS[lk];
+    if (!cfg.approvers.includes('owner')) return;
+    getBudgetTx(lk).forEach(t => {
+      if (t.type !== 'expense') return;
+      if (t.status === 'rejected') return;
+      if (t.accountantConfirm && t.accountantConfirm.paid) return;
+      if (t.approvals && t.approvals.owner && t.approvals.owner.approved) return;
+      items.push(Object.assign({}, t, {_ledgerKey: lk}));
+    });
+  });
+  items.sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  return items;
+}
+
+function _renderOwnerQueueList(items) {
+  if (!items.length) return '<div style="color:#16a34a;font-weight:600;padding:24px;text-align:center">✅ Всё согласовано!</div>';
+  return items.map(t => `<div class="kitch-card" style="margin-bottom:8px">
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+          <span class="badge badge-gray" style="font-size:10px">${FINANCE_LEDGERS[t._ledgerKey].label}</span>
+          <span style="font-weight:700">${fmtDate(t.date)}</span>
+          ${t.fund?`<span class="badge" style="font-size:10px;background:${_fundColor(t.fund)};color:#fff">${t.fund}</span>`:''}
+        </div>
+        <div style="font-weight:600;font-size:14px">${t.vendor||''}</div>
+        ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
+        ${t.fileRef?`<div style="margin-top:4px"><a href="${_kFileUrl(t.fileRef)}" target="_blank" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${t.fileRef.name||'Документ'}</a></div>`:''}
+      </div>
+      <div style="font-weight:700;font-size:16px;color:#dc2626;flex-shrink:0">−₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <button class="btn btn-primary" style="font-size:12px;padding:5px 10px" onclick="_ownerQueueApprove('${t._ledgerKey}','${t.id}')">✅ Согласовать</button>
+      <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="_ownerQueueReject('${t._ledgerKey}','${t.id}')">❌ Отклонить</button>
+    </div>
+  </div>`).join('');
+}
+
+function openOwnerApprovalQueueModal() {
+  const items = _ownerPendingApprovalItems();
+  if (!items.length) return;
+  document.getElementById('modal-title').textContent = `🔔 Ожидают вашего согласования (${items.length})`;
+  document.getElementById('modal-body').innerHTML = `<div id="owner-queue-list">${_renderOwnerQueueList(items)}</div>`;
+  document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal();render()">Закрыть</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function _refreshOwnerQueueModal() {
+  const items = _ownerPendingApprovalItems();
+  const listEl = document.getElementById('owner-queue-list');
+  if (listEl) listEl.innerHTML = _renderOwnerQueueList(items);
+  const titleEl = document.getElementById('modal-title');
+  if (titleEl) titleEl.textContent = items.length ? `🔔 Ожидают вашего согласования (${items.length})` : '✅ Готово';
+}
+
+async function _ownerQueueApprove(ledgerKey, id) {
+  await approveBudgetTx(ledgerKey, id);
+  _refreshOwnerQueueModal();
+}
+
+async function _ownerQueueReject(ledgerKey, id) {
+  await rejectBudgetTx(ledgerKey, id);
+  _refreshOwnerQueueModal();
 }
 
 async function confirmBudgetPaid(ledgerKey, id) {
