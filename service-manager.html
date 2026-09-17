@@ -9282,10 +9282,10 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   const type = t.type || defaultType || 'expense';
   const fundOpts = cfg.useFunds ? getBudgetFunds().map(f=>`<option value="${f.name}" ${t.fund===f.name?'selected':''} style="color:${_fundColor(f.name)};font-weight:600">${f.name}</option>`).join('') : '';
 
-  // Kitchen/maintenance income has exactly one source in practice — no point asking
-  // for a name/recipient on those. Funded ledgers (personal budget) keep the field
-  // since income there can come from different places.
-  const vendorNeeded = cfg.useFunds || type !== 'income';
+  // Income never needs a name/recipient field — the fund itself (for ledgers that use
+  // one) already says where the money's earmarked; a separate free-text source was just
+  // an extra required field with nothing useful to put in it.
+  const vendorNeeded = type !== 'income';
 
   // saveBudgetTx() resets approvals + paid status on any MATERIAL edit (amount/vendor/
   // date/fund) so a changed amount can't slip through under a stale sign-off — but a
@@ -9319,7 +9319,7 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
       <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="bt-date" value="${t.date||today}"></div>
       <div class="form-group"><label>Время</label><input type="time" class="form-control" id="bt-time" value="${t.time||nowTime}"></div>
     </div>
-    <div class="form-group" id="bt-vendor-group" ${vendorNeeded?'':'hidden'}><label id="bt-vendor-label">${type==='income'?'Источник дохода *':'Наименование / поставщик *'}</label><input class="form-control" id="bt-vendor" list="bt-vendor-list-${ledgerKey}" name="bt-vendor-${ledgerKey}" autocomplete="off-${ledgerKey}" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="Поставщик, сотрудник, назначение...">
+    <div class="form-group" id="bt-vendor-group" ${vendorNeeded?'':'hidden'}><label id="bt-vendor-label">Наименование / поставщик *</label><input class="form-control" id="bt-vendor" list="bt-vendor-list-${ledgerKey}" name="bt-vendor-${ledgerKey}" autocomplete="off-${ledgerKey}" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="Поставщик, сотрудник, назначение...">
       <datalist id="bt-vendor-list-${ledgerKey}">${_budgetVendorSuggestions(ledgerKey).map(v=>`<option value="${v.replace(/"/g,'&quot;')}">`).join('')}</datalist>
     </div>
     <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="bt-amount" value="${t.amount||''}" min="0" step="0.01"></div>
@@ -9338,13 +9338,12 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
 }
 
 function _toggleBudgetVendorField(ledgerKey) {
-  const cfg = FINANCE_LEDGERS[ledgerKey];
   const type = document.getElementById('bt-type').value;
   const group = document.getElementById('bt-vendor-group');
   if (!group) return;
-  group.hidden = !(cfg.useFunds || type !== 'income');
+  group.hidden = type === 'income';
   const label = document.getElementById('bt-vendor-label');
-  if (label) label.textContent = type==='income' ? 'Источник дохода *' : 'Наименование / поставщик *';
+  if (label) label.textContent = 'Наименование / поставщик *';
 }
 
 function onBudgetFileSelect(input) {
@@ -9374,7 +9373,7 @@ async function saveBudgetTx(ledgerKey) {
     alert('⛔ Этот месяц уже закрыт — новые операции можно добавлять только в текущий месяц (или будущей датой).');
     return;
   }
-  const vendorNeeded = cfg.useFunds || type !== 'income';
+  const vendorNeeded = type !== 'income';
   const vendor = vendorNeeded ? (document.getElementById('bt-vendor').value||'').trim() : 'Приход';
   if (vendorNeeded && !vendor) { alert('Укажите наименование/поставщика'); return; }
   const amount = document.getElementById('bt-amount').value;
