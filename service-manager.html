@@ -1196,7 +1196,8 @@ function openSettingsModal() {
           1. Зарегистрируйтесь на <strong>emailjs.com</strong> (бесплатно — 200 писем/мес)<br>
           2. Добавьте Email Service (Gmail) → скопируйте <strong>Service ID</strong><br>
           3. Создайте шаблон с переменными: <code>{{subject}}</code> <code>{{from_name}}</code> <code>{{details}}</code> <code>{{time}}</code> → скопируйте <strong>Template ID</strong><br>
-          4. Account → General → скопируйте <strong>Public Key</strong>
+          4. Account → General → скопируйте <strong>Public Key</strong><br>
+          5. ⚠️ <strong>Важно:</strong> в настройках шаблона (Template → Settings) в поле <strong>"To Email"</strong> впишите <code>{{to_email}}</code> — а не свой адрес напрямую! Если там стоит конкретный email, ВСЕ письма (в том числе для Александра и бухгалтера) будут уходить только на него.
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
           <div>
@@ -1224,9 +1225,16 @@ function openSettingsModal() {
             <input class="form-control" id="notif-email-accountant" value="${nc.accountant_email||''}" placeholder="accountant@email.com" style="font-size:12px">
           </div>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <select id="notif-test-who" class="form-control" style="width:auto;font-size:12px;padding:8px 10px">
+            <option value="owner">Тест → владелец</option>
+            <option value="alexander">Тест → Александр</option>
+            <option value="accountant">Тест → бухгалтер</option>
+          </select>
+          <button class="btn btn-outline" style="font-size:12px" onclick="testNotifyEmail()">📧 Отправить тест</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
           <button class="btn btn-primary" style="flex:1;justify-content:center;font-size:12px" onclick="saveNotifyConfig()">💾 Сохранить</button>
-          <button class="btn btn-outline" style="flex:1;justify-content:center;font-size:12px" onclick="testNotifyEmail()">📧 Тест Email</button>
           <button class="btn btn-outline" style="flex:1;justify-content:center;font-size:12px" onclick="enablePushNotif()">📲 Включить Push</button>
         </div>
       </div>
@@ -1282,17 +1290,20 @@ async function testNotifyEmail() {
   if (!cfg.emailjs_key || !cfg.emailjs_service || !cfg.emailjs_template) {
     alert('Заполните все поля EmailJS перед тестом'); return;
   }
+  const who = document.getElementById('notif-test-who')?.value || 'owner';
+  const toEmail = who === 'alexander' ? cfg.alexander_email : who === 'accountant' ? cfg.accountant_email : cfg.owner_email;
+  if (!toEmail) { alert('Сначала укажите email для этого получателя и сохраните настройки'); return; }
   try {
-    _showToast('📧 Отправляем тестовое письмо...', true);
+    _showToast('📧 Отправляем тестовое письмо на ' + toEmail + '...', true);
     await emailjs.send(cfg.emailjs_service, cfg.emailjs_template, {
-      to_email:   cfg.owner_email,
-      subject:    '[Управление услугами] Тестовое уведомление',
+      to_email:   toEmail,
+      subject:    '[Управление услугами] Тестовое уведомление (' + who + ')',
       from_name:  'Система',
       event_type: 'Тест',
-      details:    'Это тестовое письмо. Уведомления работают корректно.',
+      details:    'Это тестовое письмо для получателя "' + who + '" (' + toEmail + '). Если оно пришло на ДРУГОЙ адрес — в шаблоне EmailJS поле "To Email" настроено неправильно (см. инструкцию выше).',
       time:       new Date().toLocaleString('ru-RU')
     }, cfg.emailjs_key);
-    _showToast('✅ Тестовое письмо отправлено на ' + cfg.owner_email, false);
+    _showToast('✅ Отправлено на ' + toEmail + ' — проверьте, что письмо пришло именно туда', false, 8000);
   } catch(e) {
     alert('Ошибка отправки:\n' + (e.text || e.message || JSON.stringify(e)));
   }
