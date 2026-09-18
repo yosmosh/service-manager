@@ -9061,7 +9061,12 @@ function renderBudget() {
     ${isCurrent?'<span class="badge badge-blue">Текущий месяц</span>':''}
     ${navMonthClosed?'<span class="badge" style="background:#f1f5f9;color:#64748b">🔒 Закрыт</span>':''}
   </div>`;
-  const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0">${tabs}</div>`;
+  // The owner and accountant are the two people who actually need to scan every
+  // expense at once, outside the month-by-month cards — a CSV they can open in Excel
+  // and sort/filter/sum freely.
+  const canExportRegister = currentUser === 'owner' || currentUser === 'accountant';
+  const exportBtn = canExportRegister ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px;margin-left:auto" onclick="exportBudgetRegisterCsv('${budgetLedger}')">📊 Реестр (Excel)</button>` : '';
+  const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0;align-items:center">${tabs}${exportBtn}</div>`;
 
   const releaseBar = isOwner ? (getBudgetReleased()
     ? `<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#166534;font-weight:600">✅ Опубликовано — доступно администратору, Александру, бухгалтеру и кухне</div>`
@@ -9089,6 +9094,58 @@ function renderBudget() {
 }
 
 function switchBudgetLedger(k) { budgetLedger = k; render(); }
+
+function _csvCell(v) {
+  const s = String(v==null?'':v);
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+}
+
+// Excel register export for the owner/accountant — the whole ledger's history (not just
+// the currently-open month), one row per operation, so it can be sorted/filtered/summed
+// freely outside the app instead of scrolled through month by month.
+function exportBudgetRegisterCsv(ledgerKey) {
+  const cfg = FINANCE_LEDGERS[ledgerKey];
+  if (!cfg) return;
+  const tx = getBudgetTx(ledgerKey).slice().sort((a,b) =>
+    (a.date||'').localeCompare(b.date||'') || (a.time||'').localeCompare(b.time||''));
+
+  const headers = ['Дата','Время','Тип','Наименование/Источник'];
+  if (cfg.useFunds) headers.push('Фонд');
+  headers.push('Сумма','Статус');
+  cfg.approvers.forEach(role => headers.push('Согласовано: ' + (role==='alexander'?'Александр':'Йосеф')));
+  headers.push('Оплачено','Дата оплаты','Кто добавил','Примечание');
+
+  const rows = tx.map(t => {
+    const isIncome = t.type==='income' || t.type==='refund';
+    const row = [fmtDate(t.date), t.time||'', isIncome?(t.type==='refund'?'Возврат':'Приход'):'Расход', t.vendor||''];
+    if (cfg.useFunds) row.push(t.fund||'');
+    row.push((isIncome?1:-1) * (Number(t.amount)||0));
+    row.push(t.status==='rejected' ? ('Отклонено' + (t.rejectReason?(': '+t.rejectReason):'')) : 'Активно');
+    cfg.approvers.forEach(role => {
+      const a = (t.approvals||{})[role];
+      row.push(a && a.approved ? ('Да · ' + _fmtApprovalWhen(a.date)) : 'Нет');
+    });
+    const paid = t.accountantConfirm && t.accountantConfirm.paid;
+    row.push(paid ? 'Да' : 'Нет');
+    row.push(paid ? _fmtApprovalWhen(t.accountantConfirm.date) : '');
+    row.push(_roleDisplayName(t.createdBy||'') || '');
+    row.push(t.notes||'');
+    return row;
+  });
+
+  const csv = '﻿' + [headers, ...rows].map(r => r.map(_csvCell).join(',')).join('\r\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const fname = {kitchen:'Кухня', maintenance:'ТО_и_зарплаты', personal:'Личный_бюджет'}[ledgerKey] || ledgerKey;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Реестр_${fname}_${_todayLocal()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  _showToast('📊 Реестр скачан (' + tx.length + ' операций)', false);
+}
 
 function _toggleAcctSort() {
   _acctSortUnpaidFirst = !_acctSortUnpaidFirst;
