@@ -9097,7 +9097,7 @@ function switchBudgetLedger(k) { budgetLedger = k; render(); }
 
 function _csvCell(v) {
   const s = String(v==null?'':v);
-  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+  return /[",;\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
 }
 
 // Excel register export for the owner/accountant — the whole ledger's history (not just
@@ -9133,7 +9133,12 @@ function exportBudgetRegisterCsv(ledgerKey) {
     return row;
   });
 
-  const csv = '﻿' + [headers, ...rows].map(r => r.map(_csvCell).join(',')).join('\r\n');
+  // Excel's default column separator depends on the system's regional settings (many
+  // non-English Windows setups use ";" since "," is the decimal separator) — without
+  // telling it explicitly, a comma-separated file with the "wrong" locale just dumps
+  // every row into column A as one unsplit string. The "sep=;" directive on its own
+  // first line forces Excel to split on ";" regardless of locale.
+  const csv = '﻿sep=;\r\n' + [headers, ...rows].map(r => r.map(_csvCell).join(';')).join('\r\n');
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
   const fname = {kitchen:'Кухня', maintenance:'ТО_и_зарплаты', personal:'Личный_бюджет'}[ledgerKey] || ledgerKey;
