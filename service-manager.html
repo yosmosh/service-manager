@@ -3473,12 +3473,17 @@ function renderRequests() {
   const allReqs = getRequests();
 
   // Determine which requests to show based on role
+  // Sorting by date alone let an old request still awaiting a decision sit below
+  // newer ones that were already resolved — status comes first (still needs someone's
+  // decision, then everything already settled), date only breaks ties within that.
+  const _reqStatusRank = r => (r.status==='pending' || r.status==='approved' || r.status==='partial') ? 0 : 1;
+  const _reqSort = (a,b) => _reqStatusRank(a)-_reqStatusRank(b) || new Date(b.date)-new Date(a.date);
   let reqs, emptyMsg;
   if (currentUser === 'owner' || currentUser === 'admin') {
-    reqs = [...allReqs].sort((a,b) => new Date(b.date)-new Date(a.date));
+    reqs = [...allReqs].sort(_reqSort);
     emptyMsg = 'Заявок пока нет';
   } else {
-    reqs = allReqs.filter(r => r.providerId === currentUser).sort((a,b) => new Date(b.date)-new Date(a.date));
+    reqs = allReqs.filter(r => r.providerId === currentUser).sort(_reqSort);
     emptyMsg = 'У вас пока нет заявок. Нажмите «+ Новая заявка» чтобы создать.';
   }
 
@@ -3486,7 +3491,7 @@ function renderRequests() {
   const needOwnerCount = reqs.filter(r => r.status === 'approved' || r.status === 'partial').length;
 
   const statsHtml = (currentUser === 'owner' || currentUser === 'admin') ? `
-    <div style="display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap">
+    <div style="display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap;align-items:center">
       <div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:10px 18px;text-align:center">
         <div style="font-size:20px;font-weight:700;color:#1e293b">${reqs.length}</div>
         <div style="font-size:10px;color:#6b7280">Всего заявок</div>
@@ -3500,6 +3505,7 @@ function renderRequests() {
         <div style="font-size:20px;font-weight:700;color:#7c3aed">${needOwnerCount}</div>
         <div style="font-size:10px;color:#5b21b6">Ожидают решения владельца</div>
       </div>` : ''}
+      <button class="btn btn-outline" style="font-size:12px;padding:8px 12px;margin-left:auto" onclick="exportRequestsCsv()">📊 Реестр (Excel)</button>
     </div>` : '';
 
   if (!reqs.length) return statsHtml + `
@@ -4643,7 +4649,7 @@ function renderMaintenance() {
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">
           <div>
             <div style="font-weight:700;font-size:14px">${w.title}</div>
-            <div style="font-size:11px;color:#6b7280;margin-top:3px">${maintCatLabel(w.category)} · 📅 ${fmtDate(w.date)}${w.cost ? ' · 💰 ' + Number(w.cost).toLocaleString('ru') + ' ₽' : ''}</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:3px">${maintCatLabel(w.category)} · 📅 ${fmtDate(w.date)}${w.cost ? ' · 💰 ' + Number(w.cost).toLocaleString('ru') + ' ₽' : ''}${w.createdBy ? ' · ✍️ ' + _roleDisplayName(w.createdBy) : ''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
             ${statusBadge(w.status)}
@@ -4672,6 +4678,7 @@ function renderMaintenance() {
       <div style="font-size:16px;font-weight:700;color:#1e293b;min-width:160px;text-align:center">${MONTHS[maintMonth-1]} ${maintYear}</div>
       <button class="year-btn" onclick="maintMonth++;if(maintMonth>12){maintMonth=1;maintYear++}render()">►</button>
       ${isCurrent ? '<span class="badge badge-blue" style="margin-left:4px">Текущий месяц</span>' : ''}
+      ${canEdit ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px;margin-left:auto" onclick="exportMaintenanceCsv()">📊 Реестр (Excel)</button>` : ''}
     </div>
     ${cards}`;
 }
@@ -4837,7 +4844,7 @@ async function saveMaint(editId) {
         list[idx] = updated;
       }
     } else {
-      const item = { id: Date.now().toString(), title, date, cost, category, status, description, fileIds, fileNames, fileTypes };
+      const item = { id: Date.now().toString(), title, date, cost, category, status, description, fileIds, fileNames, fileTypes, createdBy: currentUser, createdAt: new Date().toISOString() };
       if (quarterlySection) item.quarterlySection = quarterlySection;
       if (linkedProviderId) item.linkedProviderId = linkedProviderId;
       list.push(item);
@@ -4914,7 +4921,8 @@ function renderSOS() {
   };
   const list = sosFilter === 'all' ? allList : allList.filter(s => s.status === sosFilter);
 
-  const chipsHtml = '<div class="sos-chips">'
+  const exportBtn = (currentUser==='owner'||currentUser==='admin') ? '<button class="btn btn-outline" style="font-size:12px;padding:6px 12px;margin-left:auto" onclick="exportSosCsv()">📊 Реестр (Excel)</button>' : '';
+  const chipsHtml = '<div class="sos-chips" style="align-items:center">'
     + [
         {k:'all',        label:'Все ('+counts.all+')'},
         {k:'pending',    label:'⚠️ Ожидает ('+counts.pending+')'},
@@ -4922,7 +4930,7 @@ function renderSOS() {
         {k:'resolved',   label:'✅ Выполнено ('+counts.resolved+')'}
       ].map(function(c){
         return '<button class="sos-chip'+(sosFilter===c.k?' active':'')+'" onclick="setSosFilter(\''+c.k+'\')">'+c.label+'</button>';
-      }).join('')
+      }).join('') + exportBtn
     + '</div>';
 
   if (!list.length) return chipsHtml + `
@@ -4932,7 +4940,11 @@ function renderSOS() {
       <div>Нажмите «Добавить событие» для записи экстренных работ</div>
     </div>`;
 
-  return chipsHtml + [...list].sort((a,b) => new Date(b.date)-new Date(a.date)).map(s => {
+  // Sorting by date alone let an old still-pending emergency sit below a newer
+  // already-resolved one — status comes first (pending, then in-progress, then
+  // resolved), date only breaks ties within the same status.
+  const _sosStatusRank = s => s.status === 'pending' ? 0 : s.status === 'in_progress' ? 1 : 2;
+  return chipsHtml + [...list].sort((a,b) => _sosStatusRank(a)-_sosStatusRank(b) || new Date(b.date)-new Date(a.date)).map(s => {
     const canEdit = currentUser === 'admin' || currentUser === 'owner';
     const _fp2=ft=>ft.startsWith('video/')?0:ft.startsWith('image/')?1:2;
     const _sSorted = (s.fileIds||[]).map((_,i)=>i).sort((a,b)=>_fp2((s.fileTypes||[])[a]||'')-_fp2((s.fileTypes||[])[b]||''));
@@ -4975,7 +4987,7 @@ function renderSOS() {
             ${(currentUser==='owner'||currentUser==='admin')?`<button onclick="shareSOSItem('${s.id}',event)" title="Поделиться" style="background:none;border:none;cursor:pointer;font-size:15px;padding:2px;opacity:0.7;line-height:1" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">🔗</button>`:''}
           </div>
         </div>
-        <div style="font-size:11px;color:#6b7280">📅 ${fmtDate(s.date)} · Приоритет: ${s.priority==='high'?'Высокий':s.priority==='medium'?'Средний':'Низкий'}</div>
+        <div style="font-size:11px;color:#6b7280">📅 ${fmtDate(s.date)} · Приоритет: ${s.priority==='high'?'Высокий':s.priority==='medium'?'Средний':'Низкий'}${s.createdBy?` · ✍️ ${_roleDisplayName(s.createdBy)}`:''}</div>
         ${s.description ? `<div style="font-size:12px;color:#374151;margin-top:6px">${s.description}</div>` : ''}
         ${filesHtml}
         ${canEdit ? `<div style="display:flex;gap:6px;margin-top:10px">
@@ -5499,7 +5511,7 @@ async function saveSOS(editId) {
         fileTypes: [...(list[idx].fileTypes||[]), ...fileTypes]
       };
     } else {
-      list.push({ id: Date.now().toString(), title, date, priority, status, description, fileIds, fileNames, fileTypes });
+      list.push({ id: Date.now().toString(), title, date, priority, status, description, fileIds, fileNames, fileTypes, createdBy: currentUser, createdAt: new Date().toISOString() });
     }
 
     setLS('sos_items', list);
@@ -7276,6 +7288,15 @@ function renderReports() {
   var totalReqs2 = getRequests().filter(function(r){
     return r.date && r.date.startsWith(String(cy));
   }).length;
+  // Kitchen was invisible in this one consolidated yearly view — every other
+  // operational area (visits, SOS, maintenance, purchase requests) rolls up here,
+  // but kitchen spend/writeoffs had no summary at all.
+  var kitchenInvoiceTotal = getKitchenInvoices().filter(function(i){
+    return i.date && i.date.startsWith(String(cy));
+  }).reduce(function(s,i){return s+Number(i.total||0);},0);
+  var kitchenWriteoffCount = getKitchenWriteoffs().filter(function(w){
+    return w.date && w.date.startsWith(String(cy)) && w.status==='approved';
+  }).length;
 
   var rows = provStats.map(function(r) {
     var pct = r.total>0 ? Math.round(r.done/r.total*100) : 0;
@@ -7308,6 +7329,7 @@ function renderReports() {
     + '<div class="stat-card" style="border-left:4px solid #16a34a"><div class="stat-value" style="color:#16a34a">'+totalDone+'</div><div class="stat-label">Визитов выполнено из '+totalPlan+'</div></div>'
     + '<div class="stat-card" style="border-left:4px solid #dc2626"><div class="stat-value">'+totalSOS2+'</div><div class="stat-label">SOS событий (закрыто: '+resolvedSOS2+')</div></div>'
     + '<div class="stat-card" style="border-left:4px solid #7c3aed"><div class="stat-value">'+totalMaint2+'</div><div class="stat-label">Тех. работ · Заявок: '+totalReqs2+'</div></div>'
+    + '<div class="stat-card" style="border-left:4px solid #0891b2"><div class="stat-value" style="color:#0891b2">'+kitchenInvoiceTotal.toLocaleString('ru-RU')+' ₽</div><div class="stat-label">Расходы кухни за год · Списаний: '+kitchenWriteoffCount+'</div></div>'
     + '</div>'
     + '<div class="card">'
     + '<div class="card-header"><h3>Выполнение по поставщикам — '+cy+'</h3></div>'
@@ -7768,7 +7790,10 @@ function renderKitchenDeliveries() {
     </div>`;
   }).join('');
 
-  return `<div style="display:flex;justify-content:flex-end;margin-bottom:10px">${addBtn}</div>${cards}`;
+  return `<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px">
+    ${canEdit ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px" onclick="exportKitchenDeliveriesCsv()">📊 Реестр (Excel)</button>` : ''}
+    ${addBtn}
+  </div>${cards}`;
 }
 
 function openKitchenDeliveryModal(id) {
@@ -7968,8 +7993,9 @@ function _invTable(inv, canEdit, readonly) {
   const rows = inv.map(it => {
     const low = !readonly && it.min_qty!=='' && it.min_qty!==undefined && Number(it.qty||0)<=Number(it.min_qty||0);
     const expired = it.expiry && it.expiry < today;
+    const expiringSoon = !expired && it.expiry && !readonly && (new Date(it.expiry) - new Date(today))/86400000 <= 3;
     const expiryCell = it.expiry
-      ? `<span style="${expired?'color:#dc2626;font-weight:700':''}">${expired?'⚠️ ':''}${fmtDate(it.expiry)}</span>`
+      ? `<span style="${expired?'color:#dc2626;font-weight:700':expiringSoon?'color:#d97706;font-weight:700':''}">${expired?'⚠️ ':expiringSoon?'⏳ ':''}${fmtDate(it.expiry)}</span>`
       : '<span style="color:#94a3b8">—</span>';
     return `<tr>
       <td>
@@ -8033,13 +8059,28 @@ function renderKitchenInventory() {
       _invTable(snapItems, false, true);
   }
 
-  const inv = getKitchenInventory().slice().sort((a,b)=>((a.category||'')+a.name).localeCompare((b.category||'')+b.name));
+  // An expired item just sat wherever its name alphabetized to — on a long list it
+  // could be on the last page, unnoticed, same root problem as an unpaid budget item
+  // getting buried. Urgency (expired, then expiring soon, then low-stock) comes first;
+  // alphabetical only breaks ties within the same urgency.
+  const today = _todayLocal();
+  const _invRank = it => {
+    if (it.expiry && it.expiry < today) return 0;
+    if (it.expiry && (new Date(it.expiry) - new Date(today))/86400000 <= 3) return 1;
+    if (it.min_qty!==undefined && it.min_qty!=='' && Number(it.qty||0)<=Number(it.min_qty||0)) return 2;
+    return 3;
+  };
+  const inv = getKitchenInventory().slice().sort((a,b)=> _invRank(a)-_invRank(b) || ((a.category||'')+a.name).localeCompare((b.category||'')+b.name));
   if (!inv.length) return viewToggle + `<div class="card"><div style="text-align:center;padding:48px;color:#94a3b8">
     <div style="font-size:48px;margin-bottom:12px">📦</div>
     <div style="font-size:14px;margin-bottom:12px">Склад пустой</div>${addBtn}</div></div>`;
   const lowCount = inv.filter(it=>it.min_qty!==undefined&&it.min_qty!==''&&Number(it.qty||0)<=Number(it.min_qty||0)).length;
+  const expiredCount = inv.filter(it=>it.expiry && it.expiry < today).length;
+  const expiringSoonCount = inv.filter(it=>it.expiry && it.expiry >= today && (new Date(it.expiry)-new Date(today))/86400000<=3).length;
+  const expiredBanner = expiredCount ? `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:10px 14px;margin-bottom:8px;font-size:13px;color:#dc2626;font-weight:600">⚠️ ${expiredCount} позиц${expiredCount===1?'ия':expiredCount<5?'ии':'ий'} с истёкшим сроком годности</div>` : '';
+  const expiringSoonBanner = expiringSoonCount ? `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:10px 14px;margin-bottom:8px;font-size:13px;color:#92400e;font-weight:600">⏳ ${expiringSoonCount} позиц${expiringSoonCount===1?'ия':expiringSoonCount<5?'ии':'ий'} истекает в ближайшие 3 дня</div>` : '';
   const alertBanner = lowCount ? `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#dc2626;font-weight:600">⚠️ ${lowCount} позиц${lowCount===1?'ия':lowCount<5?'ии':'ий'} ниже минимального остатка</div>` : '';
-  return viewToggle + alertBanner + `<div style="display:flex;justify-content:flex-end;margin-bottom:10px">${addBtn}</div>` + _invTable(inv, canEdit, false);
+  return viewToggle + expiredBanner + expiringSoonBanner + alertBanner + `<div style="display:flex;justify-content:flex-end;margin-bottom:10px">${addBtn}</div>` + _invTable(inv, canEdit, false);
 }
 
 function openKitchenInventoryModal(id) {
@@ -8144,7 +8185,10 @@ function renderKitchenInvoices() {
       <div class="stat-card"><div class="stat-value" style="color:#2563eb;font-size:20px">₽${totalMonth.toFixed(0)}</div><div class="stat-label">Счета за ${MONTHS[kitchenMonth-1]}</div></div>
       <div class="stat-card"><div class="stat-value" style="color:#7c3aed;font-size:20px">₽${totalAll.toFixed(0)}</div><div class="stat-label">Счета всего</div></div>
     </div>
-    <div style="display:flex;justify-content:flex-end;margin-bottom:10px">${addBtn}</div>${cards}`;
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px">
+      ${canEdit ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px" onclick="exportKitchenInvoicesCsv()">📊 Реестр (Excel)</button>` : ''}
+      ${addBtn}
+    </div>${cards}`;
 }
 
 function openKitchenInvoiceModal(id) {
@@ -8403,6 +8447,14 @@ function delKitchenInvoice(id) {
 
 // ---------- РАСХОД (expense / usage) ----------
 
+function _jumpToWriteoffMonth(dateStr) {
+  const d = new Date(dateStr);
+  if (isNaN(d)) return;
+  kitchenYear = d.getFullYear();
+  kitchenMonth = d.getMonth() + 1;
+  render();
+}
+
 function renderKitchenExpense() {
   const isOwner = currentUser==='owner';
   const canEdit = isOwner||currentUser==='kitchen';
@@ -8411,9 +8463,15 @@ function renderKitchenExpense() {
   const mk = `${kitchenYear}-${String(kitchenMonth).padStart(2,'0')}`;
 
   const pendingWOs = writeoffs.filter(w=>w.status==='pending');
+  // The count alone was useless once the pending item was from a prior month — the
+  // banner said "1 waiting" but gave no way to actually reach it short of paging back
+  // by hand. A real oldest-first jump link fixes that the same way the unpaid-first
+  // sort fixed it for Бюджет.
+  const oldestPendingWO = pendingWOs.length ? [...pendingWOs].sort((a,b)=>(a.date||'').localeCompare(b.date||''))[0] : null;
   const ownerAlert = isOwner && pendingWOs.length ? `
-    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
+    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
       <span style="font-weight:700;color:#92400e">⚠️ ${pendingWOs.length} списани${pendingWOs.length===1?'е':'й'} ожидают вашего одобрения</span>
+      ${oldestPendingWO ? `<button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="_jumpToWriteoffMonth('${oldestPendingWO.date}')">Перейти к самому старому (${fmtDate(oldestPendingWO.date)})</button>` : ''}
     </div>` : '';
 
   const monthDaily = daily.filter(d=>(d.date||'').startsWith(mk)).sort((a,b)=>b.date.localeCompare(a.date));
@@ -8647,6 +8705,8 @@ async function saveWriteoffRequest() {
     const ok = await _flushState();
     if (!ok) return; // keep modal open so the user can retry without re-entering data
   }
+  const _woDetail = (record.reason||'') + ' — ' + items.map(it=>it.name+' '+it.qty+it.unit).join(', ');
+  _notifyOwner('🍽️ Списание на кухне — запрос на одобрение', _getFromName(), _woDetail);
   closeModal(); _showToast('📤 Запрос отправлен владельцу', true); render();
 }
 
@@ -9100,6 +9160,27 @@ function _csvCell(v) {
   return /[",;\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
 }
 
+// Shared by every CSV register export below — Excel's default column separator depends
+// on the system's regional settings (many non-English Windows setups use ";" since ","
+// is the decimal separator), so a comma-separated file opened there dumps every row
+// into column A as one unsplit string; ";" matches that regional default. (A "sep=;"
+// hint line would force this even on a comma-locale machine, but it also makes some
+// Excel versions ignore the UTF-8 BOM and garble the Cyrillic text — not worth that
+// trade for this app's audience.)
+function _downloadCsv(filenameBase, headers, rows) {
+  const csv = '﻿' + [headers, ...rows].map(r => r.map(_csvCell).join(';')).join('\r\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${filenameBase}_${_todayLocal()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  _showToast('📊 Реестр скачан (' + rows.length + (rows.length===1?' запись)':' записей)'), false);
+}
+
 // Excel register export for the owner/accountant — the whole ledger's history (not just
 // the currently-open month), one row per operation, so it can be sorted/filtered/summed
 // freely outside the app instead of scrolled through month by month.
@@ -9133,24 +9214,88 @@ function exportBudgetRegisterCsv(ledgerKey) {
     return row;
   });
 
-  // Excel's default column separator depends on the system's regional settings (many
-  // non-English Windows setups use ";" since "," is the decimal separator) — a comma-
-  // separated file opened there dumps every row into column A as one unsplit string.
-  // ";" matches that regional default. (A "sep=;" hint line would force this even on a
-  // comma-locale machine, but it also makes some Excel versions ignore the UTF-8 BOM
-  // and garble the Cyrillic text — not worth that trade for this app's audience.)
-  const csv = '﻿' + [headers, ...rows].map(r => r.map(_csvCell).join(';')).join('\r\n');
-  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
-  const url = URL.createObjectURL(blob);
   const fname = {kitchen:'Кухня', maintenance:'ТО_и_зарплаты', personal:'Личный_бюджет'}[ledgerKey] || ledgerKey;
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `Реестр_${fname}_${_todayLocal()}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-  _showToast('📊 Реестр скачан (' + tx.length + ' операций)', false);
+  _downloadCsv(`Реестр_${fname}`, headers, rows);
+}
+
+// Full SOS log, all statuses/dates, not just the current filter chip.
+function exportSosCsv() {
+  const rows = getSOS().slice().sort((a,b)=>(a.date||'').localeCompare(b.date||'')).map(s => [
+    fmtDate(s.date),
+    s.title||'',
+    s.priority==='high'?'Высокий':s.priority==='medium'?'Средний':'Низкий',
+    s.status==='resolved'?'Выполнено':s.status==='in_progress'?'В работе':'Ожидает',
+    _roleDisplayName(s.createdBy||'') || '',
+    s.description||''
+  ]);
+  _downloadCsv('Реестр_SOS', ['Дата','Заголовок','Приоритет','Статус','Кто добавил','Описание'], rows);
+}
+
+// Full purchase-request log across all providers (owner/admin view of getRequests()).
+function exportRequestsCsv() {
+  const rows = getRequests().slice().sort((a,b)=>(a.date||'').localeCompare(b.date||'')).map(r => {
+    const prov = PROVIDERS.find(x=>x.id===r.providerId);
+    const total = (r.items||[]).reduce((s,i)=>s+(Number(i.qty)||0)*(Number(i.price)||0),0);
+    return [
+      fmtDate(r.date),
+      prov ? prov.name : (r.providerId||''),
+      r.title||'',
+      (REQ_STATUS[r.status]||{}).label || r.status || '',
+      total ? total : '',
+      r.adminComment||'',
+      r.ownerComment||''
+    ];
+  });
+  _downloadCsv('Реестр_Заявок_на_закупку', ['Дата','Поставщик','Заявка','Статус','Сумма','Комментарий администратора','Комментарий владельца'], rows);
+}
+
+// Full maintenance work log, every month, not just whichever one is currently open.
+function exportMaintenanceCsv() {
+  const rows = getMaintWorks().slice().sort((a,b)=>(a.date||'').localeCompare(b.date||'')).map(w => [
+    fmtDate(w.date),
+    w.title||'',
+    maintCatLabel(w.category),
+    w.status==='done'?'Выполнено':w.status==='in_progress'?'В работе':'Запланировано',
+    w.cost ? Number(w.cost) : '',
+    _roleDisplayName(w.createdBy||'') || '',
+    w.description||''
+  ]);
+  _downloadCsv('Реестр_Обслуживания_территории', ['Дата','Работа','Категория','Статус','Стоимость','Кто добавил','Описание'], rows);
+}
+
+// Full kitchen invoice register, every month.
+function exportKitchenInvoicesCsv() {
+  const suppliers = getKitchenSuppliers();
+  const rows = getKitchenInvoices().slice().sort((a,b)=>(a.date||'').localeCompare(b.date||'')).map(inv => {
+    const sup = suppliers.find(s=>s.id===inv.supplier_id);
+    return [
+      fmtDate(inv.date),
+      sup ? sup.name : '',
+      inv.invoice_num||'',
+      Number(inv.total||0),
+      (inv.items||[]).length,
+      inv.notes||''
+    ];
+  });
+  _downloadCsv('Реестр_Счетов_кухни', ['Дата','Поставщик','№ счёта','Сумма','Позиций','Примечание'], rows);
+}
+
+// Full kitchen delivery register, every month.
+function exportKitchenDeliveriesCsv() {
+  const suppliers = getKitchenSuppliers();
+  const stLabel = {received:'Получено', pending:'Ожидается', cancelled:'Отменено'};
+  const rows = getKitchenDeliveries().slice().sort((a,b)=>(a.date||'').localeCompare(b.date||'')).map(d => {
+    const sup = suppliers.find(s=>s.id===d.supplier_id);
+    const total = (d.items||[]).reduce((acc,it)=>acc+(Number(it.qty||0)*Number(it.price||0)),0);
+    return [
+      fmtDate(d.date),
+      sup ? sup.name : '',
+      stLabel[d.status]||d.status||'',
+      total ? total : '',
+      (d.items||[]).length
+    ];
+  });
+  _downloadCsv('Реестр_Доставок_кухни', ['Дата','Поставщик','Статус','Сумма','Позиций'], rows);
 }
 
 function _toggleAcctSort() {
