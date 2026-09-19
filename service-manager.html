@@ -9313,13 +9313,13 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
     </div>`;
   }
   // Whoever submitted the invoice (admin/admin2/kitchen) can still fix or pull it
-  // themselves — but only before anyone has actually signed off on it. Once a single
-  // approval exists, further changes go through the owner alone (that approval was
-  // given against a specific set of numbers).
-  const noApprovalsYet = !Object.keys(t.approvals||{}).some(r => t.approvals[r] && t.approvals[r].approved);
+  // themselves, all the way up until it's actually paid — money moving is the real
+  // point of no return, not a signature. If they change something material (amount/
+  // vendor/date/fund), saveBudgetTx() still resets approvals so whoever already signed
+  // off re-confirms against the corrected numbers.
   const creatorCanEdit = t.type === 'expense' && t.status !== 'rejected' && currentUser !== 'owner' &&
     t.createdBy === currentUser && cfg.canCreate.includes(currentUser) &&
-    !(t.accountantConfirm && t.accountantConfirm.paid) && noApprovalsYet;
+    !(t.accountantConfirm && t.accountantConfirm.paid);
   const editActions = (currentUser==='owner' || creatorCanEdit) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
     <button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="openBudgetTxModal('${ledgerKey}','${t.id}')">✏️</button>
     <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="delBudgetTx('${ledgerKey}','${t.id}')">🗑</button>
@@ -9367,13 +9367,17 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   // since he already has full authority over both approval and payment anyway.
   const isPaid = t.accountantConfirm && t.accountantConfirm.paid;
   const hasAnyApproval = Object.keys(t.approvals||{}).some(r => t.approvals[r] && t.approvals[r].approved);
+  // Cosmetic edits keep their status regardless of who makes them — owner or the
+  // record's own submitter (the only two who ever reach this modal for it) — so the
+  // messaging matches for both instead of alarming the submitter needlessly.
+  const editorKeepsStatus = currentUser === 'owner' || currentUser === t.createdBy;
   const editWarning = !id ? '' : (type === 'expense'
     ? (isPaid
-        ? (currentUser === 'owner'
+        ? (editorKeepsStatus
             ? '<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#1e40af">ℹ️ Эта операция уже ОПЛАЧЕНА. Если вы поменяете сумму/поставщика/дату/фонд — статус оплаты сбросится. Правка примечания или чека статус не тронет.</div>'
             : '<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#991b1b">⚠️ Эта операция уже ОПЛАЧЕНА. Изменение сбросит согласования И статус оплаты — бухгалтеру нужно будет подтвердить оплату заново.</div>')
         : !hasAnyApproval ? '' // nothing approved yet — a fix here has nothing to reset, no need to alarm the person who submitted it
-        : (currentUser === 'owner'
+        : (editorKeepsStatus
             ? '<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#1e40af">ℹ️ Изменение суммы/поставщика/даты/фонда сбросит согласования — правка примечания или чека их не тронет.</div>'
             : '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#92400e">⚠️ Изменение операции сбросит все согласования — потребуется согласовать заново</div>'))
     : '');
@@ -9479,12 +9483,12 @@ async function saveBudgetTx(ledgerKey) {
   // that's exactly the "unnecessary email" pattern to avoid.
   const materialChange = !existing || existing.amount !== Number(amount) || existing.vendor !== vendor ||
     existing.date !== date || (existing.fund||null) !== (fund||null);
-  // The owner already has full authority to approve and to mark paid on his own — so a
-  // cosmetic fix (typo, swapped receipt) he makes to an already-settled record shouldn't
-  // force him through the whole approve-for-Alexander-then-pay dance again. Anyone else's
-  // edit, or any edit that actually changes the amount/vendor/date/fund, still resets the
-  // chain — that safety net is for everyone but him.
-  const keepStatus = existing && !materialChange && currentUser === 'owner';
+  // A non-material fix (typo, swapped receipt) didn't change anything an approver
+  // actually signed off on, so it shouldn't force the whole chain to be re-confirmed —
+  // whether that fix comes from the owner or from whoever submitted the invoice in the
+  // first place (the only two people the UI ever lets reach this edit path). Any edit
+  // that actually changes the amount/vendor/date/fund still resets the chain.
+  const keepStatus = existing && !materialChange;
   const record = {
     id: _editingBudgetTx || Date.now().toString(36),
     type, date,
@@ -9786,11 +9790,10 @@ async function delBudgetTx(ledgerKey, id) {
   const cfg = FINANCE_LEDGERS[ledgerKey];
   const t = getBudgetTx(ledgerKey).find(x=>x.id===id);
   if (!t) return;
-  const noApprovalsYet = !Object.keys(t.approvals||{}).some(r => t.approvals[r] && t.approvals[r].approved);
-  const isOwnUnapprovedSubmission = t.type === 'expense' && t.status !== 'rejected' &&
+  const isOwnUnpaidSubmission = t.type === 'expense' && t.status !== 'rejected' &&
     t.createdBy === currentUser && cfg.canCreate.includes(currentUser) &&
-    !(t.accountantConfirm && t.accountantConfirm.paid) && noApprovalsYet;
-  if (currentUser !== 'owner' && !isOwnUnapprovedSubmission) return;
+    !(t.accountantConfirm && t.accountantConfirm.paid);
+  if (currentUser !== 'owner' && !isOwnUnpaidSubmission) return;
   if (!confirm('Удалить операцию безвозвратно?')) return;
   setBudgetTx(ledgerKey, getBudgetTx(ledgerKey).filter(x=>x.id!==id));
   if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
