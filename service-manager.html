@@ -1783,7 +1783,7 @@ async function _notifyEmail(toEmail, eventType, fromName, details) {
     try {
       new Notification('📋 ' + eventType, {
         body: fromName + ': ' + details,
-        icon: 'https://service-manager-two.vercel.app/favicon.ico'
+        icon: location.origin + '/favicon.ico'
       });
     } catch(e) {}
   }
