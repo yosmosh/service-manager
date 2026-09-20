@@ -148,7 +148,10 @@ async function classifyReport(text, hasPhoto) {
     headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 512, temperature: 0, messages: [{ role: 'user', content: prompt }] }),
   });
-  if (!resp.ok) return null;
+  if (!resp.ok) {
+    const errBody = await resp.text().catch(() => '');
+    throw new Error(`Anthropic ${resp.status}: ${errBody.slice(0, 300)}`);
+  }
   const data = await resp.json();
   const raw = ((data.content && data.content[0] && data.content[0].text) || '').trim();
   const match = raw.match(/\{[\s\S]*\}/);
