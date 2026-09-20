@@ -1110,12 +1110,6 @@ function openSettingsModal() {
       </div>
       <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveKitchenWorkerCreds()">💾 Сохранить данные сотрудника кухни</button>
     </div>
-    <div style="margin-bottom:16px;padding:12px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:10px">
-      <div style="font-size:12px;font-weight:700;color:#92400e;margin-bottom:6px">🤖 Anthropic API Key (ИИ для кухни)</div>
-      <div style="font-size:11px;color:#78350f;margin-bottom:8px">Используется для сканирования счётов. Ключ хранится только в этом устройстве.</div>
-      <input type="password" class="form-control" id="anthropic-key-input" value="${getLS('anthropic_api_key')||''}" placeholder="sk-ant-...">
-      <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:8px" onclick="saveAnthropicKey()">💾 Сохранить ключ</button>
-    </div>
     <div style="margin-bottom:16px;padding:12px 14px;background:#eff6ff;border:1px solid #93c5fd;border-radius:10px">
       <div style="font-size:12px;font-weight:700;color:#1e40af;margin-bottom:4px">✅ Учётная запись Александра (согласование)</div>
       <div style="font-size:11px;color:#1e40af;margin-bottom:8px">Согласовывает расходы в Финансах: Кухня и ТО/зарплаты</div>
@@ -1521,14 +1515,6 @@ function saveAdmin2Creds() {
   setLS('admin2_pwd', p);
   if (_useFirebase) _scheduleSave();
   alert('Данные второго администратора сохранены');
-}
-
-function saveAnthropicKey() {
-  const key = (document.getElementById('anthropic-key-input').value||'').trim();
-  if (!key.startsWith('sk-ant-')) { alert('Неверный формат ключа. Должен начинаться с sk-ant-'); return; }
-  setLS('anthropic_api_key', key);
-  if (_useFirebase) _scheduleSave();
-  alert('✅ Ключ сохранён');
 }
 
 function debugRecords() {
@@ -7709,7 +7695,6 @@ function renderKitchenWorker() {
     .sort((a,b) => b.id.localeCompare(a.id));
   const stColor = {received:'#16a34a', pending:'#d97706', cancelled:'#dc2626'};
   const stLabel = {received:'✅ Получено', pending:'⏳ Ожидается', cancelled:'❌ Отменено'};
-  const hasKey = !!getLS('anthropic_api_key');
 
   const todayCards = todayDeliveries.length ? `
     <div style="margin-top:20px">
@@ -7734,17 +7719,13 @@ function renderKitchenWorker() {
         <div style="font-size:12px;color:#6b7280;margin-top:3px">${new Date().toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long'})}</div>
       </div>
 
-      ${hasKey ? `
       <button onclick="openKitchenInvoiceModal()" style="width:100%;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:white;border:none;border-radius:14px;padding:20px;font-size:16px;font-weight:700;cursor:pointer;margin-bottom:12px;display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 4px 14px rgba(37,99,235,.35)">
         <span style="font-size:24px">🤖</span>
         <div style="text-align:left">
           <div>Сканировать накладную (ИИ)</div>
           <div style="font-size:12px;font-weight:400;opacity:.85">AI заполнит все данные автоматически</div>
         </div>
-      </button>` : `
-      <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:12px 14px;margin-bottom:12px;font-size:12px;color:#92400e;text-align:center">
-        ⚠️ AI-сканирование недоступно. Попросите менеджера настроить API ключ.
-      </div>`}
+      </button>
 
       <button onclick="openKitchenDeliveryModal()" style="width:100%;background:white;color:#374151;border:2px solid #e2e8f0;border-radius:14px;padding:18px;font-size:15px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px">
         <span style="font-size:22px">📦</span>
@@ -8415,8 +8396,6 @@ function removeKitchenInvoiceItemRow(i) {
 }
 
 async function scanInvoiceWithAI() {
-  const apiKey = getLS('anthropic_api_key');
-  if (!apiKey) { alert('⚠️ Сначала добавьте Anthropic API Key в Настройках доступа'); return; }
   const input = document.getElementById('kinv-file');
   input.onchange = null;
   input.accept = 'image/*';
@@ -8433,23 +8412,14 @@ async function scanInvoiceWithAI() {
       // small storage size, which was likely blurring small receipt text/digits.
       const forAI = await _compressForAI(file);
       const base64 = forAI.data.split(',')[1];
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      const resp = await fetch('/api/kitchen/scan-invoice', {
         method: 'POST',
-        headers: {'x-api-key':apiKey,'anthropic-version':'2023-06-01','content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
-        body: JSON.stringify({
-          model: 'claude-sonnet-5',
-          max_tokens: 4096,
-          temperature: 0,
-          messages: [{role:'user', content:[
-            {type:'image', source:{type:'base64', media_type:forAI.type||'image/jpeg', data:base64}},
-            {type:'text', text:'Это фото счёта/накладной от поставщика. Внимательно прочитай КАЖДУЮ строку документа, включая мелкий текст и колонки с цифрами — не пропускай ни одной позиции, даже если текст неразборчив (в этом случае дай наиболее вероятное значение, не выдумывай). Особое внимание удели точности цифр (количество, цена, сумма) — перепроверь каждую цифру перед тем, как записать её в ответ, особенно похожие друг на друга (0/6/8, 1/7, 3/8, 5/6). Перед выводом мысленно проверь: сумма (количество × цена) по всем позициям должна примерно совпадать с итоговой суммой счёта; если не совпадает — перепроверь распознанные цифры ещё раз.\n\nВерни ТОЛЬКО JSON без комментариев, в точности в этом формате:\n{"supplier_name":"...","date":"YYYY-MM-DD","invoice_num":"...","total":0,"items":[{"name":"...","qty":0,"unit":"кг","price":0}]}\n\nПравила:\n- Название товара — точно как написано в документе, без сокращений и без "улучшений" от себя.\n- Если поле в принципе не найдено в документе — оставь пустым ("") или 0, но саму позицию всё равно включи.\n- Включи ВСЕ строки товаров из документа, ничего не пропускай.\n- Единицы измерения: кг/г/л/мл/шт/уп/кор/бут/пак — выбери наиболее подходящую по контексту.\n- Валюта — ₽ (рубли).'}
-          ]}]
-        })
+        headers: {'content-type':'application/json'},
+        body: JSON.stringify({ imageBase64: base64, mediaType: forAI.type || 'image/jpeg' })
       });
-      if (!resp.ok) { const e=await resp.json(); throw new Error(e.error?.message||resp.statusText); }
       const data = await resp.json();
-      const text = data.content[0].text.trim();
-      const json = JSON.parse(text.match(/\{[\s\S]*\}/)[0]);
+      if (!resp.ok || !data.ok) throw new Error(data.error || resp.statusText);
+      const json = data.result;
       // Fill form
       if (json.date) document.getElementById('kinv-date').value = json.date;
       if (json.invoice_num) document.getElementById('kinv-num').value = json.invoice_num;
