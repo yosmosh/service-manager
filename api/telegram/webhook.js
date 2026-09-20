@@ -40,15 +40,28 @@ async function sendTelegramDM(chatId, text) {
 }
 
 // Self-service subscribe: anyone who should get the daily digest DMs the bot /start
-// once, and this adds their chat_id to telegram_config.digest.ownerChatIds — no manual
-// getUpdates lookup needed per person.
+// with the secret code from Настройки доступа (or taps the owner's t.me/…?start=CODE
+// link, which sends the same thing) — this adds their chat_id to
+// telegram_config.digest.ownerChatIds. Without the correct code nothing is added, so a
+// stranger who finds the bot by its public username can't subscribe themselves to
+// internal group summaries.
 async function handleStartDM(msg) {
   const chatId = String(msg.chat.id);
+  const parts = msg.text.trim().split(/\s+/);
+  const payload = parts.length > 1 ? parts.slice(1).join(' ') : '';
+
   const stateRes = await fetch(`${FIRESTORE_STATE_URL}?mask.fieldPaths=telegram_config`);
   const stateDoc = await stateRes.json();
   const raw = stateDoc.fields && stateDoc.fields.telegram_config;
   const topFields = (raw && raw.mapValue && raw.mapValue.fields) || {};
   const digestFields = (topFields.digest && topFields.digest.mapValue && topFields.digest.mapValue.fields) || {};
+  const configuredCode = (digestFields.code && digestFields.code.stringValue) || '';
+
+  if (!configuredCode || payload !== configuredCode) {
+    await sendTelegramDM(chatId, '⛔ Неверный или отсутствующий код доступа. Эта подписка только по персональной ссылке от руководителя.');
+    return;
+  }
+
   const idsRaw = digestFields.ownerChatIds;
   const existingIds = (idsRaw && idsRaw.arrayValue && idsRaw.arrayValue.values || []).map(v => v.stringValue);
   const alreadyIn = existingIds.includes(chatId);

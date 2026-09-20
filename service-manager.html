@@ -1329,10 +1329,22 @@ function openSettingsModal() {
           <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Час отправки (0–23, по Москве)</div>
           <input type="number" min="0" max="23" class="form-control" id="tg-digest-hour" value="${tDigest.hour!=null?tDigest.hour:20}" style="font-size:12px;width:100px">
         </div>
+        <div style="margin-bottom:8px">
+          <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Секретный код для подписки (защита от посторонних — без правильного кода /start у бота не подпишет)</div>
+          <input type="text" class="form-control" id="tg-digest-code" value="${(tDigest.code||'').replace(/"/g,'&quot;')}" placeholder="например: SB2026" style="font-size:12px">
+        </div>
+        ${tDigest.code ? `
+        <div style="font-size:11px;color:#1e40af;background:#eff6ff;border-radius:6px;padding:7px 10px;margin-bottom:8px;word-break:break-all">
+          🔗 Персональная ссылка — отправьте её лично тому, кто должен получать дайджест (переход по ней подписывает автоматически):<br>
+          <a href="https://t.me/sad_budushego_bot?start=${encodeURIComponent(tDigest.code)}" target="_blank">https://t.me/sad_budushego_bot?start=${tDigest.code}</a>
+        </div>` : `
+        <div style="font-size:11px;color:#92400e;background:#fef3c7;border-radius:6px;padding:7px 10px;margin-bottom:8px">
+          ⚠️ Сначала задайте код и сохраните — без него подписка через /start отключена (защита от посторонних).
+        </div>`}
         <div style="font-size:11px;color:${(tDigest.ownerChatIds&&tDigest.ownerChatIds.length)?'#166534':'#92400e'};background:${(tDigest.ownerChatIds&&tDigest.ownerChatIds.length)?'#dcfce7':'#fef3c7'};border-radius:6px;padding:7px 10px;margin-bottom:10px">
           ${(tDigest.ownerChatIds&&tDigest.ownerChatIds.length)
-            ? `✅ Получатели дайджеста настроены (${tDigest.ownerChatIds.length}) — сводка будет приходить в личные сообщения каждому.`
-            : '⚠️ Ещё не настроено: каждый получатель должен написать боту @sad_budushego_bot команду /start в личном чате (не в группе), затем сообщите об этом — это одноразовая настройка на человека.'}
+            ? `✅ Получатели дайджеста настроены (${tDigest.ownerChatIds.length}).`
+            : '⚠️ Пока никто не подписан — перейдите по ссылке выше сами и отправьте её тому единственному человеку, кто ещё должен получать дайджест.'}
         </div>
 
         <button class="btn btn-primary" style="width:100%;justify-content:center;font-size:12px" onclick="saveTelegramConfig()">💾 Сохранить настройки Telegram</button>
@@ -1860,7 +1872,7 @@ const getTelegramConfig = () => getLS('telegram_config') || {
   enabled: false,
   sos: { enabled: true, staleHours: 24, escalateHours: 72, template: '', escalateTemplate: '' },
   requests: { enabled: true, staleHours: 24, escalateHours: 72, template: '', escalateTemplate: '' },
-  digest: { enabled: true, hour: 20, ownerChatIds: [] }
+  digest: { enabled: true, hour: 20, ownerChatIds: [], code: '' }
 };
 // Written by that same function after every message it sends — lets the owner see what
 // the bot actually said and when, from inside the app instead of scrolling Telegram.
@@ -1887,6 +1899,7 @@ function saveTelegramConfig() {
   c.digest.enabled = document.getElementById('tg-digest-enabled').checked;
   c.digest.hour = Number(document.getElementById('tg-digest-hour').value);
   if (isNaN(c.digest.hour) || c.digest.hour < 0 || c.digest.hour > 23) c.digest.hour = 20;
+  c.digest.code = (document.getElementById('tg-digest-code').value||'').trim();
   setLS('telegram_config', c);
   if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
   _showToast('✅ Настройки Telegram сохранены', false);
