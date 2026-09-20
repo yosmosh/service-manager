@@ -54,9 +54,10 @@ function readDigestConfig(doc) {
   const top = fromFsMap({ mapValue: raw.mapValue });
   const dRaw = raw.mapValue && raw.mapValue.fields && raw.mapValue.fields.digest;
   const digest = dRaw ? fromFsMap({ mapValue: dRaw.mapValue }) : {};
-  const idsRaw = dRaw && dRaw.mapValue && dRaw.mapValue.fields && dRaw.mapValue.fields.ownerChatIds;
-  digest.ownerChatIds = (idsRaw && idsRaw.arrayValue && idsRaw.arrayValue.values || [])
-    .map(v => v.stringValue).filter(Boolean);
+  const subsRaw = dRaw && dRaw.mapValue && dRaw.mapValue.fields && dRaw.mapValue.fields.subscribers;
+  const subscribers = (subsRaw && subsRaw.arrayValue && subsRaw.arrayValue.values || [])
+    .map(v => v.mapValue.fields.chatId.stringValue).filter(Boolean);
+  digest.ownerChatIds = subscribers;
   return { enabled: !!top.enabled, digest };
 }
 

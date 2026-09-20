@@ -1341,11 +1341,18 @@ function openSettingsModal() {
         <div style="font-size:11px;color:#92400e;background:#fef3c7;border-radius:6px;padding:7px 10px;margin-bottom:8px">
           ⚠️ Сначала задайте код и сохраните — без него подписка через /start отключена (защита от посторонних).
         </div>`}
-        <div style="font-size:11px;color:${(tDigest.ownerChatIds&&tDigest.ownerChatIds.length)?'#166534':'#92400e'};background:${(tDigest.ownerChatIds&&tDigest.ownerChatIds.length)?'#dcfce7':'#fef3c7'};border-radius:6px;padding:7px 10px;margin-bottom:10px">
-          ${(tDigest.ownerChatIds&&tDigest.ownerChatIds.length)
-            ? `✅ Получатели дайджеста настроены (${tDigest.ownerChatIds.length}).`
-            : '⚠️ Пока никто не подписан — перейдите по ссылке выше сами и отправьте её тому единственному человеку, кто ещё должен получать дайджест.'}
-        </div>
+        ${(tDigest.subscribers&&tDigest.subscribers.length) ? `
+        <div style="margin-bottom:10px">
+          <div style="font-size:11px;color:#374151;font-weight:600;margin-bottom:4px">Получатели дайджеста (${tDigest.subscribers.length})</div>
+          ${tDigest.subscribers.map(s => `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:#dcfce7;border-radius:6px;padding:6px 10px;margin-bottom:4px">
+            <span style="font-size:12px;color:#166534">✅ ${(s.name||s.chatId||'').toString().replace(/</g,'&lt;')}</span>
+            <button type="button" onclick="removeDigestSubscriber('${s.chatId}')" style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:11px;padding:2px 4px;min-height:0">❌ Удалить</button>
+          </div>`).join('')}
+        </div>` : `
+        <div style="font-size:11px;color:#92400e;background:#fef3c7;border-radius:6px;padding:7px 10px;margin-bottom:10px">
+          ⚠️ Пока никто не подписан — перейдите по ссылке выше сами и отправьте её тому единственному человеку, кто ещё должен получать дайджест.
+        </div>`}
 
         <button class="btn btn-primary" style="width:100%;justify-content:center;font-size:12px" onclick="saveTelegramConfig()">💾 Сохранить настройки Telegram</button>
 
@@ -1872,7 +1879,7 @@ const getTelegramConfig = () => getLS('telegram_config') || {
   enabled: false,
   sos: { enabled: true, staleHours: 24, escalateHours: 72, template: '', escalateTemplate: '' },
   requests: { enabled: true, staleHours: 24, escalateHours: 72, template: '', escalateTemplate: '' },
-  digest: { enabled: true, hour: 20, ownerChatIds: [], code: '' }
+  digest: { enabled: true, hour: 20, subscribers: [], code: '' }
 };
 // Written by that same function after every message it sends — lets the owner see what
 // the bot actually said and when, from inside the app instead of scrolling Telegram.
@@ -1893,7 +1900,7 @@ function saveTelegramConfig() {
   c.requests.escalateHours = Number(document.getElementById('tg-req-escalate').value) || 0;
   c.requests.template = document.getElementById('tg-req-template').value;
   c.requests.escalateTemplate = document.getElementById('tg-req-escalate-template').value;
-  // digest.ownerChatIds is captured server-side (each recipient DMs the bot once) and has
+  // digest.subscribers is captured server-side (each recipient DMs the bot once) and has
   // no form field here — preserve whatever's already stored instead of wiping it.
   c.digest = c.digest || {};
   c.digest.enabled = document.getElementById('tg-digest-enabled').checked;
@@ -1903,6 +1910,16 @@ function saveTelegramConfig() {
   setLS('telegram_config', c);
   if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
   _showToast('✅ Настройки Telegram сохранены', false);
+}
+
+function removeDigestSubscriber(chatId) {
+  if (!confirm('Отписать этого получателя от дайджеста?')) return;
+  const c = getTelegramConfig();
+  c.digest = c.digest || {};
+  c.digest.subscribers = (c.digest.subscribers || []).filter(s => String(s.chatId) !== String(chatId));
+  setLS('telegram_config', c);
+  if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
+  openSettingsModal();
 }
 
 let _fcmMessaging = null;

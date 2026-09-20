@@ -45,10 +45,16 @@ async function sendTelegramDM(chatId, text) {
 // telegram_config.digest.ownerChatIds. Without the correct code nothing is added, so a
 // stranger who finds the bot by its public username can't subscribe themselves to
 // internal group summaries.
+function fsSubscriber(s) {
+  return { mapValue: { fields: { chatId: fsString(s.chatId), name: fsString(s.name), subscribedAt: fsString(s.subscribedAt) } } };
+}
+
 async function handleStartDM(msg) {
   const chatId = String(msg.chat.id);
   const parts = msg.text.trim().split(/\s+/);
   const payload = parts.length > 1 ? parts.slice(1).join(' ') : '';
+  const name = [msg.from && msg.from.first_name, msg.from && msg.from.last_name].filter(Boolean).join(' ')
+    || (msg.from && msg.from.username) || chatId;
 
   const stateRes = await fetch(`${FIRESTORE_STATE_URL}?mask.fieldPaths=telegram_config`);
   const stateDoc = await stateRes.json();
@@ -62,13 +68,16 @@ async function handleStartDM(msg) {
     return;
   }
 
-  const idsRaw = digestFields.ownerChatIds;
-  const existingIds = (idsRaw && idsRaw.arrayValue && idsRaw.arrayValue.values || []).map(v => v.stringValue);
-  const alreadyIn = existingIds.includes(chatId);
-  const newIds = alreadyIn ? existingIds : existingIds.concat([chatId]);
+  const subsRaw = (digestFields.subscribers && digestFields.subscribers.arrayValue && digestFields.subscribers.arrayValue.values) || [];
+  const existing = subsRaw.map(v => {
+    const f = v.mapValue.fields;
+    return { chatId: f.chatId.stringValue, name: f.name.stringValue, subscribedAt: f.subscribedAt.stringValue };
+  });
+  const alreadyIn = existing.some(s => s.chatId === chatId);
+  const newSubs = alreadyIn ? existing : existing.concat([{ chatId, name, subscribedAt: new Date().toISOString() }]);
 
   if (!alreadyIn) {
-    const mergedDigest = Object.assign({}, digestFields, { ownerChatIds: { arrayValue: { values: newIds.map(fsString) } } });
+    const mergedDigest = Object.assign({}, digestFields, { subscribers: { arrayValue: { values: newSubs.map(fsSubscriber) } } });
     const mergedTop = Object.assign({}, topFields, { digest: { mapValue: { fields: mergedDigest } } });
     await fetch(`${FIRESTORE_STATE_URL}?updateMask.fieldPaths=telegram_config`, {
       method: 'PATCH',
