@@ -198,24 +198,26 @@ async function createDraft(stateDoc, entry) {
 
 // Fresh (non-reply) message in the watched topic: classify it directly.
 async function handleFreshMessageInDraftTopic(msg, topicId, topicName, fromName, text, dateIso) {
-  if (!process.env.ANTHROPIC_API_KEY) return;
-  if (text.length < 10 && !msg.photo) return;
+  if (!process.env.ANTHROPIC_API_KEY) return { skip: 'no ANTHROPIC_API_KEY' };
+  if (text.length < 10 && !msg.photo) return { skip: 'text too short and no photo' };
 
   const stateRes = await fetch(`${FIRESTORE_STATE_URL}?mask.fieldPaths=telegram_config&mask.fieldPaths=telegram_drafts`);
   const stateDoc = await stateRes.json();
   const cfgFields = (stateDoc.fields && stateDoc.fields.telegram_config && stateDoc.fields.telegram_config.mapValue.fields) || {};
   const draftsCfg = (cfgFields.drafts && cfgFields.drafts.mapValue && cfgFields.drafts.mapValue.fields) || {};
-  if (!draftsCfg.enabled || !draftsCfg.enabled.booleanValue) return;
+  if (!draftsCfg.enabled || !draftsCfg.enabled.booleanValue) return { skip: 'drafts disabled', cfgFields: Object.keys(cfgFields) };
 
   const result = await classifyReport(text, !!msg.photo);
-  if (!result || !result.actionable) return;
+  if (!result) return { skip: 'classifyReport returned null' };
+  if (!result.actionable) return { skip: 'not actionable', result };
 
   if (!result.sufficient) {
     await sendTelegramReply(topicId, msg.message_id, result.clarifyingQuestion || 'Уточните, пожалуйста, подробнее: что случилось и где?');
-    return;
+    return { action: 'asked clarifying question', result };
   }
 
-  const photoMeta = msg.photo ? await capturePhotoFromMessage(msg).catch(() => null) : null;
+  let photoError = null;
+  const photoMeta = msg.photo ? await capturePhotoFromMessage(msg).catch((e) => { photoError = String(e && e.message || e); return null; }) : null;
   await createDraft(stateDoc, {
     id: String(Date.now()),
     type: result.type === 'sos' ? 'sos' : 'maintenance',
@@ -230,6 +232,7 @@ async function handleFreshMessageInDraftTopic(msg, topicId, topicName, fromName,
     fileNames: photoMeta ? [photoMeta.name] : [],
     fileTypes: photoMeta ? [photoMeta.type] : [],
   });
+  return { action: 'draft created', result, photoError };
 }
 
 // A reply in the watched topic: either a completion signal on something we're already
@@ -435,17 +438,18 @@ module.exports = async (req, res) => {
       body: JSON.stringify(body),
     });
 
+    let draftDebug = null;
     if (!(msg.from && msg.from.is_bot) && DRAFT_TOPIC_IDS.includes(topicId)) {
       try {
         if (msg.reply_to_message && msg.reply_to_message.message_id) {
-          await handleReplyInDraftTopic(msg, topicId, topicName, fromName, text, dateIso);
+          draftDebug = await handleReplyInDraftTopic(msg, topicId, topicName, fromName, text, dateIso);
         } else {
-          await handleFreshMessageInDraftTopic(msg, topicId, topicName, fromName, text, dateIso);
+          draftDebug = await handleFreshMessageInDraftTopic(msg, topicId, topicName, fromName, text, dateIso);
         }
-      } catch (e) { /* draft classification is best-effort — message capture above already succeeded */ }
+      } catch (e) { draftDebug = { error: String(e && e.stack || e) }; }
     }
 
-    res.status(200).json({ ok: true });
+    res.status(200).json({ ok: true, draftDebug });
   } catch (e) {
     // Still 200 — an error here shouldn't make Telegram hammer us with retries.
     res.status(200).json({ ok: false, error: String(e && e.message || e) });
