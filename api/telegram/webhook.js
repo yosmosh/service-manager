@@ -17,6 +17,7 @@
 // Telegram echoes it back on every webhook call so this can reject anyone else).
 
 const FIRESTORE_MESSAGES_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/telegram_messages';
+const FIRESTORE_STATE_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/appdata/state';
 const TELEGRAM_CHAT_ID = -1004438968318; // Сад Будущего | Рабочая группа — ignore anything from elsewhere
 
 // Known topic names — extend this as more topics are identified (same technique used
@@ -29,6 +30,44 @@ const TOPIC_NAMES = {
 function fsString(v) { return { stringValue: v == null ? '' : String(v) }; }
 function fsInt(v) { return { integerValue: String(Math.round(v)) }; }
 function fsTimestamp(iso) { return { timestampValue: iso }; }
+
+async function sendTelegramDM(chatId, text) {
+  await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({ chat_id: chatId, text }),
+  });
+}
+
+// Self-service subscribe: anyone who should get the daily digest DMs the bot /start
+// once, and this adds their chat_id to telegram_config.digest.ownerChatIds — no manual
+// getUpdates lookup needed per person.
+async function handleStartDM(msg) {
+  const chatId = String(msg.chat.id);
+  const stateRes = await fetch(`${FIRESTORE_STATE_URL}?mask.fieldPaths=telegram_config`);
+  const stateDoc = await stateRes.json();
+  const raw = stateDoc.fields && stateDoc.fields.telegram_config;
+  const topFields = (raw && raw.mapValue && raw.mapValue.fields) || {};
+  const digestFields = (topFields.digest && topFields.digest.mapValue && topFields.digest.mapValue.fields) || {};
+  const idsRaw = digestFields.ownerChatIds;
+  const existingIds = (idsRaw && idsRaw.arrayValue && idsRaw.arrayValue.values || []).map(v => v.stringValue);
+  const alreadyIn = existingIds.includes(chatId);
+  const newIds = alreadyIn ? existingIds : existingIds.concat([chatId]);
+
+  if (!alreadyIn) {
+    const mergedDigest = Object.assign({}, digestFields, { ownerChatIds: { arrayValue: { values: newIds.map(fsString) } } });
+    const mergedTop = Object.assign({}, topFields, { digest: { mapValue: { fields: mergedDigest } } });
+    await fetch(`${FIRESTORE_STATE_URL}?updateMask.fieldPaths=telegram_config`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ fields: { telegram_config: { mapValue: { fields: mergedTop } } } }),
+    });
+  }
+
+  await sendTelegramDM(chatId, alreadyIn
+    ? '✅ Вы уже подписаны на дайджест — сводка приходит вам ежедневно.'
+    : '✅ Готово! Теперь вы будете получать ежедневный дайджест сюда, в личные сообщения.');
+}
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
@@ -48,7 +87,18 @@ module.exports = async (req, res) => {
     const msg = update.message;
     // Always 200 back to Telegram even when we skip a message — a non-200 makes
     // Telegram retry the same update repeatedly, which we don't want for "nothing to do".
-    if (!msg || !msg.text || !msg.chat || msg.chat.id !== TELEGRAM_CHAT_ID) {
+    if (!msg || !msg.text || !msg.chat) {
+      res.status(200).json({ ok: true, skipped: true });
+      return;
+    }
+
+    if (msg.chat.type === 'private' && msg.text.trim().toLowerCase().startsWith('/start')) {
+      await handleStartDM(msg);
+      res.status(200).json({ ok: true, start: true });
+      return;
+    }
+
+    if (msg.chat.id !== TELEGRAM_CHAT_ID) {
       res.status(200).json({ ok: true, skipped: true });
       return;
     }

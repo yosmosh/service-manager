@@ -1,7 +1,8 @@
-// Daily digest for the owner: reads the last 24h of group messages (written in real
+// Daily digest for management: reads the last 24h of group messages (written in real
 // time by api/telegram/webhook.js into the separate telegram_messages collection),
-// asks Claude for a short per-topic summary, and DMs it to the owner privately —
-// never posted back to the group.
+// asks Claude for a short per-topic summary, and DMs it privately to every configured
+// recipient (telegram_config.digest.ownerChatIds — each DMs the bot /start once to be
+// added) — never posted back to the group.
 //
 // Controlled from Настройки доступа → 🤖 Бот в Telegram → "📋 Дайджест для руководства"
 // (telegram_config.digest), same panel/pattern as the SOS and Заявки reminders.
@@ -53,6 +54,9 @@ function readDigestConfig(doc) {
   const top = fromFsMap({ mapValue: raw.mapValue });
   const dRaw = raw.mapValue && raw.mapValue.fields && raw.mapValue.fields.digest;
   const digest = dRaw ? fromFsMap({ mapValue: dRaw.mapValue }) : {};
+  const idsRaw = dRaw && dRaw.mapValue && dRaw.mapValue.fields && dRaw.mapValue.fields.ownerChatIds;
+  digest.ownerChatIds = (idsRaw && idsRaw.arrayValue && idsRaw.arrayValue.values || [])
+    .map(v => v.stringValue).filter(Boolean);
   return { enabled: !!top.enabled, digest };
 }
 
@@ -166,8 +170,8 @@ module.exports = async (req, res) => {
       res.status(200).json({ ok: true, skipped: 'disabled in telegram_config' });
       return;
     }
-    if (!cfg.digest.ownerChatId) {
-      res.status(200).json({ ok: true, skipped: 'ownerChatId not set — owner must DM the bot /start first' });
+    if (!cfg.digest.ownerChatIds.length) {
+      res.status(200).json({ ok: true, skipped: 'no ownerChatIds set — each recipient must DM the bot /start first' });
       return;
     }
 
@@ -181,7 +185,9 @@ module.exports = async (req, res) => {
     const digestText = await summarizeWithClaude(byTopic);
 
     if (!dryRun) {
-      await sendTelegramDM(token, cfg.digest.ownerChatId, `📋 Дайджест за сутки:\n\n${digestText}`);
+      for (const chatId of cfg.digest.ownerChatIds) {
+        await sendTelegramDM(token, chatId, `📋 Дайджест за сутки:\n\n${digestText}`);
+      }
       const rawLog = (stateDoc.fields && stateDoc.fields.telegram_log && stateDoc.fields.telegram_log.arrayValue.values) || [];
       const entry = {
         mapValue: { fields: {
