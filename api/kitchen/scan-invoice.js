@@ -24,7 +24,6 @@ module.exports = async (req, res) => {
       body: JSON.stringify({
         model: 'claude-sonnet-5',
         max_tokens: 4096,
-        temperature: 0,
         messages: [{ role: 'user', content: [
           { type: 'image', source: { type: 'base64', media_type: mediaType || 'image/jpeg', data: imageBase64 } },
           { type: 'text', text: PROMPT },

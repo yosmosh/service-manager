@@ -146,7 +146,7 @@ async function classifyReport(text, hasPhoto) {
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 512, temperature: 0, messages: [{ role: 'user', content: prompt }] }),
+    body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 512, messages: [{ role: 'user', content: prompt }] }),
   });
   if (!resp.ok) {
     const errBody = await resp.text().catch(() => '');
