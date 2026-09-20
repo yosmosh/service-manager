@@ -1241,11 +1241,74 @@ function openSettingsModal() {
       ${!nc.enabled ? `<div style="font-size:12px;color:#6b7280">Включите переключатель выше для настройки.</div>` : ''}
     </div>` : '';
 
+  const tc = getTelegramConfig();
+  const tSos = tc.sos || {};
+  const tDefaultTpl = '⚠️ SOS всё ещё не решён (более {hours}ч): "{title}"\nДата: {date} · Приоритет: {priority}';
+  const tDefaultEscTpl = '🔴 ПОВТОРНО: SOS не решён уже {hours}ч! "{title}"\nДата: {date} · Приоритет: {priority}';
+  const tlog = getTelegramLog().slice(-15).reverse();
+  const telegramHtml = isOwner ? `
+    <div style="margin-top:20px;padding:14px 16px;background:#eff6ff;border:1px solid #93c5fd;border-radius:10px">
+      <div style="font-size:13px;font-weight:700;color:#1e40af;margin-bottom:10px">🤖 Бот в Telegram</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <span style="font-size:12px;color:#374151">Включить напоминания в Telegram</span>
+        <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer">
+          <input type="checkbox" id="tg-enabled" ${tc.enabled?'checked':''} style="display:none"
+            onchange="document.getElementById('tg-fields').style.display=this.checked?'':'none';this.nextElementSibling.style.background=this.checked?'#2563eb':'#d1d5db';this.nextElementSibling.nextElementSibling.style.left=this.checked?'21px':'3px'">
+          <span style="position:absolute;inset:0;background:${tc.enabled?'#2563eb':'#d1d5db'};border-radius:11px;transition:.2s"></span>
+          <span style="position:absolute;top:3px;left:${tc.enabled?'21px':'3px'};width:16px;height:16px;background:white;border-radius:50%;transition:.2s"></span>
+        </label>
+      </div>
+      <div id="tg-fields" style="${tc.enabled?'':'display:none'}">
+        <div style="font-size:12px;font-weight:700;color:#1e40af;margin:4px 0 8px">🚨 SOS — напоминание о зависших событиях</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <span style="font-size:12px;color:#374151">Включено</span>
+          <label style="position:relative;display:inline-block;width:36px;height:20px;cursor:pointer">
+            <input type="checkbox" id="tg-sos-enabled" ${tSos.enabled!==false?'checked':''} style="display:none"
+              onchange="this.nextElementSibling.style.background=this.checked?'#2563eb':'#d1d5db';this.nextElementSibling.nextElementSibling.style.left=this.checked?'18px':'2px'">
+            <span style="position:absolute;inset:0;background:${tSos.enabled!==false?'#2563eb':'#d1d5db'};border-radius:10px;transition:.2s"></span>
+            <span style="position:absolute;top:2px;left:${tSos.enabled!==false?'18px':'2px'};width:16px;height:16px;background:white;border-radius:50%;transition:.2s"></span>
+          </label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Первое напоминание через (часов)</div>
+            <input type="number" class="form-control" id="tg-sos-stale" value="${tSos.staleHours!=null?tSos.staleHours:24}" style="font-size:12px">
+          </div>
+          <div>
+            <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Повтор (эскалация) через (часов, 0 = выкл.)</div>
+            <input type="number" class="form-control" id="tg-sos-escalate" value="${tSos.escalateHours!=null?tSos.escalateHours:72}" style="font-size:12px">
+          </div>
+        </div>
+        <div style="margin-bottom:6px">
+          <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Текст первого напоминания — доступно: {title} {date} {priority} {hours}</div>
+          <textarea class="form-control" id="tg-sos-template" style="font-size:12px;min-height:50px">${tSos.template||tDefaultTpl}</textarea>
+        </div>
+        <div style="margin-bottom:10px">
+          <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Текст повторного (эскалация)</div>
+          <textarea class="form-control" id="tg-sos-escalate-template" style="font-size:12px;min-height:50px">${tSos.escalateTemplate||tDefaultEscTpl}</textarea>
+        </div>
+        <button class="btn btn-primary" style="width:100%;justify-content:center;font-size:12px" onclick="saveTelegramConfig()">💾 Сохранить настройки Telegram</button>
+
+        <div style="margin-top:16px;padding-top:12px;border-top:1px solid #bfdbfe">
+          <div style="font-size:12px;font-weight:700;color:#1e40af;margin-bottom:8px">📜 Журнал отправленных сообщений${tlog.length?` (последние ${tlog.length})`:''}</div>
+          ${tlog.length ? `<div style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:5px">
+            ${tlog.map(l => `<div style="font-size:11px;background:white;border:1px solid #dbeafe;border-radius:6px;padding:6px 9px">
+              <div style="display:flex;justify-content:space-between;gap:6px">
+                <span style="font-weight:600">${l.level===2?'🔴 Эскалация':'⚠️ Первое'} · ${l.title||''}</span>
+                <span style="color:#94a3b8;flex-shrink:0;white-space:nowrap">${_fmtApprovalWhen(l.sentAt)}</span>
+              </div>
+            </div>`).join('')}
+          </div>` : `<div style="font-size:12px;color:#94a3b8">Пока ничего не отправлено</div>`}
+        </div>
+      </div>
+    </div>` : '';
+
   document.getElementById('modal-body').innerHTML = `
     ${ownerCredsHtml}
     ${adminCredsHtml}
     ${kitchenCredsHtml}
     ${notifyHtml}
+    ${telegramHtml}
     <div style="font-size:13px;font-weight:600;margin-bottom:6px;color:#374151;border-top:1px solid #f1f5f9;padding-top:14px">
       Учётные записи поставщиков
     </div>
@@ -1749,6 +1812,31 @@ const getNotifyCfg = () => getLS('notify_config') || {
   emailjs_key: '', emailjs_service: '', emailjs_template: '',
   fcm_vapid: '', fcm_token: ''
 };
+
+// Read by the Vercel Cron function (api/cron/sos-reminder.js) — this is the one place
+// the owner controls whether/when/what it sends, instead of needing a code change for
+// every tweak. The function falls back to its own hardcoded defaults if these are unset.
+const getTelegramConfig = () => getLS('telegram_config') || {
+  enabled: false,
+  sos: { enabled: true, staleHours: 24, escalateHours: 72, template: '', escalateTemplate: '' }
+};
+// Written by that same function after every message it sends — lets the owner see what
+// the bot actually said and when, from inside the app instead of scrolling Telegram.
+const getTelegramLog = () => getLS('telegram_log') || [];
+
+function saveTelegramConfig() {
+  const c = getTelegramConfig();
+  c.enabled = document.getElementById('tg-enabled').checked;
+  c.sos = c.sos || {};
+  c.sos.enabled = document.getElementById('tg-sos-enabled').checked;
+  c.sos.staleHours = Number(document.getElementById('tg-sos-stale').value) || 24;
+  c.sos.escalateHours = Number(document.getElementById('tg-sos-escalate').value) || 0;
+  c.sos.template = document.getElementById('tg-sos-template').value;
+  c.sos.escalateTemplate = document.getElementById('tg-sos-escalate-template').value;
+  setLS('telegram_config', c);
+  if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
+  _showToast('✅ Настройки Telegram сохранены', false);
+}
 
 let _fcmMessaging = null;
 
