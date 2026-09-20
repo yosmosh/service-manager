@@ -1918,6 +1918,7 @@ function _telegramDraftBanner(type) {
           <div style="font-size:13px;color:#374151;font-style:italic;margin-bottom:6px">«${(d.sourceText||'').replace(/</g,'&lt;')}»</div>
           <div style="font-size:13px;font-weight:600;margin-bottom:2px">${(d.title||'').replace(/</g,'&lt;')}${d.type==='sos'?' · '+(priLabel[d.priority]||''):' · '+maintCatLabel(d.category)}</div>
           ${d.description ? `<div style="font-size:12px;color:#6b7280;margin-bottom:8px">${d.description.replace(/</g,'&lt;')}</div>` : ''}
+          ${_telegramDraftPhotos(d)}
           <div style="display:flex;gap:8px">
             <button class="btn btn-primary" style="font-size:12px;padding:5px 12px" onclick="approveTelegramDraft('${d.id}')">✅ Одобрить</button>
             <button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="rejectTelegramDraft('${d.id}')">❌ Отклонить</button>
@@ -1926,15 +1927,36 @@ function _telegramDraftBanner(type) {
     </div>`;
 }
 
+// Thumbnails for whatever photos api/telegram/webhook.js already attached to this draft
+// (the "before" report photo, plus any "После: ..." completion photo a later reply
+// added) — resolved through the same files_registry map every other gallery uses.
+function _telegramDraftPhotos(d) {
+  if (!d.fileIds || !d.fileIds.length) return '';
+  const _FC = _useFirebase ? (getLS('files') || {}) : {};
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+    ${d.fileIds.map((fid, i) => {
+      const url = (_FC[fid] || {}).url || '';
+      const label = (d.fileNames || [])[i] || '';
+      return url ? `<img src="${url}" title="${label.replace(/"/g,'&quot;')}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0">` : '';
+    }).join('')}
+  </div>`;
+}
+
 // Set right before opening the pre-filled create form, cleared once that form is
-// actually saved (see the hooks in saveSOS/saveMaint) — a draft is only removed once a
-// real record gets created from it, never just because the reviewer opened the form.
+// actually saved (see the hooks in saveSOS/saveMaint) — a draft is only removed, and its
+// photos/source message id only attached to the new record, once the reviewer actually
+// completes the save, never just because they opened the form.
 let _resolvingDraftId = null;
+let _resolvingDraftExtra = null; // { sourceMessageId, fileIds, fileNames, fileTypes }
 
 function approveTelegramDraft(id) {
   const draft = getTelegramDrafts().find(d => d.id === id);
   if (!draft) return;
   _resolvingDraftId = id;
+  _resolvingDraftExtra = {
+    sourceMessageId: draft.sourceMessageId || '',
+    fileIds: draft.fileIds || [], fileNames: draft.fileNames || [], fileTypes: draft.fileTypes || [],
+  };
   if (draft.type === 'sos') {
     openSosModal();
     if (document.getElementById('sos-title')) document.getElementById('sos-title').value = draft.title;
@@ -1956,11 +1978,16 @@ function rejectTelegramDraft(id) {
 }
 
 // Called from the end of saveSOS/saveMaint's success path — folds the draft removal
-// into the same save/flush instead of needing a second round-trip.
+// into the same save/flush instead of needing a second round-trip. Returns the photos/
+// source-message-id to attach to the record being created, or null if this save didn't
+// originate from a draft.
 function _resolveDraftIfPending() {
-  if (!_resolvingDraftId) return;
+  if (!_resolvingDraftId) return null;
   setLS('telegram_drafts', getTelegramDrafts().filter(d => d.id !== _resolvingDraftId));
+  const extra = _resolvingDraftExtra;
   _resolvingDraftId = null;
+  _resolvingDraftExtra = null;
+  return extra;
 }
 
 function saveTelegramConfig() {
@@ -5081,6 +5108,13 @@ async function saveMaint(editId) {
       fileIds.push(fid); fileNames.push(f.name); fileTypes.push(f.type);
     }
 
+    const draftExtra = _resolveDraftIfPending();
+    if (draftExtra) {
+      fileIds.unshift(...draftExtra.fileIds);
+      fileNames.unshift(...draftExtra.fileNames);
+      fileTypes.unshift(...draftExtra.fileTypes);
+    }
+
     const list = getMaintWorks();
     if (editId) {
       const idx = list.findIndex(w => w.id === editId);
@@ -5100,10 +5134,10 @@ async function saveMaint(editId) {
       const item = { id: Date.now().toString(), title, date, cost, category, status, description, fileIds, fileNames, fileTypes, createdBy: currentUser, createdAt: new Date().toISOString() };
       if (quarterlySection) item.quarterlySection = quarterlySection;
       if (linkedProviderId) item.linkedProviderId = linkedProviderId;
+      if (draftExtra && draftExtra.sourceMessageId) item.telegramSourceMessageId = draftExtra.sourceMessageId;
       list.push(item);
     }
     setLS('maint_works', list);
-    _resolveDraftIfPending();
 
     // Sync with provider visit journal
     const workId = editId || list[list.length - 1].id;
@@ -5758,6 +5792,13 @@ async function saveSOS(editId) {
       fileIds.push(id); fileNames.push(f.name); fileTypes.push(f.type);
     }
 
+    const draftExtra = _resolveDraftIfPending();
+    if (draftExtra) {
+      fileIds.unshift(...draftExtra.fileIds);
+      fileNames.unshift(...draftExtra.fileNames);
+      fileTypes.unshift(...draftExtra.fileTypes);
+    }
+
     if (editId) {
       const idx = list.findIndex(s => s.id === editId);
       if (idx >= 0) list[idx] = {
@@ -5767,11 +5808,12 @@ async function saveSOS(editId) {
         fileTypes: [...(list[idx].fileTypes||[]), ...fileTypes]
       };
     } else {
-      list.push({ id: Date.now().toString(), title, date, priority, status, description, fileIds, fileNames, fileTypes, createdBy: currentUser, createdAt: new Date().toISOString() });
+      const item = { id: Date.now().toString(), title, date, priority, status, description, fileIds, fileNames, fileTypes, createdBy: currentUser, createdAt: new Date().toISOString() };
+      if (draftExtra && draftExtra.sourceMessageId) item.telegramSourceMessageId = draftExtra.sourceMessageId;
+      list.push(item);
     }
 
     setLS('sos_items', list);
-    _resolveDraftIfPending();
     if (_useFirebase) {
       clearTimeout(_saveTimer);
       const ok = await _flushState();
