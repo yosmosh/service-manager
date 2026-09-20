@@ -3,7 +3,8 @@
     { "source": "/", "destination": "/service-manager.html" }
   ],
   "crons": [
-    { "path": "/api/cron/sos-reminder", "schedule": "0 5 * * *" }
+    { "path": "/api/cron/sos-reminder", "schedule": "0 5 * * *" },
+    { "path": "/api/cron/requests-reminder", "schedule": "5 5 * * *" }
   ],
   "headers": [
     {

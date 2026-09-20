@@ -1243,8 +1243,11 @@ function openSettingsModal() {
 
   const tc = getTelegramConfig();
   const tSos = tc.sos || {};
+  const tReq = tc.requests || {};
   const tDefaultTpl = '⚠️ SOS всё ещё не решён (более {hours}ч): "{title}"\nДата: {date} · Приоритет: {priority}';
   const tDefaultEscTpl = '🔴 ПОВТОРНО: SOS не решён уже {hours}ч! "{title}"\nДата: {date} · Приоритет: {priority}';
+  const tDefaultReqTpl = '🔔 Заявка на закупку ждёт рассмотрения уже {hours}ч: "{title}"\nОт: {requester} · Дата: {date}';
+  const tDefaultReqEscTpl = '🔴 ПОВТОРНО: заявка на закупку не рассмотрена уже {hours}ч! "{title}"\nОт: {requester} · Дата: {date}';
   const tlog = getTelegramLog().slice(-15).reverse();
   const telegramHtml = isOwner ? `
     <div style="margin-top:20px;padding:14px 16px;background:#eff6ff;border:1px solid #93c5fd;border-radius:10px">
@@ -1287,6 +1290,36 @@ function openSettingsModal() {
           <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Текст повторного (эскалация)</div>
           <textarea class="form-control" id="tg-sos-escalate-template" style="font-size:12px;min-height:50px">${tSos.escalateTemplate||tDefaultEscTpl}</textarea>
         </div>
+
+        <div style="font-size:12px;font-weight:700;color:#1e40af;margin:14px 0 8px;padding-top:12px;border-top:1px solid #bfdbfe">🔔 Заявки на закупку — напоминание о нерассмотренных</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <span style="font-size:12px;color:#374151">Включено</span>
+          <label style="position:relative;display:inline-block;width:36px;height:20px;cursor:pointer">
+            <input type="checkbox" id="tg-req-enabled" ${tReq.enabled!==false?'checked':''} style="display:none"
+              onchange="this.nextElementSibling.style.background=this.checked?'#2563eb':'#d1d5db';this.nextElementSibling.nextElementSibling.style.left=this.checked?'18px':'2px'">
+            <span style="position:absolute;inset:0;background:${tReq.enabled!==false?'#2563eb':'#d1d5db'};border-radius:10px;transition:.2s"></span>
+            <span style="position:absolute;top:2px;left:${tReq.enabled!==false?'18px':'2px'};width:16px;height:16px;background:white;border-radius:50%;transition:.2s"></span>
+          </label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Первое напоминание через (часов)</div>
+            <input type="number" class="form-control" id="tg-req-stale" value="${tReq.staleHours!=null?tReq.staleHours:24}" style="font-size:12px">
+          </div>
+          <div>
+            <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Повтор (эскалация) через (часов, 0 = выкл.)</div>
+            <input type="number" class="form-control" id="tg-req-escalate" value="${tReq.escalateHours!=null?tReq.escalateHours:72}" style="font-size:12px">
+          </div>
+        </div>
+        <div style="margin-bottom:6px">
+          <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Текст первого напоминания — доступно: {title} {date} {requester} {hours}</div>
+          <textarea class="form-control" id="tg-req-template" style="font-size:12px;min-height:50px">${tReq.template||tDefaultReqTpl}</textarea>
+        </div>
+        <div style="margin-bottom:10px">
+          <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Текст повторного (эскалация)</div>
+          <textarea class="form-control" id="tg-req-escalate-template" style="font-size:12px;min-height:50px">${tReq.escalateTemplate||tDefaultReqEscTpl}</textarea>
+        </div>
+
         <button class="btn btn-primary" style="width:100%;justify-content:center;font-size:12px" onclick="saveTelegramConfig()">💾 Сохранить настройки Telegram</button>
 
         <div style="margin-top:16px;padding-top:12px;border-top:1px solid #bfdbfe">
@@ -1294,7 +1327,7 @@ function openSettingsModal() {
           ${tlog.length ? `<div style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:5px">
             ${tlog.map(l => `<div style="font-size:11px;background:white;border:1px solid #dbeafe;border-radius:6px;padding:6px 9px">
               <div style="display:flex;justify-content:space-between;gap:6px">
-                <span style="font-weight:600">${l.level===2?'🔴 Эскалация':'⚠️ Первое'} · ${l.title||''}</span>
+                <span style="font-weight:600">${l.type==='requests'?'🔔':'🚨'} ${l.level===2?'Эскалация':'Первое'} · ${l.title||''}</span>
                 <span style="color:#94a3b8;flex-shrink:0;white-space:nowrap">${_fmtApprovalWhen(l.sentAt)}</span>
               </div>
             </div>`).join('')}
@@ -1818,7 +1851,8 @@ const getNotifyCfg = () => getLS('notify_config') || {
 // every tweak. The function falls back to its own hardcoded defaults if these are unset.
 const getTelegramConfig = () => getLS('telegram_config') || {
   enabled: false,
-  sos: { enabled: true, staleHours: 24, escalateHours: 72, template: '', escalateTemplate: '' }
+  sos: { enabled: true, staleHours: 24, escalateHours: 72, template: '', escalateTemplate: '' },
+  requests: { enabled: true, staleHours: 24, escalateHours: 72, template: '', escalateTemplate: '' }
 };
 // Written by that same function after every message it sends — lets the owner see what
 // the bot actually said and when, from inside the app instead of scrolling Telegram.
@@ -1833,6 +1867,12 @@ function saveTelegramConfig() {
   c.sos.escalateHours = Number(document.getElementById('tg-sos-escalate').value) || 0;
   c.sos.template = document.getElementById('tg-sos-template').value;
   c.sos.escalateTemplate = document.getElementById('tg-sos-escalate-template').value;
+  c.requests = c.requests || {};
+  c.requests.enabled = document.getElementById('tg-req-enabled').checked;
+  c.requests.staleHours = Number(document.getElementById('tg-req-stale').value) || 24;
+  c.requests.escalateHours = Number(document.getElementById('tg-req-escalate').value) || 0;
+  c.requests.template = document.getElementById('tg-req-template').value;
+  c.requests.escalateTemplate = document.getElementById('tg-req-escalate-template').value;
   setLS('telegram_config', c);
   if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
   _showToast('✅ Настройки Telegram сохранены', false);
