@@ -1239,6 +1239,7 @@ function openSettingsModal() {
   const tSos = tc.sos || {};
   const tReq = tc.requests || {};
   const tDigest = tc.digest || {};
+  const tDrafts = tc.drafts || {};
   const tDefaultTpl = '⚠️ SOS всё ещё не решён (более {hours}ч): "{title}"\nДата: {date} · Приоритет: {priority}';
   const tDefaultEscTpl = '🔴 ПОВТОРНО: SOS не решён уже {hours}ч! "{title}"\nДата: {date} · Приоритет: {priority}';
   const tDefaultReqTpl = '🔔 Заявка на закупку ждёт рассмотрения уже {hours}ч: "{title}"\nОт: {requester} · Дата: {date}';
@@ -1353,6 +1354,18 @@ function openSettingsModal() {
         <div style="font-size:11px;color:#92400e;background:#fef3c7;border-radius:6px;padding:7px 10px;margin-bottom:10px">
           ⚠️ Пока никто не подписан — перейдите по ссылке выше сами и отправьте её тому единственному человеку, кто ещё должен получать дайджест.
         </div>`}
+
+        <div style="font-size:12px;font-weight:700;color:#1e40af;margin:14px 0 8px;padding-top:12px;border-top:1px solid #bfdbfe">📥 Черновики из Telegram (SOS/Обслуживание территории)</div>
+        <div style="font-size:11px;color:#6b7280;margin-bottom:8px">Сообщения в теме «Хозчасть и Ремонт», которые ИИ распознаёт как реальную проблему, появляются как черновик на странице SOS или Обслуживания территории — вы всегда одобряете или отклоняете вручную, ничего не создаётся само.</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <span style="font-size:12px;color:#374151">Включено</span>
+          <label style="position:relative;display:inline-block;width:36px;height:20px;cursor:pointer">
+            <input type="checkbox" id="tg-drafts-enabled" ${tDrafts.enabled?'checked':''} style="display:none"
+              onchange="this.nextElementSibling.style.background=this.checked?'#2563eb':'#d1d5db';this.nextElementSibling.nextElementSibling.style.left=this.checked?'18px':'2px'">
+            <span style="position:absolute;inset:0;background:${tDrafts.enabled?'#2563eb':'#d1d5db'};border-radius:10px;transition:.2s"></span>
+            <span style="position:absolute;top:2px;left:${tDrafts.enabled?'18px':'2px'};width:16px;height:16px;background:white;border-radius:50%;transition:.2s"></span>
+          </label>
+        </div>
 
         <button class="btn btn-primary" style="width:100%;justify-content:center;font-size:12px" onclick="saveTelegramConfig()">💾 Сохранить настройки Telegram</button>
 
@@ -1879,11 +1892,76 @@ const getTelegramConfig = () => getLS('telegram_config') || {
   enabled: false,
   sos: { enabled: true, staleHours: 24, escalateHours: 72, template: '', escalateTemplate: '' },
   requests: { enabled: true, staleHours: 24, escalateHours: 72, template: '', escalateTemplate: '' },
-  digest: { enabled: true, hour: 20, subscribers: [], code: '' }
+  digest: { enabled: true, hour: 20, subscribers: [], code: '' },
+  drafts: { enabled: false }
 };
 // Written by that same function after every message it sends — lets the owner see what
 // the bot actually said and when, from inside the app instead of scrolling Telegram.
 const getTelegramLog = () => getLS('telegram_log') || [];
+// Written by api/telegram/webhook.js when a message in "Хозчасть и Ремонт" looks like a
+// real problem report — never auto-becomes an SOS/maintenance record, only a suggestion
+// the owner/admin reviews and either approves (pre-fills the normal create form) or
+// rejects, from a banner on the SOS/Обслуживание территории pages.
+const getTelegramDrafts = () => getLS('telegram_drafts') || [];
+
+function _telegramDraftBanner(type) {
+  const drafts = getTelegramDrafts().filter(d => d.type === type);
+  if (!drafts.length) return '';
+  const priLabel = { high:'🔴 Высокий', medium:'🟡 Средний', low:'🟢 Низкий' };
+  const noun = drafts.length === 1 ? 'черновик' : drafts.length < 5 ? 'черновика' : 'черновиков';
+  return `
+    <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:12px 16px;margin-bottom:16px">
+      <div style="font-weight:700;color:#1e40af;margin-bottom:10px">📥 ${drafts.length} ${noun} из Telegram — требуют проверки</div>
+      ${drafts.map(d => `
+        <div style="background:white;border-radius:8px;padding:10px 12px;margin-bottom:8px">
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">${(d.sourceFrom||'').replace(/</g,'&lt;')} · «${(d.sourceTopic||'').replace(/</g,'&lt;')}» · ${_fmtApprovalWhen(d.sourceDate)}</div>
+          <div style="font-size:13px;color:#374151;font-style:italic;margin-bottom:6px">«${(d.sourceText||'').replace(/</g,'&lt;')}»</div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:2px">${(d.title||'').replace(/</g,'&lt;')}${d.type==='sos'?' · '+(priLabel[d.priority]||''):' · '+maintCatLabel(d.category)}</div>
+          ${d.description ? `<div style="font-size:12px;color:#6b7280;margin-bottom:8px">${d.description.replace(/</g,'&lt;')}</div>` : ''}
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary" style="font-size:12px;padding:5px 12px" onclick="approveTelegramDraft('${d.id}')">✅ Одобрить</button>
+            <button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="rejectTelegramDraft('${d.id}')">❌ Отклонить</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+// Set right before opening the pre-filled create form, cleared once that form is
+// actually saved (see the hooks in saveSOS/saveMaint) — a draft is only removed once a
+// real record gets created from it, never just because the reviewer opened the form.
+let _resolvingDraftId = null;
+
+function approveTelegramDraft(id) {
+  const draft = getTelegramDrafts().find(d => d.id === id);
+  if (!draft) return;
+  _resolvingDraftId = id;
+  if (draft.type === 'sos') {
+    openSosModal();
+    if (document.getElementById('sos-title')) document.getElementById('sos-title').value = draft.title;
+    if (document.getElementById('sos-desc')) document.getElementById('sos-desc').value = draft.description;
+    if (document.getElementById('sos-pri')) document.getElementById('sos-pri').value = draft.priority;
+  } else {
+    openMaintModal();
+    if (document.getElementById('maint-title')) document.getElementById('maint-title').value = draft.title;
+    if (document.getElementById('maint-desc')) document.getElementById('maint-desc').value = draft.description;
+    if (document.getElementById('maint-cat')) document.getElementById('maint-cat').value = draft.category;
+  }
+}
+
+function rejectTelegramDraft(id) {
+  if (!confirm('Отклонить этот черновик? Запись создана не будет.')) return;
+  setLS('telegram_drafts', getTelegramDrafts().filter(d => d.id !== id));
+  if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
+  render();
+}
+
+// Called from the end of saveSOS/saveMaint's success path — folds the draft removal
+// into the same save/flush instead of needing a second round-trip.
+function _resolveDraftIfPending() {
+  if (!_resolvingDraftId) return;
+  setLS('telegram_drafts', getTelegramDrafts().filter(d => d.id !== _resolvingDraftId));
+  _resolvingDraftId = null;
+}
 
 function saveTelegramConfig() {
   const c = getTelegramConfig();
@@ -1907,6 +1985,8 @@ function saveTelegramConfig() {
   c.digest.hour = Number(document.getElementById('tg-digest-hour').value);
   if (isNaN(c.digest.hour) || c.digest.hour < 0 || c.digest.hour > 23) c.digest.hour = 20;
   c.digest.code = (document.getElementById('tg-digest-code').value||'').trim();
+  c.drafts = c.drafts || {};
+  c.drafts.enabled = document.getElementById('tg-drafts-enabled').checked;
   setLS('telegram_config', c);
   if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
   _showToast('✅ Настройки Telegram сохранены', false);
@@ -4852,6 +4932,7 @@ function renderMaintenance() {
       ${isCurrent ? '<span class="badge badge-blue" style="margin-left:4px">Текущий месяц</span>' : ''}
       ${canEdit ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px;margin-left:auto" onclick="exportMaintenanceCsv()">📊 Реестр (Excel)</button>` : ''}
     </div>
+    ${canEdit ? _telegramDraftBanner('maintenance') : ''}
     ${cards}`;
 }
 
@@ -5022,6 +5103,7 @@ async function saveMaint(editId) {
       list.push(item);
     }
     setLS('maint_works', list);
+    _resolveDraftIfPending();
 
     // Sync with provider visit journal
     const workId = editId || list[list.length - 1].id;
@@ -5105,7 +5187,9 @@ function renderSOS() {
       }).join('') + exportBtn
     + '</div>';
 
-  if (!list.length) return chipsHtml + `
+  const draftBanner = (currentUser === 'admin' || currentUser === 'owner') ? _telegramDraftBanner('sos') : '';
+
+  if (!list.length) return chipsHtml + draftBanner + `
     <div style="text-align:center;padding:60px;color:#6b7280">
       <div style="font-size:48px;margin-bottom:12px">🚨</div>
       <div style="font-size:16px;font-weight:600;margin-bottom:6px">Нет событий</div>
@@ -5116,7 +5200,7 @@ function renderSOS() {
   // already-resolved one — status comes first (pending, then in-progress, then
   // resolved), date only breaks ties within the same status.
   const _sosStatusRank = s => s.status === 'pending' ? 0 : s.status === 'in_progress' ? 1 : 2;
-  return chipsHtml + [...list].sort((a,b) => _sosStatusRank(a)-_sosStatusRank(b) || new Date(b.date)-new Date(a.date)).map(s => {
+  return chipsHtml + draftBanner + [...list].sort((a,b) => _sosStatusRank(a)-_sosStatusRank(b) || new Date(b.date)-new Date(a.date)).map(s => {
     const canEdit = currentUser === 'admin' || currentUser === 'owner';
     const _fp2=ft=>ft.startsWith('video/')?0:ft.startsWith('image/')?1:2;
     const _sSorted = (s.fileIds||[]).map((_,i)=>i).sort((a,b)=>_fp2((s.fileTypes||[])[a]||'')-_fp2((s.fileTypes||[])[b]||''));
@@ -5687,6 +5771,7 @@ async function saveSOS(editId) {
     }
 
     setLS('sos_items', list);
+    _resolveDraftIfPending();
     if (_useFirebase) {
       clearTimeout(_saveTimer);
       const ok = await _flushState();

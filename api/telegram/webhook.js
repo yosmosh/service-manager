@@ -39,6 +39,79 @@ async function sendTelegramDM(chatId, text) {
   });
 }
 
+// Phase 2: turn a real problem report from "Хозчасть и Ремонт" into a manager-reviewed
+// draft (telegram_drafts in appdata/state) instead of ever creating an SOS/maintenance
+// record directly. Scoped to this one topic for now — extend DRAFT_TOPIC_IDS to widen it.
+const DRAFT_TOPIC_IDS = [57];
+
+function fsDraftEntry(d) {
+  return { mapValue: { fields: {
+    id: fsString(d.id), type: fsString(d.type), title: fsString(d.title),
+    description: fsString(d.description), priority: fsString(d.priority || ''),
+    category: fsString(d.category || ''), sourceText: fsString(d.sourceText),
+    sourceFrom: fsString(d.sourceFrom), sourceTopic: fsString(d.sourceTopic),
+    sourceDate: fsString(d.sourceDate), status: fsString('pending'),
+    createdAt: fsString(d.createdAt),
+  } } };
+}
+
+async function classifyForDraft(text) {
+  const prompt = 'Ты помогаешь распознавать реальные проблемы и заявки на ремонт/обслуживание из сообщений рабочей Telegram-группы учреждения (тема "Хозчасть и Ремонт").\n\n'
+    + `Сообщение: "${text}"\n\n`
+    + 'Определи, описывает ли это сообщение САМО ПО СЕБЕ конкретную, реальную проблему или потребность в ремонте/обслуживании (поломка, авария, нужен ремонт и т.п.) — а не приветствие, благодарность, вопрос без содержания, обсуждение или тестовое сообщение.\n\n'
+    + 'Верни ТОЛЬКО JSON без комментариев, в точности в этом формате:\n'
+    + '{"actionable":true,"type":"sos","title":"...","description":"...","priority":"high","category":"other"}\n\n'
+    + 'Правила:\n'
+    + '- "sos" — если это срочно, опасно или блокирует работу учреждения прямо сейчас.\n'
+    + '- "maintenance" — если это обычная потребность в ремонте/обслуживании, не срочная.\n'
+    + '- category (только для maintenance, любое значение подходит и для sos): landscaping/cleaning/repair/electrical/plumbing/security/other.\n'
+    + '- Если actionable=false — остальные поля можно оставить пустыми.\n'
+    + '- title — короткий (до 60 символов), description — 1-3 предложения на основе сообщения.';
+
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 512, temperature: 0, messages: [{ role: 'user', content: prompt }] }),
+  });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  const raw = ((data.content && data.content[0] && data.content[0].text) || '').trim();
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try { return JSON.parse(match[0]); } catch (e) { return null; }
+}
+
+async function maybeCreateDraft(text, topicId, topicName, fromName, dateIso) {
+  if (!process.env.ANTHROPIC_API_KEY || !DRAFT_TOPIC_IDS.includes(topicId) || text.length < 10) return;
+
+  const stateRes = await fetch(`${FIRESTORE_STATE_URL}?mask.fieldPaths=telegram_config&mask.fieldPaths=telegram_drafts`);
+  const stateDoc = await stateRes.json();
+  const cfgFields = (stateDoc.fields && stateDoc.fields.telegram_config && stateDoc.fields.telegram_config.mapValue.fields) || {};
+  const draftsCfg = (cfgFields.drafts && cfgFields.drafts.mapValue && cfgFields.drafts.mapValue.fields) || {};
+  if (!draftsCfg.enabled || !draftsCfg.enabled.booleanValue) return;
+
+  const result = await classifyForDraft(text);
+  if (!result || !result.actionable) return;
+
+  const draftsRaw = (stateDoc.fields && stateDoc.fields.telegram_drafts && stateDoc.fields.telegram_drafts.arrayValue.values) || [];
+  const entry = {
+    id: String(Date.now()),
+    type: result.type === 'sos' ? 'sos' : 'maintenance',
+    title: (result.title || '').slice(0, 120),
+    description: result.description || '',
+    priority: ['high', 'medium', 'low'].includes(result.priority) ? result.priority : 'medium',
+    category: result.category || 'other',
+    sourceText: text, sourceFrom: fromName, sourceTopic: topicName, sourceDate: dateIso,
+    createdAt: new Date().toISOString(),
+  };
+  const merged = draftsRaw.concat([fsDraftEntry(entry)]);
+  await fetch(`${FIRESTORE_STATE_URL}?updateMask.fieldPaths=telegram_drafts`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({ fields: { telegram_drafts: { arrayValue: { values: merged } } } }),
+  });
+}
+
 // Self-service subscribe: anyone who should get the daily digest DMs the bot /start
 // with the secret code from Настройки доступа (or taps the owner's t.me/…?start=CODE
 // link, which sends the same thing) — this adds their chat_id to
@@ -146,6 +219,11 @@ module.exports = async (req, res) => {
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
       body: JSON.stringify(body),
     });
+
+    if (!(msg.from && msg.from.is_bot)) {
+      try { await maybeCreateDraft(msg.text, topicId, topicName, fromName, dateIso); }
+      catch (e) { /* draft classification is best-effort — message capture above already succeeded */ }
+    }
 
     res.status(200).json({ ok: true });
   } catch (e) {
