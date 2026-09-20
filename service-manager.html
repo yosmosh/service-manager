@@ -1244,6 +1244,7 @@ function openSettingsModal() {
   const tc = getTelegramConfig();
   const tSos = tc.sos || {};
   const tReq = tc.requests || {};
+  const tDigest = tc.digest || {};
   const tDefaultTpl = '⚠️ SOS всё ещё не решён (более {hours}ч): "{title}"\nДата: {date} · Приоритет: {priority}';
   const tDefaultEscTpl = '🔴 ПОВТОРНО: SOS не решён уже {hours}ч! "{title}"\nДата: {date} · Приоритет: {priority}';
   const tDefaultReqTpl = '🔔 Заявка на закупку ждёт рассмотрения уже {hours}ч: "{title}"\nОт: {requester} · Дата: {date}';
@@ -1318,6 +1319,26 @@ function openSettingsModal() {
         <div style="margin-bottom:10px">
           <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Текст повторного (эскалация)</div>
           <textarea class="form-control" id="tg-req-escalate-template" style="font-size:12px;min-height:50px">${tReq.escalateTemplate||tDefaultReqEscTpl}</textarea>
+        </div>
+
+        <div style="font-size:12px;font-weight:700;color:#1e40af;margin:14px 0 8px;padding-top:12px;border-top:1px solid #bfdbfe">📋 Дайджест для руководства — сводка сообщений из группы</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <span style="font-size:12px;color:#374151">Включено</span>
+          <label style="position:relative;display:inline-block;width:36px;height:20px;cursor:pointer">
+            <input type="checkbox" id="tg-digest-enabled" ${tDigest.enabled!==false?'checked':''} style="display:none"
+              onchange="this.nextElementSibling.style.background=this.checked?'#2563eb':'#d1d5db';this.nextElementSibling.nextElementSibling.style.left=this.checked?'18px':'2px'">
+            <span style="position:absolute;inset:0;background:${tDigest.enabled!==false?'#2563eb':'#d1d5db'};border-radius:10px;transition:.2s"></span>
+            <span style="position:absolute;top:2px;left:${tDigest.enabled!==false?'18px':'2px'};width:16px;height:16px;background:white;border-radius:50%;transition:.2s"></span>
+          </label>
+        </div>
+        <div style="margin-bottom:8px">
+          <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Час отправки (0–23, по Москве)</div>
+          <input type="number" min="0" max="23" class="form-control" id="tg-digest-hour" value="${tDigest.hour!=null?tDigest.hour:20}" style="font-size:12px;width:100px">
+        </div>
+        <div style="font-size:11px;color:${tDigest.ownerChatId?'#166534':'#92400e'};background:${tDigest.ownerChatId?'#dcfce7':'#fef3c7'};border-radius:6px;padding:7px 10px;margin-bottom:10px">
+          ${tDigest.ownerChatId
+            ? '✅ Личный чат с ботом настроен — дайджест будет приходить вам в личные сообщения.'
+            : '⚠️ Ещё не настроено: напишите боту @sad_budushego_bot команду /start в личном чате (не в группе), затем сообщите об этом — это одноразовая настройка.'}
         </div>
 
         <button class="btn btn-primary" style="width:100%;justify-content:center;font-size:12px" onclick="saveTelegramConfig()">💾 Сохранить настройки Telegram</button>
@@ -1852,7 +1873,8 @@ const getNotifyCfg = () => getLS('notify_config') || {
 const getTelegramConfig = () => getLS('telegram_config') || {
   enabled: false,
   sos: { enabled: true, staleHours: 24, escalateHours: 72, template: '', escalateTemplate: '' },
-  requests: { enabled: true, staleHours: 24, escalateHours: 72, template: '', escalateTemplate: '' }
+  requests: { enabled: true, staleHours: 24, escalateHours: 72, template: '', escalateTemplate: '' },
+  digest: { enabled: true, hour: 20, ownerChatId: '' }
 };
 // Written by that same function after every message it sends — lets the owner see what
 // the bot actually said and when, from inside the app instead of scrolling Telegram.
@@ -1873,6 +1895,12 @@ function saveTelegramConfig() {
   c.requests.escalateHours = Number(document.getElementById('tg-req-escalate').value) || 0;
   c.requests.template = document.getElementById('tg-req-template').value;
   c.requests.escalateTemplate = document.getElementById('tg-req-escalate-template').value;
+  // digest.ownerChatId is captured server-side (the owner DMs the bot once) and has no
+  // form field here — preserve whatever's already stored instead of wiping it.
+  c.digest = c.digest || {};
+  c.digest.enabled = document.getElementById('tg-digest-enabled').checked;
+  c.digest.hour = Number(document.getElementById('tg-digest-hour').value);
+  if (isNaN(c.digest.hour) || c.digest.hour < 0 || c.digest.hour > 23) c.digest.hour = 20;
   setLS('telegram_config', c);
   if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
   _showToast('✅ Настройки Telegram сохранены', false);

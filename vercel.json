@@ -4,7 +4,8 @@
   ],
   "crons": [
     { "path": "/api/cron/sos-reminder", "schedule": "0 5 * * *" },
-    { "path": "/api/cron/requests-reminder", "schedule": "5 5 * * *" }
+    { "path": "/api/cron/requests-reminder", "schedule": "5 5 * * *" },
+    { "path": "/api/cron/telegram-digest", "schedule": "0 17 * * *" }
   ],
   "headers": [
     {
