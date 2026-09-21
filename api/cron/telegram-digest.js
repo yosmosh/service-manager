@@ -137,7 +137,11 @@ ${transcript}`;
   });
   const data = await res.json();
   if (!res.ok) throw new Error('Anthropic API error: ' + JSON.stringify(data));
-  return (data.content && data.content[0] && data.content[0].text) || '';
+  // Sonnet 5 sometimes puts an extended-thinking block before the actual text block, so
+  // content[0] isn't reliably the text — find the text block by type instead. (This is
+  // exactly what made today's digest arrive empty: content[0] was the thinking block.)
+  const textBlock = (data.content || []).find(b => b.type === 'text');
+  return (textBlock && textBlock.text) || '';
 }
 
 async function sendTelegramDM(token, chatId, text) {

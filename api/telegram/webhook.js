@@ -153,7 +153,10 @@ async function classifyReport(text, hasPhoto) {
     throw new Error(`Anthropic ${resp.status}: ${errBody.slice(0, 300)}`);
   }
   const data = await resp.json();
-  const raw = ((data.content && data.content[0] && data.content[0].text) || '').trim();
+  // Sonnet 5 sometimes puts an extended-thinking block before the actual text block, so
+  // content[0] isn't reliably the text — find the text block by type instead.
+  const textBlock = (data.content || []).find(b => b.type === 'text');
+  const raw = ((textBlock && textBlock.text) || '').trim();
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) return null;
   try { return JSON.parse(match[0]); } catch (e) { return null; }

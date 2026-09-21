@@ -32,7 +32,10 @@ module.exports = async (req, res) => {
     });
     const data = await resp.json();
     if (!resp.ok) { res.status(502).json({ error: (data.error && data.error.message) || 'Anthropic API error' }); return; }
-    const text = ((data.content && data.content[0] && data.content[0].text) || '').trim();
+    // Sonnet 5 sometimes puts an extended-thinking block before the actual text block, so
+    // content[0] isn't reliably the text — find the text block by type instead.
+    const textBlock = (data.content || []).find(b => b.type === 'text');
+    const text = ((textBlock && textBlock.text) || '').trim();
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) { res.status(502).json({ error: 'no JSON in AI response' }); return; }
     const parsed = JSON.parse(match[0]);
