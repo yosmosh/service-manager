@@ -1626,6 +1626,12 @@ if (FIREBASE_CONFIG) {
   try {
     firebase.initializeApp(FIREBASE_CONFIG);
     _firestoreDB = firebase.firestore();
+    // 2026-09-21: every browser (all domains, incognito, other devices) started getting
+    // repeated 400s on the SDK's default WebChannel Listen/Write streams — "transport
+    // errored" — while plain REST against the same documents kept working, so the app
+    // hung on "Загрузка данных...". Forcing long-polling swaps the fragile streaming
+    // transport for the most compatible one; standard Firestore mitigation for this.
+    try { _firestoreDB.settings({ experimentalForceLongPolling: true }); } catch(se) { console.warn('Firestore settings failed:', se); }
     _useFirebase = true;
     try { _storageRoot = firebase.storage().ref(); } catch(se) { console.warn('Storage init failed:', se); }
   } catch(e) { console.error('Firebase init error:', e); _firestoreDB = null; _useFirebase = false; }
