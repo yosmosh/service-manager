@@ -1626,17 +1626,93 @@ if (FIREBASE_CONFIG) {
   try {
     firebase.initializeApp(FIREBASE_CONFIG);
     _firestoreDB = firebase.firestore();
-    // 2026-09-21: every browser (all domains, incognito, other devices) started getting
-    // repeated 400s on the SDK's default WebChannel Listen/Write streams — "transport
-    // errored" — while plain REST against the same documents kept working, so the app
-    // hung on "Загрузка данных...". Forcing long-polling swaps the fragile streaming
-    // transport for the most compatible one; standard Firestore mitigation for this.
-    try { _firestoreDB.settings({ experimentalForceLongPolling: true }); } catch(se) { console.warn('Firestore settings failed:', se); }
     _useFirebase = true;
     try { _storageRoot = firebase.storage().ref(); } catch(se) { console.warn('Storage init failed:', se); }
   } catch(e) { console.error('Firebase init error:', e); _firestoreDB = null; _useFirebase = false; }
 }
 console.log('[FB] useFirebase=', _useFirebase, 'db=', !!_firestoreDB, 'storage=', !!_storageRoot);
+
+// ==============================
+// FIRESTORE ACCESS OVER REST (not the SDK)
+// ==============================
+// 2026-09-21 incident: every browser (both domains, incognito, other devices, and a
+// clean headless browser on the same machine) started getting repeated 400s on the
+// Firebase SDK's WebChannel Listen/Write streams — "transport errored" — so the app hung
+// forever on "Загрузка данных...". The SDK uses the same /channel endpoint for BOTH its
+// realtime streaming AND its long-polling fallback, so experimentalForceLongPolling did
+// not help. Meanwhile the plain Firestore REST endpoint (/v1/.../documents) kept working
+// perfectly from the exact same machine — the textbook signature of network/ISP-level
+// interference with Google's streaming transport. So all Firestore reads/writes go over
+// REST here, and _setupSync polls instead of using onSnapshot. The Firebase SDK stays
+// loaded only for Storage (file uploads), which use a different, unaffected endpoint.
+const _FS_KEY = FIREBASE_CONFIG.apiKey;
+const _FS_DOCS = 'https://firestore.googleapis.com/v1/projects/' + FIREBASE_CONFIG.projectId + '/databases/(default)/documents';
+
+function _toFs(v) {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (typeof v === 'number') {
+    if (!isFinite(v)) return { doubleValue: v };
+    return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  }
+  if (typeof v === 'string') return { stringValue: v };
+  if (Array.isArray(v)) return { arrayValue: { values: v.filter(x => x !== undefined).map(_toFs) } };
+  if (typeof v === 'object') {
+    const fields = {};
+    for (const k of Object.keys(v)) { if (v[k] !== undefined) fields[k] = _toFs(v[k]); }
+    return { mapValue: { fields } };
+  }
+  return { stringValue: String(v) };
+}
+function _fromFs(val) {
+  if (!val) return null;
+  if ('nullValue' in val) return null;
+  if ('booleanValue' in val) return val.booleanValue;
+  if ('integerValue' in val) return Number(val.integerValue);
+  if ('doubleValue' in val) return val.doubleValue;
+  if ('stringValue' in val) return val.stringValue;
+  if ('timestampValue' in val) return val.timestampValue;
+  if ('arrayValue' in val) return (val.arrayValue.values || []).map(_fromFs);
+  if ('mapValue' in val) { const o = {}; const f = (val.mapValue.fields) || {}; for (const k of Object.keys(f)) o[k] = _fromFs(f[k]); return o; }
+  return null;
+}
+function _fsFieldsToObj(fields) { const o = {}; const f = fields || {}; for (const k of Object.keys(f)) o[k] = _fromFs(f[k]); return o; }
+
+// Returns the document's fields as a plain JS object, or null if it doesn't exist.
+async function _fsGetDoc(path) {
+  const r = await fetch(_FS_DOCS + '/' + path + '?key=' + _FS_KEY);
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error('Firestore GET ' + path + ' → ' + r.status + ' ' + (await r.text()).slice(0, 200));
+  const j = await r.json();
+  return _fsFieldsToObj(j.fields || {});
+}
+// Low-level merge PATCH: caller supplies already-encoded Firestore `fields` and the exact
+// updateMask field paths. Only the named paths are touched; everything else is left as-is.
+async function _fsRawPatch(path, fields, maskPaths) {
+  if (!maskPaths.length) return true;
+  const qs = maskPaths.map(p => 'updateMask.fieldPaths=' + encodeURIComponent(p)).join('&');
+  const r = await fetch(_FS_DOCS + '/' + path + '?' + qs + '&key=' + _FS_KEY, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields })
+  });
+  if (!r.ok) throw new Error('Firestore PATCH ' + path + ' → ' + r.status + ' ' + (await r.text()).slice(0, 200));
+  return true;
+}
+// Merge only the given top-level keys of `obj` (equivalent to the SDK's set(part,{merge:true})).
+async function _fsMergeDoc(path, obj) {
+  const fields = {}, maskPaths = [];
+  for (const k of Object.keys(obj || {})) { if (obj[k] !== undefined) { fields[k] = _toFs(obj[k]); maskPaths.push(k); } }
+  return _fsRawPatch(path, fields, maskPaths);
+}
+// Overwrite the document's fields with `obj` (equivalent to the SDK's set() without merge).
+async function _fsSetDoc(path, obj) {
+  const fields = {};
+  for (const k of Object.keys(obj || {})) { if (obj[k] !== undefined) fields[k] = _toFs(obj[k]); }
+  const r = await fetch(_FS_DOCS + '/' + path + '?key=' + _FS_KEY, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields })
+  });
+  if (!r.ok) throw new Error('Firestore SET ' + path + ' → ' + r.status + ' ' + (await r.text()).slice(0, 200));
+  return true;
+}
 
 // ==============================
 // ХРАНИЛИЩЕ (Firebase или localStorage)
@@ -1793,10 +1869,15 @@ async function _doFlushState() {
     // effect) every file another session had added since — exactly the "images keep
     // disappearing" reports this was causing repeatedly.
     if (filesPart !== undefined && (_filesDirty.size || _filesDeleted.size)) {
-      const filesUpdate = {};
-      _filesDirty.forEach(id => { if (filesPart[id] !== undefined) filesUpdate[id] = filesPart[id]; });
-      _filesDeleted.forEach(id => { filesUpdate[id] = firebase.firestore.FieldValue.delete(); });
-      await _firestoreDB.collection('appdata').doc('files_registry').set({files: filesUpdate}, {merge: true});
+      // Nested per-id merge over REST: each changed file id becomes an updateMask path
+      // `files.<id>` with its value in the body; each deleted id becomes a `files.<id>`
+      // path with NO body entry (which is how REST deletes a single map key). File ids
+      // are base36 alphanumeric by construction, so they need no field-path escaping.
+      const fields = { files: { mapValue: { fields: {} } } };
+      const maskPaths = [];
+      _filesDirty.forEach(id => { if (filesPart[id] !== undefined) { fields.files.mapValue.fields[id] = _toFs(filesPart[id]); maskPaths.push('files.' + id); } });
+      _filesDeleted.forEach(id => { maskPaths.push('files.' + id); });
+      await _fsRawPatch('appdata/files_registry', fields, maskPaths);
       _filesDirty.clear();
       _filesDeleted.clear();
       _filesBaseline = JSON.parse(JSON.stringify(filesPart));
@@ -1814,8 +1895,8 @@ async function _doFlushState() {
         (LEDGER_KEYS.includes(k) ? ledgerPart : statePart)[k] = _state[k];
       });
       const writes = [];
-      if (Object.keys(statePart).length) writes.push(_firestoreDB.collection('appdata').doc('state').set(statePart, {merge: true}));
-      if (Object.keys(ledgerPart).length) writes.push(_firestoreDB.collection('appdata').doc('finance_ledger').set(ledgerPart, {merge: true}));
+      if (Object.keys(statePart).length) writes.push(_fsMergeDoc('appdata/state', statePart));
+      if (Object.keys(ledgerPart).length) writes.push(_fsMergeDoc('appdata/finance_ledger', ledgerPart));
       await Promise.all(writes);
       _stateDirty.clear();
     }
@@ -1830,13 +1911,13 @@ async function _doFlushState() {
 async function _loadState() {
   if (!_firestoreDB) { _filesReadyResolve(); return; }
   try {
-    const doc = await _firestoreDB.collection('appdata').doc('state').get();
-    if (doc.exists && Object.keys(doc.data()).length > 0) {
-      _state = doc.data() || {};
+    const doc = await _fsGetDoc('appdata/state');
+    if (doc && Object.keys(doc).length > 0) {
+      _state = doc;
       try {
-        const filesDoc = await _firestoreDB.collection('appdata').doc('files_registry').get();
-        if (filesDoc.exists) {
-          _state.files = filesDoc.data().files || {};
+        const filesDoc = await _fsGetDoc('appdata/files_registry');
+        if (filesDoc) {
+          _state.files = filesDoc.files || {};
         } else if (_state.files && Object.keys(_state.files).length) {
           // One-time migration: this account still has the old layout, where `files`
           // was embedded inline in appdata/state. Split it out now so the shared
@@ -1851,9 +1932,9 @@ async function _loadState() {
         }
       } catch(e) { console.error('Ошибка загрузки files_registry:', e); _state.files = _state.files || {}; }
       try {
-        const ledgerDoc = await _firestoreDB.collection('appdata').doc('finance_ledger').get();
-        if (ledgerDoc.exists) {
-          Object.assign(_state, ledgerDoc.data() || {});
+        const ledgerDoc = await _fsGetDoc('appdata/finance_ledger');
+        if (ledgerDoc) {
+          Object.assign(_state, ledgerDoc);
         } else {
           // One-time migration, same shape as the files split above: appdata/state
           // crossed Firestore's 1MB cap (finance_tx_maintenance/finance_tx_personal were
@@ -1885,39 +1966,39 @@ async function _loadState() {
   } catch(e) { console.error('Ошибка загрузки:', e); }
   finally { _filesReadyResolve(); }
 }
+// The SDK's onSnapshot realtime listeners can't be used (their transport is the blocked
+// /channel endpoint — see the REST block above), so multi-device freshness is kept by
+// polling the two documents over REST instead. Not instant like onSnapshot was, but
+// correct on the next tick. Polling is skipped while the tab is hidden, while a modal is
+// open (so an in-progress form is never overwritten mid-edit), and while this session has
+// unsaved local changes pending (so a poll can't revert an edit before its own flush lands
+// — the same protection the SDK's hasPendingWrites guard used to give).
+let _pollTimer = null;
 function _setupSync() {
-  if (!_firestoreDB) return;
-  _firestoreDB.collection('appdata').doc('state').onSnapshot(doc => {
-    if (!doc.metadata.hasPendingWrites && doc.exists) {
-      // `files` and the LEDGER_KEYS live in their own documents (appdata/files_registry,
-      // appdata/finance_ledger) and aren't part of this snapshot — carry the already-
-      // loaded copies forward instead of dropping them.
+  if (!_useFirebase) return;
+  if (_pollTimer) clearInterval(_pollTimer);
+  _pollTimer = setInterval(_pollState, 20000);
+}
+async function _pollState() {
+  if (document.hidden) return;
+  if (document.querySelector('.modal-overlay')) return;
+  if (_stateDirty.size || _filesDirty.size || _filesDeleted.size) return;
+  try {
+    const st = await _fsGetDoc('appdata/state');
+    if (st && Object.keys(st).length) {
+      // `files` and the LEDGER_KEYS live in their own documents — carry the already-loaded
+      // copies forward instead of dropping them, exactly as the old onSnapshot did.
       const filesBackup = _state.files;
       const ledgerBackup = {};
       LEDGER_KEYS.forEach(k => { ledgerBackup[k] = _state[k]; });
-      _state = doc.data() || {};
+      _state = st;
       _state.files = filesBackup;
       LEDGER_KEYS.forEach(k => { if (ledgerBackup[k] !== undefined) _state[k] = ledgerBackup[k]; });
-      // This used to skip re-rendering on the snapshot that echoed THIS session's own
-      // write (tracked via a single shared _isOwnFlush flag), to avoid one redundant
-      // render. But if a truly external change from another session landed while that
-      // flag was still set (a real possibility with several roles saving concurrently),
-      // this session would silently swallow it — which is exactly why balance changes
-      // and other updates sometimes only showed up after a manual reload. Always
-      // re-rendering (modal-open guard aside, so an in-progress form never gets wiped
-      // out from under someone) costs one redundant render on your own saves and fixes
-      // that class of missed live update entirely.
-      if (document.querySelector('.modal-overlay')) return;
-      if (currentUser) render();
     }
-  });
-  _firestoreDB.collection('appdata').doc('finance_ledger').onSnapshot(doc => {
-    if (!doc.metadata.hasPendingWrites && doc.exists) {
-      Object.assign(_state, doc.data() || {});
-      if (document.querySelector('.modal-overlay')) return;
-      if (currentUser) render();
-    }
-  });
+    const led = await _fsGetDoc('appdata/finance_ledger');
+    if (led) Object.assign(_state, led);
+    if (currentUser && !document.querySelector('.modal-overlay')) render();
+  } catch (e) { /* transient poll failure — next tick retries */ }
 }
 
 const getRecords         = () => getLS('svc_records')        || {};
@@ -5982,7 +6063,7 @@ async function _doShare(token, data, btn) {
   } catch(e) {}
   if (!copied) try { await navigator.clipboard.writeText(url); copied = true; } catch(e) {}
   try {
-    await _firestoreDB.collection('appdata').doc('share_' + token).set(data);
+    await _fsSetDoc('appdata/share_' + token, data);
     if (btn) { btn.textContent = '✅'; setTimeout(() => { btn.textContent = '🔗'; btn.style.opacity = '0.7'; }, 2500); }
     _showToast('✅ Ссылка скопирована в буфер обмена!', true);
   } catch(e) {
@@ -6256,12 +6337,11 @@ async function loadSharePage(token) {
     return;
   }
   try {
-    const doc = await _firestoreDB.collection('appdata').doc('share_' + token).get();
-    if (!doc.exists) {
+    const d = await _fsGetDoc('appdata/share_' + token);
+    if (!d) {
       document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 24px"><h2 style="color:#1e293b">Ссылка не найдена</h2><p style="color:#6b7280">Эта ссылка недействительна или устарела.</p></div>';
       return;
     }
-    const d = doc.data();
     if (d.type === 'monthly_report' || d.type === 'quarterly_report') renderSharePageMonthlyReport(d);
     else if (d.type === 'custom_report') await renderSharePageCustomReport(d);
     else if (d.type === 'maint' || d.type === 'sos') renderSharePageWork(d);
@@ -6822,7 +6902,7 @@ async function qeSaveAndShare() {
 
   _showToast('⧗ Сохраняем отчёт в облаке…', true);
   try {
-    await _firestoreDB.collection('appdata').doc('share_' + token).set({ type: 'quarterly_report', html, createdAt: Date.now() });
+    await _fsSetDoc('appdata/share_' + token, { type: 'quarterly_report', html, createdAt: Date.now() });
 
     // Inject link banner into the preview window (where the user is looking)
     if (win && !win.closed) {
@@ -6897,7 +6977,7 @@ async function shareMonthlyReport() {
   if (win) { win.document.write(html); win.document.close(); }
   else { _showToast('❌ Разрешите всплывающие окна в браузере', false); }
   try {
-    await _firestoreDB.collection('appdata').doc('share_' + token).set({ type: 'monthly_report', html, createdAt: Date.now() });
+    await _fsSetDoc('appdata/share_' + token, { type: 'monthly_report', html, createdAt: Date.now() });
     // Inject link banner into the preview window where the user is looking
     if (win && !win.closed) {
       try {
@@ -7049,13 +7129,14 @@ async function renderSharePageCustomReport(d) {
     document.body.style.cssText = 'margin:0;padding:0;background:#f8fafc;height:auto;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif';
     document.body.innerHTML = '<div style="text-align:center;color:#6b7280;font-size:15px">⏳ Загружаем актуальные данные…</div>';
     try {
-      const stateDoc = await _firestoreDB.collection('appdata').doc('state').get({ source: 'server' });
-      const st = stateDoc.exists ? stateDoc.data() : {};
-      const filesRegDoc = await _firestoreDB.collection('appdata').doc('files_registry').get({ source: 'server' });
+      const st = (await _fsGetDoc('appdata/state')) || {};
+      const ledgerDoc = await _fsGetDoc('appdata/finance_ledger');
+      if (ledgerDoc) Object.assign(st, ledgerDoc);
+      const filesRegDoc = await _fsGetDoc('appdata/files_registry');
       const allWorks = st.maint_works || [];
       const allSOS   = st.sos_items   || [];
       const allRecs  = st.svc_records  || {};
-      const allFiles = (filesRegDoc.exists && filesRegDoc.data().files) || st.files || {};
+      const allFiles = (filesRegDoc && filesRegDoc.files) || st.files || {};
       const CATS = {'territory':'🌿 Благоустройство','buildings':'🏛️ Корпуса','pool':'🏊 Бассейн','electrical':'⚡ Электрика','plumbing':'🔧 Сантехника','other':'🔩 Прочее'};
       works = [];
       d.workIds.forEach(prefixedId => {
@@ -7339,7 +7420,7 @@ async function init() {
     _setupSync();
     // Verify Firestore is writable
     try {
-      await _firestoreDB.collection('appdata').doc('_ping').set({t: Date.now()});
+      await _fsSetDoc('appdata/_ping', {t: Date.now()});
       console.log('[FB] Firestore write test OK');
     } catch(e) {
       console.error('[FB] Firestore write test FAILED:', e);
