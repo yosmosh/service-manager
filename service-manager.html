@@ -1667,6 +1667,12 @@ const _filesDeleted = new Set();
 // `_stateDirty` tracks only the keys THIS session's own setLS() calls actually changed, so
 // the flush can merge-write just those, never fields it merely happens to be holding stale.
 const _stateDirty = new Set();
+// These two alone were ~530KB of the ~1.24MB appdata/state had grown to when it crossed
+// Firestore's 1MB cap and every read/write against it started failing outright (2026-09-21
+// incident) — moved into their own document (appdata/finance_ledger), same split pattern
+// as `files`/files_registry above. Read in _loadState, routed to the right document in
+// _doFlushState; everywhere else in the app just calls getLS/setLS as before.
+const LEDGER_KEYS = ['finance_tx_maintenance', 'finance_tx_personal'];
 
 const getLS = k => {
   if (_useFirebase) return _state[k] !== undefined ? _state[k] : null;
@@ -1756,12 +1762,16 @@ async function _doFlushState() {
     const filesPart = _state.files;
     const fullStateForSizeCheck = {..._state};
     delete fullStateForSizeCheck.files;
+    LEDGER_KEYS.forEach(k => delete fullStateForSizeCheck[k]);
+    const ledgerForSizeCheck = {};
+    LEDGER_KEYS.forEach(k => { if (_state[k] !== undefined) ledgerForSizeCheck[k] = _state[k]; });
 
     const stateSize = JSON.stringify(fullStateForSizeCheck).length;
     const filesSize = JSON.stringify(filesPart||{}).length;
-    if (stateSize > 900000 || filesSize > 900000) {
-      console.warn('[FLUSH] Size near Firestore 1MB document limit — state:', stateSize, 'files:', filesSize);
-      _showPersistentError('База данных почти заполнена (state: ' + Math.round(stateSize/1024) + ' КБ, files: ' + Math.round(filesSize/1024) + ' КБ из ~1024 КБ макс. каждый) — сохранения могут перестать работать! Сообщите администратору.');
+    const ledgerSize = JSON.stringify(ledgerForSizeCheck).length;
+    if (stateSize > 900000 || filesSize > 900000 || ledgerSize > 900000) {
+      console.warn('[FLUSH] Size near Firestore 1MB document limit — state:', stateSize, 'files:', filesSize, 'ledger:', ledgerSize);
+      _showPersistentError('База данных почти заполнена (state: ' + Math.round(stateSize/1024) + ' КБ, files: ' + Math.round(filesSize/1024) + ' КБ, ledger: ' + Math.round(ledgerSize/1024) + ' КБ из ~1024 КБ макс. каждый) — сохранения могут перестать работать! Сообщите администратору.');
     }
     // files_registry first, state second: if a record's fileIds are about to be written
     // into `state`, the files they point at must already exist in the registry — writing
@@ -1792,9 +1802,15 @@ async function _doFlushState() {
     // budget-import flag) can then no longer overwrite that field just by saving something
     // unrelated — it simply never includes that field in its write at all.
     if (_stateDirty.size) {
-      const statePart = {};
-      _stateDirty.forEach(k => { if (k !== 'files' && _state[k] !== undefined) statePart[k] = _state[k]; });
-      await _firestoreDB.collection('appdata').doc('state').set(statePart, {merge: true});
+      const statePart = {}, ledgerPart = {};
+      _stateDirty.forEach(k => {
+        if (k === 'files' || _state[k] === undefined) return;
+        (LEDGER_KEYS.includes(k) ? ledgerPart : statePart)[k] = _state[k];
+      });
+      const writes = [];
+      if (Object.keys(statePart).length) writes.push(_firestoreDB.collection('appdata').doc('state').set(statePart, {merge: true}));
+      if (Object.keys(ledgerPart).length) writes.push(_firestoreDB.collection('appdata').doc('finance_ledger').set(ledgerPart, {merge: true}));
+      await Promise.all(writes);
       _stateDirty.clear();
     }
     _showToast('✅ Сохранено', true);
@@ -1828,6 +1844,23 @@ async function _loadState() {
           _state.files = _state.files || {};
         }
       } catch(e) { console.error('Ошибка загрузки files_registry:', e); _state.files = _state.files || {}; }
+      try {
+        const ledgerDoc = await _firestoreDB.collection('appdata').doc('finance_ledger').get();
+        if (ledgerDoc.exists) {
+          Object.assign(_state, ledgerDoc.data() || {});
+        } else {
+          // One-time migration, same shape as the files split above: appdata/state
+          // crossed Firestore's 1MB cap (finance_tx_maintenance/finance_tx_personal were
+          // the two biggest single fields, ~530KB combined) and every read/write against
+          // it started failing outright. Move them out the moment we notice they're still
+          // inline — the registry doc doesn't exist yet, so mark them dirty for the flush.
+          if (LEDGER_KEYS.some(k => _state[k] !== undefined)) {
+            console.log('[MIGRATE] Splitting finance_ledger out of appdata/state...');
+            LEDGER_KEYS.forEach(k => { if (_state[k] !== undefined) _stateDirty.add(k); });
+            await _flushState();
+          }
+        }
+      } catch(e) { console.error('Ошибка загрузки finance_ledger:', e); }
     } else {
       // первый запуск — мигрируем из localStorage
       const keys = ['admin_pwd','admin_username','owner_pwd','owner_username',
@@ -1850,11 +1883,15 @@ function _setupSync() {
   if (!_firestoreDB) return;
   _firestoreDB.collection('appdata').doc('state').onSnapshot(doc => {
     if (!doc.metadata.hasPendingWrites && doc.exists) {
-      // `files` lives in its own document (appdata/files_registry) and isn't part of
-      // this snapshot — carry the already-loaded copy forward instead of dropping it.
+      // `files` and the LEDGER_KEYS live in their own documents (appdata/files_registry,
+      // appdata/finance_ledger) and aren't part of this snapshot — carry the already-
+      // loaded copies forward instead of dropping them.
       const filesBackup = _state.files;
+      const ledgerBackup = {};
+      LEDGER_KEYS.forEach(k => { ledgerBackup[k] = _state[k]; });
       _state = doc.data() || {};
       _state.files = filesBackup;
+      LEDGER_KEYS.forEach(k => { if (ledgerBackup[k] !== undefined) _state[k] = ledgerBackup[k]; });
       // This used to skip re-rendering on the snapshot that echoed THIS session's own
       // write (tracked via a single shared _isOwnFlush flag), to avoid one redundant
       // render. But if a truly external change from another session landed while that
@@ -1864,6 +1901,13 @@ function _setupSync() {
       // re-rendering (modal-open guard aside, so an in-progress form never gets wiped
       // out from under someone) costs one redundant render on your own saves and fixes
       // that class of missed live update entirely.
+      if (document.querySelector('.modal-overlay')) return;
+      if (currentUser) render();
+    }
+  });
+  _firestoreDB.collection('appdata').doc('finance_ledger').onSnapshot(doc => {
+    if (!doc.metadata.hasPendingWrites && doc.exists) {
+      Object.assign(_state, doc.data() || {});
       if (document.querySelector('.modal-overlay')) return;
       if (currentUser) render();
     }
