@@ -13,10 +13,12 @@
 // telegram_drafts for the owner to approve or reject in the app, same as before.
 //
 // Runs two ways:
-//   - the daily Vercel cron (Authorization: Bearer CRON_SECRET), and
-//   - the "Проверить Telegram сейчас" button in the app, which calls it unauthenticated;
-//     that path is throttled server-side (THROTTLE_MINUTES) so it can't be used to burn
-//     AI credits by hammering the URL.
+//   - a frequent Vercel cron, which only pays for an AI call when there are actually new
+//     messages that have gone quiet (SETTLE_MINUTES) — it returns before the model call
+//     when the group is idle, so a quiet day costs nothing, and
+//   - the "Проверить Telegram" button in the app (force=1, skipping the settle wait); that
+//     path is unauthenticated, so it is throttled server-side (THROTTLE_MINUTES) to stop
+//     anyone burning AI credits by hammering the URL.
 //
 // Required Vercel environment variables: TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, CRON_SECRET.
 
@@ -29,6 +31,12 @@ const TELEGRAM_CHAT_ID = -1004438968318;
 const DRAFT_TOPIC_IDS = [57]; // Хозчасть и Ремонт
 const LOOKBACK_HOURS = 24;
 const THROTTLE_MINUTES = 10;
+// A worker reporting something usually sends a burst — the sentence, then a photo, then
+// the missing detail — so messages are left alone until they have been quiet this long.
+// Reacting to the first line instead would have the bot asking for information the worker
+// was already typing. The frequent cron therefore lags reality by a few minutes on
+// purpose; the app's own button passes force=1 to skip the wait.
+const SETTLE_MINUTES = 8;
 const PROCESSED_CAP = 800; // ids remembered so the same messages never produce a second draft
 
 function fsString(v) { return { stringValue: v == null ? '' : String(v) }; }
@@ -206,6 +214,7 @@ module.exports = async (req, res) => {
 
   const isCron = !!process.env.CRON_SECRET && (req.headers['authorization'] || '') === `Bearer ${process.env.CRON_SECRET}`;
   const dryRun = req.query && (req.query.dryRun === '1' || req.query.dryRun === 'true');
+  const force = req.query && (req.query.force === '1' || req.query.force === 'true');
 
   try {
     const doc = await fsGetState(['telegram_config', 'telegram_drafts', 'telegram_processed_ids', 'telegram_drafts_run_at']);
@@ -231,7 +240,9 @@ module.exports = async (req, res) => {
 
     const sinceIso = new Date(Date.now() - LOOKBACK_HOURS * 3600000).toISOString();
     const all = await fetchRecentMessages(sinceIso);
-    const fresh = all.filter(m => DRAFT_TOPIC_IDS.includes(m.topicId) && m.messageId && !processed.has(m.messageId));
+    const settleBefore = Date.now() - SETTLE_MINUTES * 60000;
+    const fresh = all.filter(m => DRAFT_TOPIC_IDS.includes(m.topicId) && m.messageId && !processed.has(m.messageId)
+      && (force || !m.date || new Date(m.date).getTime() <= settleBefore));
     if (!fresh.length) {
       res.status(200).json({ ok: true, created: 0, note: 'no new messages in the watched topic' });
       return;

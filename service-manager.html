@@ -2088,7 +2088,7 @@ async function refreshTelegramDrafts() {
   const btn = document.getElementById('tg-refresh-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⧗ Проверяем…'; }
   try {
-    const res = await fetch('/api/telegram/build-drafts', { method: 'POST' });
+    const res = await fetch('/api/telegram/build-drafts?force=1', { method: 'POST' });
     const j = await res.json();
     if (!res.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + res.status));
     if (j.skipped === 'throttled') {
