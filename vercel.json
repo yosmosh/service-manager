@@ -5,7 +5,7 @@
   "crons": [
     { "path": "/api/cron/sos-reminder", "schedule": "0 5 * * *" },
     { "path": "/api/cron/requests-reminder", "schedule": "5 5 * * *" },
-    { "path": "/api/telegram/build-drafts", "schedule": "*/15 * * * *" },
+    { "path": "/api/telegram/build-drafts", "schedule": "45 16 * * *" },
     { "path": "/api/cron/telegram-digest", "schedule": "0 17 * * *" }
   ],
   "functions": {

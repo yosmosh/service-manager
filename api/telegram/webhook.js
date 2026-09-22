@@ -12,7 +12,9 @@
 // see api/telegram/build-drafts.js, which groups a whole day of messages into one draft
 // per real issue. This file only captures (including each photo's Telegram file_id, so
 // build-drafts can fetch every picture belonging to an issue) and handles the one thing
-// that has to be live: a "готово" + photo reply attaching proof to a tracked issue.
+// that has to be live: a "готово" + photo reply attaching proof to a tracked issue. It
+// also nudges build-drafts after each captured message, which is what gets a worker their
+// follow-up question within minutes on a plan whose crons may only run once a day.
 //
 // One-time setup after this is deployed (done once, not on every request):
 //   curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
@@ -28,6 +30,7 @@ const FIRESTORE_MESSAGES_URL = 'https://firestore.googleapis.com/v1/projects/sad
 const FIRESTORE_STATE_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/appdata/state';
 const FIRESTORE_FILES_REGISTRY_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/appdata/files_registry';
 const STORAGE_BUCKET = 'sad-budushego.firebasestorage.app';
+const BUILD_DRAFTS_URL = 'https://sad-budushego.ru/api/telegram/build-drafts';
 const TELEGRAM_CHAT_ID = -1004438968318; // Сад Будущего | Рабочая группа — ignore anything from elsewhere
 
 // Known topic names — extend this as more topics are identified (same technique used
@@ -313,6 +316,24 @@ module.exports = async (req, res) => {
     if (!(msg.from && msg.from.is_bot) && DRAFT_TOPIC_IDS.includes(topicId) && msg.reply_to_message && msg.reply_to_message.message_id && msg.photo && COMPLETION_RE.test(text)) {
       try { draftDebug = await attachCompletionPhoto(msg, text); }
       catch (e) { draftDebug = { error: String(e && e.stack || e) }; }
+    }
+
+    // Nudge the drafts pass so a worker's report gets its follow-up question within
+    // minutes instead of at the evening cron. A frequent cron would be the obvious way to
+    // do this, but the hosting plan only permits daily schedules, so group activity itself
+    // is the clock: every captured message pokes the endpoint. That is deliberately cheap
+    // — build-drafts returns before touching the model unless there are messages that
+    // have already gone quiet, and its own throttle caps real runs at one per 10 minutes.
+    // The request is abandoned after a moment on purpose: it runs as its own serverless
+    // invocation, so dropping this side does not stop it, and Telegram still gets a fast
+    // 200 rather than waiting out a model call. The daily cron remains the backstop for a
+    // report that arrives with no further group activity behind it.
+    if (!(msg.from && msg.from.is_bot) && DRAFT_TOPIC_IDS.includes(topicId)) {
+      try {
+        const ctrl = new AbortController();
+        setTimeout(() => ctrl.abort(), 1200);
+        await fetch(BUILD_DRAFTS_URL, { method: 'POST', signal: ctrl.signal });
+      } catch (e) { /* aborted as designed, or unreachable — the cron still covers it */ }
     }
 
     res.status(200).json({ ok: true, draftDebug });
