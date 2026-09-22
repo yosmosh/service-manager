@@ -1984,21 +1984,28 @@ async function _pollState() {
   if (document.querySelector('.modal-overlay')) return;
   if (_stateDirty.size || _filesDirty.size || _filesDeleted.size) return;
   try {
-    const st = await _fsGetDoc('appdata/state');
-    if (st && Object.keys(st).length) {
-      // `files` and the LEDGER_KEYS live in their own documents — carry the already-loaded
-      // copies forward instead of dropping them, exactly as the old onSnapshot did.
-      const filesBackup = _state.files;
-      const ledgerBackup = {};
-      LEDGER_KEYS.forEach(k => { ledgerBackup[k] = _state[k]; });
-      _state = st;
-      _state.files = filesBackup;
-      LEDGER_KEYS.forEach(k => { if (ledgerBackup[k] !== undefined) _state[k] = ledgerBackup[k]; });
-    }
-    const led = await _fsGetDoc('appdata/finance_ledger');
-    if (led) Object.assign(_state, led);
+    await _pollStateNow();
     if (currentUser && !document.querySelector('.modal-overlay')) render();
   } catch (e) { /* transient poll failure — next tick retries */ }
+}
+
+// The fetch half of the poll, without its skip-conditions: used directly after an action
+// that just changed the server copy (the Telegram drafts refresh), where waiting for the
+// next tick — or having it skipped — would leave the screen showing stale data.
+async function _pollStateNow() {
+  const st = await _fsGetDoc('appdata/state');
+  if (st && Object.keys(st).length) {
+    // `files` and the LEDGER_KEYS live in their own documents — carry the already-loaded
+    // copies forward instead of dropping them, exactly as the old onSnapshot did.
+    const filesBackup = _state.files;
+    const ledgerBackup = {};
+    LEDGER_KEYS.forEach(k => { ledgerBackup[k] = _state[k]; });
+    _state = st;
+    _state.files = filesBackup;
+    LEDGER_KEYS.forEach(k => { if (ledgerBackup[k] !== undefined) _state[k] = ledgerBackup[k]; });
+  }
+  const led = await _fsGetDoc('appdata/finance_ledger');
+  if (led) Object.assign(_state, led);
 }
 
 const getRecords         = () => getLS('svc_records')        || {};
@@ -2042,11 +2049,19 @@ function _telegramDraftBanner(type) {
   const noun = drafts.length === 1 ? 'черновик' : drafts.length < 5 ? 'черновика' : 'черновиков';
   return `
     <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:12px 16px;margin-bottom:16px">
-      <div style="font-weight:700;color:#1e40af;margin-bottom:10px">📥 ${drafts.length} ${noun} из Telegram — требуют проверки</div>
-      ${drafts.map(d => `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+        <div style="font-weight:700;color:#1e40af">📥 ${drafts.length} ${noun} из Telegram — требуют проверки</div>
+        ${_telegramRefreshButton()}
+      </div>
+      ${drafts.map(d => {
+        // A draft is now built from a whole thread, so the quoted source is several
+        // "Имя: текст" lines — rendered with pre-line so it reads as the conversation
+        // it actually was, instead of one run-on line.
+        const msgCount = (d.sourceMessageIds || []).length;
+        return `
         <div style="background:white;border-radius:8px;padding:10px 12px;margin-bottom:8px">
-          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">${(d.sourceFrom||'').replace(/</g,'&lt;')} · «${(d.sourceTopic||'').replace(/</g,'&lt;')}» · ${_fmtApprovalWhen(d.sourceDate)}</div>
-          <div style="font-size:13px;color:#374151;font-style:italic;margin-bottom:6px">«${(d.sourceText||'').replace(/</g,'&lt;')}»</div>
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px">${(d.sourceFrom||'').replace(/</g,'&lt;')} · «${(d.sourceTopic||'').replace(/</g,'&lt;')}» · ${_fmtApprovalWhen(d.sourceDate)}${msgCount > 1 ? ` · 💬 ${msgCount} сообщ.` : ''}</div>
+          <div style="font-size:13px;color:#374151;font-style:italic;margin-bottom:6px;white-space:pre-line;border-left:3px solid #dbeafe;padding-left:8px">${(d.sourceText||'').replace(/</g,'&lt;')}</div>
           <div style="font-size:13px;font-weight:600;margin-bottom:2px">${(d.title||'').replace(/</g,'&lt;')}${d.type==='sos'?' · '+(priLabel[d.priority]||''):' · '+maintCatLabel(d.category)}</div>
           ${d.description ? `<div style="font-size:12px;color:#6b7280;margin-bottom:8px">${d.description.replace(/</g,'&lt;')}</div>` : ''}
           ${_telegramDraftPhotos(d)}
@@ -2054,13 +2069,49 @@ function _telegramDraftBanner(type) {
             <button class="btn btn-primary" style="font-size:12px;padding:5px 12px" onclick="approveTelegramDraft('${d.id}')">✅ Одобрить</button>
             <button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="rejectTelegramDraft('${d.id}')">❌ Отклонить</button>
           </div>
-        </div>`).join('')}
+        </div>`;
+      }).join('')}
     </div>`;
 }
 
-// Thumbnails for whatever photos api/telegram/webhook.js already attached to this draft
-// (the "before" report photo, plus any "После: ..." completion photo a later reply
-// added) — resolved through the same files_registry map every other gallery uses.
+// The server groups a day's Telegram messages into drafts on its own every evening; this
+// runs that same pass on demand, for when someone has just reported something and the
+// reviewer doesn't want to wait for the scheduled run. The endpoint throttles itself, so
+// repeated taps cost nothing.
+function _telegramRefreshButton() {
+  const cfg = getTelegramConfig();
+  if (!cfg.drafts || !cfg.drafts.enabled) return '';
+  return `<button class="btn btn-outline" id="tg-refresh-btn" style="font-size:12px;padding:5px 12px" onclick="refreshTelegramDrafts()">🔄 Проверить Telegram</button>`;
+}
+
+async function refreshTelegramDrafts() {
+  const btn = document.getElementById('tg-refresh-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⧗ Проверяем…'; }
+  try {
+    const res = await fetch('/api/telegram/build-drafts', { method: 'POST' });
+    const j = await res.json();
+    if (!res.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + res.status));
+    if (j.skipped === 'throttled') {
+      _showToast(`⏳ Уже проверяли только что — повторите через ${j.minutesUntilNextRun} мин.`, false);
+    } else if (j.created > 0) {
+      // The drafts were written server-side, so pull the fresh state before re-rendering.
+      await _pollStateNow();
+      _showToast(`✅ Новых черновиков: ${j.created}`, true);
+    } else {
+      _showToast('✅ Новых обращений в Telegram нет', true);
+    }
+  } catch (e) {
+    _showToast('❌ Ошибка проверки: ' + e.message, false);
+  } finally {
+    const b = document.getElementById('tg-refresh-btn');
+    if (b) { b.disabled = false; b.textContent = '🔄 Проверить Telegram'; }
+    render();
+  }
+}
+
+// Thumbnails for every photo api/telegram/build-drafts.js attached to this draft — all
+// the pictures posted about this issue across the whole thread, plus any "После: ..."
+// completion photo a later reply added — through the same files_registry every gallery uses.
 function _telegramDraftPhotos(d) {
   if (!d.fileIds || !d.fileIds.length) return '';
   const _FC = _useFirebase ? (getLS('files') || {}) : {};
@@ -2078,14 +2129,18 @@ function _telegramDraftPhotos(d) {
 // photos/source message id only attached to the new record, once the reviewer actually
 // completes the save, never just because they opened the form.
 let _resolvingDraftId = null;
-let _resolvingDraftExtra = null; // { sourceMessageId, fileIds, fileNames, fileTypes }
+let _resolvingDraftExtra = null; // { sourceMessageId, sourceMessageIds, fileIds, fileNames, fileTypes }
 
 function approveTelegramDraft(id) {
   const draft = getTelegramDrafts().find(d => d.id === id);
   if (!draft) return;
   _resolvingDraftId = id;
   _resolvingDraftExtra = {
-    sourceMessageId: draft.sourceMessageId || '',
+    // A draft is built from every message of a Telegram thread, so the whole id list
+    // travels onto the record — that way a later "готово" reply to ANY message in that
+    // thread, not just the first, still finds the record and attaches its proof photo.
+    sourceMessageId: draft.sourceMessageId || (draft.sourceMessageIds || [])[0] || '',
+    sourceMessageIds: draft.sourceMessageIds || (draft.sourceMessageId ? [draft.sourceMessageId] : []),
     fileIds: draft.fileIds || [], fileNames: draft.fileNames || [], fileTypes: draft.fileTypes || [],
   };
   if (draft.type === 'sos') {
@@ -5266,6 +5321,7 @@ async function saveMaint(editId) {
       if (quarterlySection) item.quarterlySection = quarterlySection;
       if (linkedProviderId) item.linkedProviderId = linkedProviderId;
       if (draftExtra && draftExtra.sourceMessageId) item.telegramSourceMessageId = draftExtra.sourceMessageId;
+      if (draftExtra && (draftExtra.sourceMessageIds || []).length) item.telegramSourceMessageIds = draftExtra.sourceMessageIds;
       list.push(item);
     }
     setLS('maint_works', list);
@@ -5941,6 +5997,7 @@ async function saveSOS(editId) {
     } else {
       const item = { id: Date.now().toString(), title, date, priority, status, description, fileIds, fileNames, fileTypes, createdBy: currentUser, createdAt: new Date().toISOString() };
       if (draftExtra && draftExtra.sourceMessageId) item.telegramSourceMessageId = draftExtra.sourceMessageId;
+      if (draftExtra && (draftExtra.sourceMessageIds || []).length) item.telegramSourceMessageIds = draftExtra.sourceMessageIds;
       list.push(item);
     }
 
