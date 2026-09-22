@@ -294,6 +294,7 @@ module.exports = async (req, res) => {
         messageId: fsInt(msg.message_id),
         photoFileId: fsString(photo ? photo.file_id : ''),
         mediaGroupId: fsString(msg.media_group_id || ''),
+        replyToMessageId: fsString(msg.reply_to_message ? msg.reply_to_message.message_id : ''),
       },
     };
     await fetch(FIRESTORE_MESSAGES_URL, {

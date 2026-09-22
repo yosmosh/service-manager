@@ -75,6 +75,7 @@ async function fetchRecentMessages(sinceIso) {
       text: (f.text && f.text.stringValue) || '',
       date: (f.date && f.date.timestampValue) || '',
       photoFileId: (f.photoFileId && f.photoFileId.stringValue) || '',
+      replyToMessageId: (f.replyToMessageId && f.replyToMessageId.stringValue) || '',
     };
   });
 }
@@ -124,26 +125,40 @@ async function registerFiles(metas) {
 
 // ---------- Clustering ----------
 
-async function clusterIssues(messages) {
+async function clusterIssues(messages, openDrafts) {
   const transcript = messages.map(m => {
     const label = m.text ? m.text : '(фото без текста)';
-    return `[${m.messageId}] ${m.fromName}: ${label}${m.photoFileId && m.text ? ' (+ фото)' : ''}`;
+    const replyTo = m.replyToMessageId ? ` (ответ на сообщение ${m.replyToMessageId})` : '';
+    return `[${m.messageId}] ${m.fromName}${replyTo}: ${label}${m.photoFileId && m.text ? ' (+ фото)' : ''}`;
   }).join('\n');
+
+  // Already-open drafts travel with the request so a late reply lands on the issue it
+  // belongs to. Without this the bot asks a question, the worker answers the next day,
+  // and that answer arrives here with its original messages already marked processed —
+  // i.e. as one context-free line that reads like a brand-new, nonsensical issue.
+  const draftsContext = openDrafts.length
+    ? '\n\nУЖЕ ОТКРЫТЫЕ ЧЕРНОВИКИ (созданы ранее из предыдущих сообщений, ещё не обработаны руководителем):\n'
+      + openDrafts.map(d => `{draftId:"${d.id}"} ${d.title}\n  Обсуждение: ${(d.sourceText || '').replace(/\n/g, ' | ')}`
+        + (d.askedQuestion ? `\n  Бот уже спросил: "${d.askedQuestion}"` : '')).join('\n')
+    : '';
 
   const prompt = 'Ниже сообщения за последние сутки из рабочей Telegram-группы учреждения, тема "Хозчасть и Ремонт". У каждого сообщения свой номер в квадратных скобках.\n\n'
     + transcript
-    + '\n\nСгруппируй их по РЕАЛЬНЫМ рабочим вопросам (поломка, неисправность, потребность в ремонте или обслуживании). Правила группировки:\n'
+    + draftsContext
+    + '\n\nСгруппируй НОВЫЕ сообщения по РЕАЛЬНЫМ рабочим вопросам (поломка, неисправность, потребность в ремонте или обслуживании). Правила группировки:\n'
     + '- Одна проблема = одна группа, даже если про неё писали несколько сообщений подряд, несколько раз или разные люди (например вопрос и напоминание об одном и том же — это ОДНА группа).\n'
     + '- Ответы, уточнения, ссылки на товар для этой же проблемы и фотографии этой же проблемы входят в ТУ ЖЕ группу.\n'
     + '- Сообщение "(фото без текста)" отнеси к той группе, к которой оно относится по контексту соседних сообщений и времени.\n'
+    + '- ВАЖНО: если новое сообщение продолжает или отвечает на один из УЖЕ ОТКРЫТЫХ ЧЕРНОВИКОВ выше (например это ответ на вопрос бота, уточнение места, или присланное позже фото той же проблемы) — НЕ создавай новую группу, а укажи "updatesDraftId" с его draftId.\n'
     + '- Сообщения, не относящиеся ни к какой конкретной рабочей проблеме (приветствия, благодарности, общая болтовня, обсуждение бота), НЕ включай ни в одну группу.\n'
     + '- Если реальных рабочих вопросов нет вообще — верни пустой массив [].\n\n'
     + 'Верни ТОЛЬКО JSON-массив без комментариев, в этом формате:\n'
-    + '[{"messageIds":["1385","1386"],"type":"maintenance","title":"...","description":"...","priority":"medium","category":"repair","sufficient":true,"clarifyingQuestion":""}]\n\n'
+    + '[{"messageIds":["1385","1386"],"updatesDraftId":"","type":"maintenance","title":"...","description":"...","priority":"medium","category":"repair","sufficient":true,"clarifyingQuestion":""}]\n\n'
     + 'Поля:\n'
+    + '- updatesDraftId: draftId уже открытого черновика, если эти сообщения дополняют его. Иначе пустая строка (новая проблема).\n'
     + '- type: "sos" если срочно/опасно/блокирует работу прямо сейчас, иначе "maintenance".\n'
     + '- title: короткий заголовок (до 60 символов).\n'
-    + '- description: СВОДКА всего обсуждения по этому вопросу — что случилось, где, что уже сделано или сказано, что требуется. Не копируй одно сообщение, а объедини смысл всех сообщений группы.\n'
+    + '- description: СВОДКА всего обсуждения по этому вопросу — что случилось, где, что уже сделано или сказано, что требуется. Не копируй одно сообщение, а объедини смысл всех сообщений группы. Если это обновление черновика — включи в сводку и старую информацию, и новую.\n'
     + '- priority: high/medium/low. category: landscaping/cleaning/repair/electrical/plumbing/security/other.\n'
     + '- sufficient: false если для заведения заявки не хватает важной информации (что именно, где, какой объект).\n'
     + '- clarifyingQuestion: если sufficient=false — короткий вопрос по-русски, который стоит задать сотруднику. Иначе пустая строка.';
@@ -179,7 +194,7 @@ function fsDraftEntry(d) {
     sourceDate: fsString(d.sourceDate),
     sourceMessageId: fsString(d.sourceMessageIds[0] || ''),
     sourceMessageIds: fsStringArray(d.sourceMessageIds),
-    status: fsString('pending'), createdAt: fsString(d.createdAt),
+    status: fsString('pending'), createdAt: fsString(d.createdAt), askedQuestion: fsString(d.askedQuestion),
     fileIds: fsStringArray(d.fileIds), fileNames: fsStringArray(d.fileNames), fileTypes: fsStringArray(d.fileTypes),
   } } };
 }
@@ -222,7 +237,21 @@ module.exports = async (req, res) => {
       return;
     }
 
-    const issues = await clusterIssues(fresh);
+    // The drafts still waiting for the owner, passed to the model as context so a reply
+    // that arrives after its issue was already drafted updates that draft instead of
+    // becoming a stray new one.
+    const draftsRaw = (doc.fields && doc.fields.telegram_drafts && doc.fields.telegram_drafts.arrayValue.values) || [];
+    const openDrafts = draftsRaw.map(r => {
+      const f = r.mapValue.fields;
+      return {
+        id: (f.id && f.id.stringValue) || '',
+        title: (f.title && f.title.stringValue) || '',
+        sourceText: (f.sourceText && f.sourceText.stringValue) || '',
+        askedQuestion: (f.askedQuestion && f.askedQuestion.stringValue) || '',
+      };
+    }).filter(d => d.id);
+
+    const issues = await clusterIssues(fresh, openDrafts);
     const byId = {};
     fresh.forEach(m => { byId[m.messageId] = m; });
 
@@ -249,6 +278,53 @@ module.exports = async (req, res) => {
 
       const sourceText = msgs.map(m => `${m.fromName}: ${m.text || '(фото)'}`).join('\n');
       const authors = [...new Set(msgs.map(m => m.fromName).filter(Boolean))].join(', ');
+
+      // An update to an existing draft: fold the new messages, summary and photos into
+      // the draft already on screen rather than creating a second one for the same issue.
+      const updIdx = issue.updatesDraftId
+        ? draftsRaw.findIndex(r => (r.mapValue.fields.id || {}).stringValue === issue.updatesDraftId)
+        : -1;
+      if (updIdx !== -1) {
+        const f = draftsRaw[updIdx].mapValue.fields;
+        const prevIds = ((f.sourceMessageIds && f.sourceMessageIds.arrayValue.values) || []).map(v => v.stringValue);
+        f.sourceMessageIds = fsStringArray([...new Set(prevIds.concat(ids))]);
+        f.sourceText = fsString(((f.sourceText && f.sourceText.stringValue) || '') + '\n' + sourceText);
+        if (issue.description) f.description = fsString(issue.description);
+        if (issue.title) f.title = fsString((issue.title || '').slice(0, 120));
+        if (['high', 'medium', 'low'].includes(issue.priority)) f.priority = fsString(issue.priority);
+        if (metas.length) {
+          const prevFiles = ((f.fileIds && f.fileIds.arrayValue.values) || []).map(v => v.stringValue);
+          const prevNames = ((f.fileNames && f.fileNames.arrayValue.values) || []).map(v => v.stringValue);
+          const prevTypes = ((f.fileTypes && f.fileTypes.arrayValue.values) || []).map(v => v.stringValue);
+          f.fileIds = fsStringArray(prevFiles.concat(metas.map(m => m.id)));
+          f.fileNames = fsStringArray(prevNames.concat(metas.map(m => m.name)));
+          f.fileTypes = fsStringArray(prevTypes.concat(metas.map(m => m.type)));
+        }
+        // Only ever ask once per draft — a worker who has already been asked and simply
+        // hasn't answered yet should not be pinged again on every run.
+        const alreadyAsked = !!(f.askedQuestion && f.askedQuestion.stringValue);
+        if (issue.sufficient === false && issue.clarifyingQuestion && !alreadyAsked && !dryRun) {
+          try {
+            await sendTelegramReply(msgs[0].topicId, ids[0], issue.clarifyingQuestion);
+            f.askedQuestion = fsString(issue.clarifyingQuestion);
+          } catch (e) {}
+        }
+        summary.push({ updated: issue.updatesDraftId, title: issue.title, messageIds: ids, photos: metas.length });
+        continue;
+      }
+
+      // Asked once, as a reply to the issue's first message, with the whole thread already
+      // taken into account — better than asking per message as it arrives. The draft is
+      // still created either way, so nothing is lost while waiting for an answer, and the
+      // question is recorded on it so later runs neither repeat it nor lose the thread.
+      let askedQuestion = '';
+      if (issue.sufficient === false && issue.clarifyingQuestion && !dryRun) {
+        try {
+          await sendTelegramReply(msgs[0].topicId, ids[0], issue.clarifyingQuestion);
+          askedQuestion = issue.clarifyingQuestion;
+        } catch (e) {}
+      }
+
       newDrafts.push({
         id: String(Date.now()) + Math.random().toString(36).slice(2, 6),
         type: issue.type === 'sos' ? 'sos' : 'maintenance',
@@ -259,22 +335,15 @@ module.exports = async (req, res) => {
         sourceText, sourceFrom: authors, sourceTopic: msgs[0].topicName, sourceDate: msgs[0].date,
         sourceMessageIds: ids,
         createdAt: new Date().toISOString(),
+        askedQuestion,
         fileIds: metas.map(m => m.id),
         fileNames: metas.map(m => m.name),
         fileTypes: metas.map(m => m.type),
       });
-
-      // Asked once, as a reply to the issue's first message, with the whole thread already
-      // taken into account — better than asking per message as it arrives. The draft is
-      // still created so nothing gets lost while waiting for the answer.
-      if (issue.sufficient === false && issue.clarifyingQuestion && !dryRun) {
-        try { await sendTelegramReply(msgs[0].topicId, ids[0], issue.clarifyingQuestion); } catch (e) {}
-      }
-      summary.push({ title: issue.title, type: issue.type, messageIds: ids, photos: metas.length, asked: issue.sufficient === false });
+      summary.push({ title: issue.title, type: issue.type, messageIds: ids, photos: metas.length, asked: !!askedQuestion });
     }
 
     if (!dryRun) {
-      const draftsRaw = (doc.fields && doc.fields.telegram_drafts && doc.fields.telegram_drafts.arrayValue.values) || [];
       const mergedDrafts = draftsRaw.concat(newDrafts.map(fsDraftEntry));
       // Every message seen this run is marked processed — including ones Claude decided
       // were not a real issue — so they are never re-analysed or re-asked about.
