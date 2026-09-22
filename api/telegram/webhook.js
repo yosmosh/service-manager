@@ -328,7 +328,13 @@ module.exports = async (req, res) => {
     // invocation, so dropping this side does not stop it, and Telegram still gets a fast
     // 200 rather than waiting out a model call. The daily cron remains the backstop for a
     // report that arrives with no further group activity behind it.
-    if (!(msg.from && msg.from.is_bot) && DRAFT_TOPIC_IDS.includes(topicId)) {
+    //
+    // Any message in the group ticks this clock, not just ones in the watched topic: a
+    // report in "Хозчасть и Ремонт" that nobody follows up on there still gets picked up
+    // by the next message in Покупки or anywhere else, which makes the wait markedly
+    // shorter in a group this active. It costs nothing extra, since a nudge with nothing
+    // settled to process never reaches the model.
+    if (!(msg.from && msg.from.is_bot)) {
       try {
         const ctrl = new AbortController();
         setTimeout(() => ctrl.abort(), 1200);
