@@ -1679,6 +1679,21 @@ function _fromFs(val) {
 function _fsFieldsToObj(fields) { const o = {}; const f = fields || {}; for (const k of Object.keys(f)) o[k] = _fromFs(f[k]); return o; }
 
 // Returns the document's fields as a plain JS object, or null if it doesn't exist.
+// Firestore returns a document's updateTime on ANY read, including one masked down to a
+// field that doesn't exist — which costs ~190 bytes instead of megabytes. That makes it a
+// cheap version stamp: the poll can ask "has this changed?" for next to nothing and only
+// pull the real document when the answer is yes. Without it every tick re-downloaded the
+// entire state and ledger (~3.6MB) just to discover nothing had happened.
+const _docVer = {};
+async function _fsDocVersion(path) {
+  try {
+    const r = await fetch(_FS_DOCS + '/' + path + '?key=' + _FS_KEY + '&mask.fieldPaths=zzVersionProbe');
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j.updateTime || null;
+  } catch (e) { return null; }
+}
+
 async function _fsGetDoc(path, maskFields) {
   // maskFields keeps the pre-write ledger re-read cheap — it fetches just the arrays being
   // merged rather than pulling the whole (large) document on every save.
@@ -1688,6 +1703,10 @@ async function _fsGetDoc(path, maskFields) {
   if (r.status === 404) return null;
   if (!r.ok) throw new Error('Firestore GET ' + path + ' → ' + r.status + ' ' + (await r.text()).slice(0, 200));
   const j = await r.json();
+  // Remember the version of what we just pulled in full, so the next poll can tell
+  // whether anything has actually changed since. Masked reads are partial, so they must
+  // not claim to represent the whole document.
+  if (!mask && j.updateTime) _docVer[path] = j.updateTime;
   return _fsFieldsToObj(j.fields || {});
 }
 // Low-level merge PATCH: caller supplies already-encoded Firestore `fields` and the exact
@@ -2096,42 +2115,63 @@ async function _loadState() {
 // open (so an in-progress form is never overwritten mid-edit), and while this session has
 // unsaved local changes pending (so a poll can't revert an edit before its own flush lands
 // — the same protection the SDK's hasPendingWrites guard used to give).
+//
+// Each tick asks only for the two documents' version stamps (~190 bytes each) and pulls
+// the real documents only when one of them has actually moved. The first version of this
+// downloaded both documents in full every tick — ~3.6MB — which is about 5GB per open tab
+// per working day spent almost entirely on re-reading unchanged data. Making an idle tick
+// effectively free is also what allows the interval to be 10s rather than 20s, so other
+// people's changes show up twice as fast as before at a tiny fraction of the traffic.
 let _pollTimer = null;
 function _setupSync() {
   if (!_useFirebase) return;
   if (_pollTimer) clearInterval(_pollTimer);
-  _pollTimer = setInterval(_pollState, 20000);
+  _pollTimer = setInterval(_pollState, 10000);
 }
 async function _pollState() {
   if (document.hidden) return;
   if (document.querySelector('.modal-overlay')) return;
   if (_stateDirty.size || _filesDirty.size || _filesDeleted.size) return;
   try {
-    await _pollStateNow();
-    if (currentUser && !document.querySelector('.modal-overlay')) render();
+    const changed = await _pollStateNow(false);
+    if (changed && currentUser && !document.querySelector('.modal-overlay')) render();
   } catch (e) { /* transient poll failure — next tick retries */ }
 }
 
 // The fetch half of the poll, without its skip-conditions: used directly after an action
 // that just changed the server copy (the Telegram drafts refresh), where waiting for the
 // next tick — or having it skipped — would leave the screen showing stale data.
-async function _pollStateNow() {
-  const st = await _fsGetDoc('appdata/state');
-  if (st && Object.keys(st).length) {
-    // `files` and the LEDGER_KEYS live in their own documents — carry the already-loaded
-    // copies forward instead of dropping them, exactly as the old onSnapshot did.
-    const filesBackup = _state.files;
-    const ledgerBackup = {};
-    LEDGER_KEYS.forEach(k => { ledgerBackup[k] = _state[k]; });
-    _state = st;
-    _state.files = filesBackup;
-    LEDGER_KEYS.forEach(k => { if (ledgerBackup[k] !== undefined) _state[k] = ledgerBackup[k]; });
+// force=true skips the version check and re-reads unconditionally — used right after an
+// action that changed the server copy, where the version stamp may not have caught up yet.
+async function _pollStateNow(force) {
+  let changed = false;
+
+  const stVer = force ? null : await _fsDocVersion('appdata/state');
+  if (force || (stVer && stVer !== _docVer['appdata/state'])) {
+    const st = await _fsGetDoc('appdata/state');
+    if (st && Object.keys(st).length) {
+      // `files` and the LEDGER_KEYS live in their own documents — carry the already-loaded
+      // copies forward instead of dropping them, exactly as the old onSnapshot did.
+      const filesBackup = _state.files;
+      const ledgerBackup = {};
+      LEDGER_KEYS.forEach(k => { ledgerBackup[k] = _state[k]; });
+      _state = st;
+      _state.files = filesBackup;
+      LEDGER_KEYS.forEach(k => { if (ledgerBackup[k] !== undefined) _state[k] = ledgerBackup[k]; });
+      changed = true;
+    }
   }
-  const led = await _fsGetDoc('appdata/finance_ledger');
-  if (led) Object.assign(_state, led);
+
+  const ledVer = force ? null : await _fsDocVersion('appdata/finance_ledger');
+  if (force || (ledVer && ledVer !== _docVer['appdata/finance_ledger'])) {
+    const led = await _fsGetDoc('appdata/finance_ledger');
+    if (led) { Object.assign(_state, led); changed = true; }
+  }
+
   // _state now mirrors the server, so the ledger baseline has to move with it — leaving
   // it stale would make the next save replay already-saved edits over newer data.
-  _snapshotTxBaseline();
+  if (changed) _snapshotTxBaseline();
+  return changed;
 }
 
 const getRecords         = () => getLS('svc_records')        || {};
@@ -2221,7 +2261,7 @@ async function refreshTelegramDrafts() {
       _showToast(`⏳ Уже проверяли только что — повторите через ${j.minutesUntilNextRun} мин.`, false);
     } else if (j.created > 0) {
       // The drafts were written server-side, so pull the fresh state before re-rendering.
-      await _pollStateNow();
+      await _pollStateNow(true);
       _showToast(`✅ Новых черновиков: ${j.created}`, true);
     } else {
       _showToast('✅ Новых обращений в Telegram нет', true);
