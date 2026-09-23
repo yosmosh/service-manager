@@ -9441,6 +9441,43 @@ async function releaseBudgetToEveryone() {
   _showToast('✅ Бюджет опубликован для всех', true); render();
 }
 
+// ---------- Защита от повторной оплаты одного и того же счёта ----------
+// Одна и та же бумажная счёт-фактура не должна попасть в оплату дважды. Сравнение по
+// сумме/поставщику/дате для этого не годится: у нас уже есть законные пары, которые
+// совпадают по всем трём полям (два обучения на 8 520 ₽ для разных сотрудников, две
+// смены экскаватора по 96 000 ₽ за разные дни). Надёжный признак — сам файл: считаем
+// SHA-256 от содержимого скана, и если ровно такой же документ уже приложен к другой
+// операции, это тот же самый счёт, а не похожий.
+async function _fileContentHash(b64) {
+  try {
+    const bytes = new TextEncoder().encode(String(b64 || ''));
+    const buf = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) { return ''; } // старый браузер / небезопасный контекст — просто без проверки
+}
+
+// Ищет по ВСЕМ журналам сразу: один и тот же счёт, проведённый через разные бюджеты,
+// — это ровно тот случай двойной оплаты, который сложнее всего заметить глазами.
+function _findTxByFileHash(hash, exceptId) {
+  if (!hash) return null;
+  for (const lk of Object.keys(FINANCE_LEDGERS)) {
+    const hit = (getLS('finance_tx_' + lk) || []).find(t =>
+      t && t.fileRef && t.fileRef.hash === hash && t.id !== exceptId);
+    if (hit) return { ledgerKey: lk, tx: hit };
+  }
+  return null;
+}
+
+// Мягкая проверка для счетов, загруженных до появления хэшей (у них его просто нет):
+// совпадение поставщика, суммы и даты — повод переспросить, но не повод запрещать,
+// потому что законные совпадения существуют. Поэтому здесь confirm, а не отказ.
+function _findSimilarTx(ledgerKey, vendor, amount, date, exceptId) {
+  const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return (getLS('finance_tx_' + ledgerKey) || []).find(t =>
+    t && t.id !== exceptId && t.status !== 'rejected' &&
+    norm(t.vendor) === norm(vendor) && Number(t.amount) === Number(amount) && t.date === date) || null;
+}
+
 const getBudgetTx = (ledgerKey) => getLS('finance_tx_'+ledgerKey) || [];
 const setBudgetTx = (ledgerKey, list) => setLS('finance_tx_'+ledgerKey, list);
 const getBudgetFunds = () => getLS('finance_funds') || [];
@@ -10204,8 +10241,42 @@ async function saveBudgetTx(ledgerKey) {
 
   let fileRef = window._budgetTxFile;
   if (_useFirebase && fileRef && fileRef.data) {
+    // Хэш считается ДО загрузки в Storage: если этот счёт уже проведён, незачем ни
+    // заливать файл повторно, ни создавать операцию.
+    const hash = await _fileContentHash(fileRef.data);
+    const dup = _findTxByFileHash(hash, _editingBudgetTx);
+    if (dup) {
+      const d = dup.tx;
+      const paid = d.accountantConfirm && d.accountantConfirm.paid;
+      alert('⛔ Этот счёт уже проведён — повторная оплата невозможна.\n\n'
+        + 'Бюджет: ' + (FINANCE_LEDGERS[dup.ledgerKey] ? FINANCE_LEDGERS[dup.ledgerKey].label : dup.ledgerKey) + '\n'
+        + 'Поставщик: ' + (d.vendor || '—') + '\n'
+        + 'Сумма: ₽' + (Number(d.amount) || 0).toLocaleString('ru-RU') + '\n'
+        + 'Дата: ' + (d.date || '—') + '\n'
+        + 'Статус: ' + (paid ? 'ОПЛАЧЕНО' : 'ожидает оплаты') + '\n\n'
+        + 'Это тот же самый файл документа. Если счёт действительно другой — приложите его скан.');
+      return;
+    }
     const fid = await dbSave({name:fileRef.name||'doc', type:fileRef.type||'image/jpeg', size:fileRef.size||Math.round(fileRef.data.length*0.75), data:fileRef.data});
-    fileRef = {id:fid, name:fileRef.name||'doc', type:fileRef.type||'image/jpeg'};
+    fileRef = {id:fid, name:fileRef.name||'doc', type:fileRef.type||'image/jpeg', hash};
+  }
+
+  // Счета, загруженные до появления хэшей, так распознать нельзя — по ним остаётся
+  // только предупредить о полном совпадении поставщика, суммы и даты. Это именно
+  // предупреждение: такие совпадения бывают и законными (разные обучения на одну сумму,
+  // разные смены одной техники), поэтому решение остаётся за человеком.
+  if (type === 'expense') {
+    const similar = _findSimilarTx(ledgerKey, vendor, Number(amount), date, _editingBudgetTx);
+    if (similar) {
+      const paid = similar.accountantConfirm && similar.accountantConfirm.paid;
+      const ok = confirm('⚠️ Похоже на дубликат.\n\n'
+        + 'В этом бюджете уже есть операция с теми же поставщиком, суммой и датой:\n'
+        + (similar.vendor || '—') + ' · ₽' + (Number(similar.amount) || 0).toLocaleString('ru-RU') + ' · ' + (similar.date || '—') + '\n'
+        + (similar.notes ? 'Примечание: ' + similar.notes + '\n' : '')
+        + 'Статус: ' + (paid ? 'ОПЛАЧЕНО' : 'ожидает оплаты') + '\n\n'
+        + 'Это другой счёт и его нужно провести отдельно?');
+      if (!ok) return;
+    }
   }
 
   const list = getBudgetTx(ledgerKey);
