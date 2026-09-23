@@ -2122,19 +2122,89 @@ async function _loadState() {
 // per working day spent almost entirely on re-reading unchanged data. Making an idle tick
 // effectively free is also what allows the interval to be 10s rather than 20s, so other
 // people's changes show up twice as fast as before at a tiny fraction of the traffic.
+// Fetching and repainting are deliberately separated. Fetching is always safe; repainting
+// is not, because render() replaces the whole screen's HTML. A repaint landing between
+// someone aiming at a row and clicking it would hand that click to whatever moved into
+// that spot — on screens made of "Одобрить" and "Подтвердить оплату" buttons that is
+// exactly the kind of mistake that must never happen. So new data is collected the moment
+// it appears, and the screen is redrawn only at a moment when it cannot disturb anyone.
+let _lastInteraction = 0;
+let _pendingRepaint = false;
+let _pendingSince = 0;
+['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(ev =>
+  document.addEventListener(ev, () => { _lastInteraction = Date.now(); }, { passive: true, capture: true }));
+
+function _safeToRepaint() {
+  if (document.querySelector('.modal-overlay')) return false;      // a form is open
+  if (_stateDirty.size || _filesDirty.size || _filesDeleted.size) return false; // unsaved edits
+  const ae = document.activeElement;
+  if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return false; // someone is typing
+  if (window.getSelection && String(window.getSelection())) return false; // text selected
+  if (Date.now() - _lastInteraction < 1500) return false;          // just clicked/scrolled
+  return true;
+}
+
+// render() rebuilds #content, which would otherwise jump the view back to the top
+// mid-reading. Restoring both scroll positions keeps an automatic refresh unnoticeable.
+function _repaintPreservingScroll() {
+  const y = window.scrollY;
+  const before = document.getElementById('content');
+  const inner = before ? before.scrollTop : 0;
+  render();
+  window.scrollTo(0, y);
+  const after = document.getElementById('content');
+  if (after) after.scrollTop = inner;
+}
+
+// Idle tabs are the common case — several roles leave this open all day — and polling them
+// hard would burn read quota for nothing, which would eventually start failing reads and
+// break the app. So the tab checks often while someone is actually working in it and backs
+// right off when they are not.
+const _POLL_ACTIVE_MS = 5000;
+const _POLL_IDLE_MS = 30000;
 let _pollTimer = null;
 function _setupSync() {
   if (!_useFirebase) return;
-  if (_pollTimer) clearInterval(_pollTimer);
-  _pollTimer = setInterval(_pollState, 10000);
+  if (_pollTimer) clearTimeout(_pollTimer);
+  const tick = async () => {
+    await _pollState();
+    const active = Date.now() - _lastInteraction < 60000;
+    _pollTimer = setTimeout(tick, active ? _POLL_ACTIVE_MS : _POLL_IDLE_MS);
+  };
+  _pollTimer = setTimeout(tick, _POLL_ACTIVE_MS);
+
+  // A repaint held back for safety shouldn't then wait out a whole poll interval — this
+  // costs no network at all, it just watches for the moment the screen is free. The
+  // deadline is a backstop: if someone leaves text selected or a field focused
+  // indefinitely, showing them current data eventually matters more than tidiness.
+  setInterval(() => {
+    if (!_pendingRepaint || !currentUser) return;
+    const overdue = Date.now() - _pendingSince > 20000;
+    if (_safeToRepaint() || (overdue && !document.querySelector('.modal-overlay') &&
+        !(_stateDirty.size || _filesDirty.size || _filesDeleted.size))) {
+      _repaintPreservingScroll();
+      _pendingRepaint = false;
+    }
+  }, 1500);
+
+  // Coming back to the tab is exactly when stale data is most likely and most confusing,
+  // and it costs one probe — so refresh immediately rather than waiting for the next tick.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) _pollState(); });
+  window.addEventListener('focus', () => _pollState());
 }
+
 async function _pollState() {
   if (document.hidden) return;
   if (document.querySelector('.modal-overlay')) return;
   if (_stateDirty.size || _filesDirty.size || _filesDeleted.size) return;
   try {
-    const changed = await _pollStateNow(false);
-    if (changed && currentUser && !document.querySelector('.modal-overlay')) render();
+    if (await _pollStateNow(false)) { if (!_pendingRepaint) _pendingSince = Date.now(); _pendingRepaint = true; }
+    // A repaint deferred for safety isn't dropped — it waits here until the moment is
+    // right, so a change can never be silently missed just because someone was busy.
+    if (_pendingRepaint && currentUser && _safeToRepaint()) {
+      _repaintPreservingScroll();
+      _pendingRepaint = false;
+    }
   } catch (e) { /* transient poll failure — next tick retries */ }
 }
 
