@@ -2154,8 +2154,19 @@ let _pollTick = 0;
 ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(ev =>
   document.addEventListener(ev, () => { _lastInteraction = Date.now(); }, { passive: true, capture: true }));
 
+// The overlay element is ALWAYS present in the DOM — opening and closing a modal only
+// toggles a `hidden` class on it. So querySelector('.modal-overlay') matches whether or
+// not anything is open, and using that as the "is a form open?" test silently disabled
+// every automatic refresh: the poll took it as "a modal is open" and returned on every
+// single tick. Asking for the computed style is the only check that's actually true, and
+// it stays correct for the one modal that opens by setting display inline.
+function _modalIsOpen() {
+  const ov = document.getElementById('modal-overlay');
+  return !!(ov && getComputedStyle(ov).display !== 'none');
+}
+
 function _safeToRepaint() {
-  if (document.querySelector('.modal-overlay')) return false;      // a form is open
+  if (_modalIsOpen()) return false;                                // a form is open
   if (_stateDirty.size || _filesDirty.size || _filesDeleted.size) return false; // unsaved edits
   const ae = document.activeElement;
   if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return false; // someone is typing
@@ -2200,7 +2211,7 @@ function _setupSync() {
   setInterval(() => {
     if (!_pendingRepaint || !currentUser) return;
     const overdue = Date.now() - _pendingSince > 20000;
-    if (_safeToRepaint() || (overdue && !document.querySelector('.modal-overlay') &&
+    if (_safeToRepaint() || (overdue && !_modalIsOpen() &&
         !(_stateDirty.size || _filesDirty.size || _filesDeleted.size))) {
       _repaintPreservingScroll();
       _pendingRepaint = false;
@@ -2215,7 +2226,7 @@ function _setupSync() {
 
 async function _pollState() {
   if (document.hidden) return;
-  if (document.querySelector('.modal-overlay')) return;
+  if (_modalIsOpen()) return;
   if (_stateDirty.size || _filesDirty.size || _filesDeleted.size) return;
   try {
     if (await _pollStateNow(false)) { if (!_pendingRepaint) _pendingSince = Date.now(); _pendingRepaint = true; }
@@ -6659,7 +6670,7 @@ function showShareLinkModal(url) {
       </div>
     </div>`;
   document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal()">Закрыть</button>`;
-  document.getElementById('modal-overlay').style.display = 'flex';
+  document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
 async function loadSharePage(token) {
@@ -9965,14 +9976,95 @@ function _downloadCsv(filenameBase, headers, rows) {
   _showToast('📊 Реестр скачан (' + rows.length + (rows.length===1?' запись)':' записей)'), false);
 }
 
-// Excel register export for the owner/accountant — the whole ledger's history (not just
-// the currently-open month), one row per operation, so it can be sorted/filtered/summed
-// freely outside the app instead of scrolled through month by month.
+// Excel register export for the owner/accountant, one row per operation, so it can be
+// sorted/filtered/summed freely outside the app instead of scrolled through month by
+// month. It used to always dump the ledger's entire history, which for these ledgers is
+// several hundred rows going back to March — so it now asks for a period first, defaulting
+// to the month currently on screen, with the whole history still one click away.
+function _lastDayOfMonth(y, m) {
+  return `${y}-${String(m).padStart(2,'0')}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
+}
+
 function exportBudgetRegisterCsv(ledgerKey) {
   const cfg = FINANCE_LEDGERS[ledgerKey];
   if (!cfg) return;
-  const tx = getBudgetTx(ledgerKey).slice().sort((a,b) =>
-    (a.date||'').localeCompare(b.date||'') || (a.time||'').localeCompare(b.time||''));
+  document.getElementById('modal-title').textContent = '📊 Реестр — выберите период';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-size:12px;color:#6b7280;margin-bottom:12px">Выгрузка по дате операции (столбец «Дата»).</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+      <button class="btn btn-outline" style="font-size:12px;padding:6px 10px" onclick="_setRegisterRange('month','${ledgerKey}')">Текущий месяц</button>
+      <button class="btn btn-outline" style="font-size:12px;padding:6px 10px" onclick="_setRegisterRange('prev','${ledgerKey}')">Прошлый месяц</button>
+      <button class="btn btn-outline" style="font-size:12px;padding:6px 10px" onclick="_setRegisterRange('quarter','${ledgerKey}')">Текущий квартал</button>
+      <button class="btn btn-outline" style="font-size:12px;padding:6px 10px" onclick="_setRegisterRange('year','${ledgerKey}')">Текущий год</button>
+      <button class="btn btn-outline" style="font-size:12px;padding:6px 10px" onclick="_setRegisterRange('all','${ledgerKey}')">Вся история</button>
+    </div>
+    <div class="form-group">
+      <label>С</label>
+      <input type="date" id="reg-from" class="form-control" value="${budgetYear}-${String(budgetMonth).padStart(2,'0')}-01" oninput="_updateRegisterCount('${ledgerKey}')">
+    </div>
+    <div class="form-group">
+      <label>По</label>
+      <input type="date" id="reg-to" class="form-control" value="${_lastDayOfMonth(budgetYear, budgetMonth)}" oninput="_updateRegisterCount('${ledgerKey}')">
+    </div>
+    <div id="reg-count" style="font-size:13px;font-weight:600;color:#2563eb;margin-top:4px"></div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="_runBudgetRegisterExport('${ledgerKey}')">📊 Скачать</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  _updateRegisterCount(ledgerKey);
+}
+
+function _setRegisterRange(kind, ledgerKey) {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth() + 1;
+  let from, to;
+  if (kind === 'month')        { from = `${y}-${String(m).padStart(2,'0')}-01`; to = _lastDayOfMonth(y, m); }
+  else if (kind === 'prev')    { const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
+                                 from = `${py}-${String(pm).padStart(2,'0')}-01`; to = _lastDayOfMonth(py, pm); }
+  else if (kind === 'quarter') { const qs = Math.floor((m - 1) / 3) * 3 + 1;
+                                 from = `${y}-${String(qs).padStart(2,'0')}-01`; to = _lastDayOfMonth(y, qs + 2); }
+  else if (kind === 'year')    { from = `${y}-01-01`; to = `${y}-12-31`; }
+  else                         { const all = getBudgetTx(ledgerKey).map(t => t.date).filter(Boolean).sort();
+                                 from = all[0] || `${y}-01-01`; to = _todayLocal(); }
+  document.getElementById('reg-from').value = from;
+  document.getElementById('reg-to').value = to;
+  _updateRegisterCount(ledgerKey);
+}
+
+// Shows what's actually about to be downloaded, so nobody exports an empty file and has
+// to guess why.
+function _registerRows(ledgerKey) {
+  const from = (document.getElementById('reg-from') || {}).value || '';
+  const to = (document.getElementById('reg-to') || {}).value || '';
+  return getBudgetTx(ledgerKey)
+    .filter(t => { const d = t.date || ''; return (!from || d >= from) && (!to || d <= to); })
+    .sort((a,b) => (a.date||'').localeCompare(b.date||'') || (a.time||'').localeCompare(b.time||''));
+}
+
+function _updateRegisterCount(ledgerKey) {
+  const el = document.getElementById('reg-count');
+  if (!el) return;
+  const n = _registerRows(ledgerKey).length;
+  const word = n % 10 === 1 && n % 100 !== 11 ? 'операция'
+    : [2,3,4].includes(n % 10) && ![12,13,14].includes(n % 100) ? 'операции' : 'операций';
+  el.textContent = n ? `Будет выгружено: ${n} ${word}` : 'За этот период операций нет';
+  el.style.color = n ? '#2563eb' : '#dc2626';
+}
+
+function _runBudgetRegisterExport(ledgerKey) {
+  const cfg = FINANCE_LEDGERS[ledgerKey];
+  if (!cfg) return;
+  const from = (document.getElementById('reg-from') || {}).value || '';
+  const to = (document.getElementById('reg-to') || {}).value || '';
+  if (from && to && from > to) { alert('Дата «С» позже даты «По»'); return; }
+  const tx = _registerRows(ledgerKey);
+  if (!tx.length) { alert('За выбранный период операций нет'); return; }
+  const rangeLabel = (from ? fmtDate(from) : '…') + '—' + (to ? fmtDate(to) : '…');
+  closeModal();
+  _exportRegisterRows(ledgerKey, cfg, tx, rangeLabel);
+}
+
+function _exportRegisterRows(ledgerKey, cfg, tx, rangeLabel) {
 
   const headers = ['Дата','Время','Тип','Наименование/Источник'];
   if (cfg.useFunds) headers.push('Фонд');
@@ -9999,7 +10091,10 @@ function exportBudgetRegisterCsv(ledgerKey) {
   });
 
   const fname = {kitchen:'Кухня', maintenance:'ТО_и_зарплаты', personal:'Личный_бюджет'}[ledgerKey] || ledgerKey;
-  _downloadCsv(`Реестр_${fname}`, headers, rows);
+  // The period goes into the filename too, so several exports don't end up in Downloads
+  // as files nobody can tell apart.
+  const safeRange = String(rangeLabel || '').replace(/[\\/:*?"<>|]/g, '.');
+  _downloadCsv(`Реестр_${fname}_${safeRange}`, headers, rows);
 }
 
 // Full SOS log, all statuses/dates, not just the current filter chip.
