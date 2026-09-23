@@ -1679,8 +1679,12 @@ function _fromFs(val) {
 function _fsFieldsToObj(fields) { const o = {}; const f = fields || {}; for (const k of Object.keys(f)) o[k] = _fromFs(f[k]); return o; }
 
 // Returns the document's fields as a plain JS object, or null if it doesn't exist.
-async function _fsGetDoc(path) {
-  const r = await fetch(_FS_DOCS + '/' + path + '?key=' + _FS_KEY);
+async function _fsGetDoc(path, maskFields) {
+  // maskFields keeps the pre-write ledger re-read cheap — it fetches just the arrays being
+  // merged rather than pulling the whole (large) document on every save.
+  const mask = (maskFields && maskFields.length)
+    ? '&' + maskFields.map(f => 'mask.fieldPaths=' + encodeURIComponent(f)).join('&') : '';
+  const r = await fetch(_FS_DOCS + '/' + path + '?key=' + _FS_KEY + mask);
   if (r.status === 404) return null;
   if (!r.ok) throw new Error('Firestore GET ' + path + ' → ' + r.status + ' ' + (await r.text()).slice(0, 200));
   const j = await r.json();
@@ -1755,6 +1759,64 @@ const _stateDirty = new Set();
 // as `files`/files_registry above. Read in _loadState, routed to the right document in
 // _doFlushState; everywhere else in the app just calls getLS/setLS as before.
 const LEDGER_KEYS = ['finance_tx_maintenance', 'finance_tx_personal'];
+
+// The finance ledgers are the one place where a whole-array write is genuinely unsafe.
+// Firestore merges at FIELD level, so sending finance_tx_* replaces the entire array —
+// and the owner, Alexander and the accountant are routinely in the app at the same time,
+// each holding the copy of that array they loaded. Whoever saved second used to silently
+// wipe out everything the others had done since: an approval would reappear as pending, a
+// payment the accountant had just confirmed would come back as unpaid, and an invoice that
+// vanished got typed in a second time — the duplicates. (Live listeners used to hide this
+// by refreshing within ~100ms; moving to 20-second polling widened that window enormously
+// and turned a rare race into a daily one.)
+//
+// So a ledger is never written wholesale. Each flush re-reads the server's current array
+// and replays onto it only the transactions THIS session actually changed, matched by id —
+// the same per-id merge already used for the files registry. Concurrent work on different
+// invoices now all survives; only two people editing the very same invoice can overwrite
+// each other, which is the one case where last-write-wins is the correct answer anyway.
+const TX_KEYS = ['finance_tx_maintenance', 'finance_tx_personal', 'finance_tx_kitchen'];
+let _txBaseline = {}; // key -> { txId: JSON of that tx as the server last had it }
+
+// Record ids used to be Date.now().toString(36) alone, which is only unique if no two
+// records are ever created in the same millisecond — across several people on several
+// devices that is not a safe assumption, and two records sharing an id is corrupting
+// here: find(x => x.id === id) would approve, pay or delete whichever one it hit first.
+// The random suffix is the same shape already used for file ids elsewhere in this file.
+function _newTxId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+function _snapshotTxBaseline() {
+  TX_KEYS.forEach(k => {
+    const m = {};
+    (Array.isArray(_state[k]) ? _state[k] : []).forEach(t => {
+      if (t && t.id != null) m[String(t.id)] = JSON.stringify(t);
+    });
+    _txBaseline[k] = m;
+  });
+}
+
+// serverList = what the ledger looks like right now on the server (including anything
+// other sessions added since this one loaded); localList = this session's copy. Only the
+// entries that differ from this session's baseline are treated as ITS edits and replayed.
+function _mergeTxAgainstServer(serverList, localList, baseline) {
+  const byId = new Map();
+  (Array.isArray(serverList) ? serverList : []).forEach(t => {
+    if (t && t.id != null) byId.set(String(t.id), t);
+  });
+  const base = baseline || {};
+  const localById = new Map();
+  (Array.isArray(localList) ? localList : []).forEach(t => {
+    if (t && t.id != null) localById.set(String(t.id), t);
+  });
+  // Local additions and local edits win over the server copy of those same ids.
+  localById.forEach((t, id) => {
+    const serialized = JSON.stringify(t);
+    if (base[id] === undefined || base[id] !== serialized) byId.set(id, t);
+  });
+  // Anything this session deliberately deleted (present at baseline, gone locally) goes.
+  Object.keys(base).forEach(id => { if (!localById.has(id)) byId.delete(id); });
+  return Array.from(byId.values());
+}
 
 const getLS = k => {
   if (_useFirebase) return _state[k] !== undefined ? _state[k] : null;
@@ -1894,11 +1956,40 @@ async function _doFlushState() {
         if (k === 'files' || _state[k] === undefined) return;
         (LEDGER_KEYS.includes(k) ? ledgerPart : statePart)[k] = _state[k];
       });
+
+      // Re-read the ledgers a moment before writing them and replay only this session's
+      // own transaction changes onto whatever is there now, so a concurrent approval or
+      // payment by another role is carried forward instead of being overwritten. See the
+      // TX_KEYS comment for why the finance arrays can't be written wholesale.
+      const dirtyTxKeys = TX_KEYS.filter(k => _stateDirty.has(k) && Array.isArray(_state[k]));
+      if (dirtyTxKeys.length) {
+        const ledgerDirty = dirtyTxKeys.filter(k => LEDGER_KEYS.includes(k));
+        const stateDirtyTx = dirtyTxKeys.filter(k => !LEDGER_KEYS.includes(k));
+        const [serverLedger, serverState] = await Promise.all([
+          ledgerDirty.length ? _fsGetDoc('appdata/finance_ledger', ledgerDirty).catch(() => null) : null,
+          stateDirtyTx.length ? _fsGetDoc('appdata/state', stateDirtyTx).catch(() => null) : null,
+        ]);
+        dirtyTxKeys.forEach(k => {
+          const isLedger = LEDGER_KEYS.includes(k);
+          const serverDoc = isLedger ? serverLedger : serverState;
+          // If the re-read didn't actually produce that array (request failed, document
+          // or field missing), merging would treat the server as empty and drop every
+          // transaction this session hadn't touched. Leave the key alone instead — the
+          // plain whole-array write below is then the correct, safe behaviour.
+          if (!serverDoc || !Array.isArray(serverDoc[k])) return;
+          const merged = _mergeTxAgainstServer(serverDoc[k], _state[k], _txBaseline[k]);
+          _state[k] = merged;
+          (isLedger ? ledgerPart : statePart)[k] = merged;
+        });
+      }
+
       const writes = [];
       if (Object.keys(statePart).length) writes.push(_fsMergeDoc('appdata/state', statePart));
       if (Object.keys(ledgerPart).length) writes.push(_fsMergeDoc('appdata/finance_ledger', ledgerPart));
       await Promise.all(writes);
       _stateDirty.clear();
+      // The ledgers now match the server again, so the next save diffs against this.
+      _snapshotTxBaseline();
     }
     _showToast('✅ Сохранено', true);
     return true;
@@ -1963,6 +2054,7 @@ async function _loadState() {
     // above) — every local setLS('files', ...) from here on diffs against this, so only
     // genuine local changes ever get marked dirty and sent.
     _filesBaseline = JSON.parse(JSON.stringify(_state.files || {}));
+    _snapshotTxBaseline();
   } catch(e) { console.error('Ошибка загрузки:', e); }
   finally { _filesReadyResolve(); }
 }
@@ -2006,6 +2098,9 @@ async function _pollStateNow() {
   }
   const led = await _fsGetDoc('appdata/finance_ledger');
   if (led) Object.assign(_state, led);
+  // _state now mirrors the server, so the ledger baseline has to move with it — leaving
+  // it stale would make the next save replay already-saved edits over newer data.
+  _snapshotTxBaseline();
 }
 
 const getRecords         = () => getLS('svc_records')        || {};
@@ -8192,7 +8287,7 @@ async function saveKitchenSupplier() {
   if (!name) { alert('Введите название'); return; }
   const delivery_days = Array.from(document.querySelectorAll('input[name="kday"]:checked')).map(el=>Number(el.value));
   const sup = {
-    id: _editingKitchenSupplier || Date.now().toString(36),
+    id: _editingKitchenSupplier || _newTxId(),
     name,
     category: document.getElementById('ks-cat').value,
     phone: document.getElementById('ks-phone').value.trim(),
@@ -8410,7 +8505,7 @@ async function saveKitchenDelivery() {
   }
 
   const delivery = {
-    id: _editingKitchenDelivery || Date.now().toString(36),
+    id: _editingKitchenDelivery || _newTxId(),
     date,
     status,
     supplier_id: document.getElementById('kd-sup').value,
@@ -8589,7 +8684,7 @@ async function saveKitchenInventoryItem() {
   const name = (document.getElementById('ki-name').value||'').trim();
   if (!name) { alert('Введите наименование'); return; }
   const item = {
-    id: _editingKitchenInventory || Date.now().toString(36),
+    id: _editingKitchenInventory || _newTxId(),
     name,
     category: document.getElementById('ki-cat').value,
     qty: document.getElementById('ki-qty').value,
@@ -8829,7 +8924,7 @@ async function saveKitchenInvoice() {
   }
 
   const record = {
-    id: _editingKitchenInvoice || Date.now().toString(36),
+    id: _editingKitchenInvoice || _newTxId(),
     date,
     supplier_id: supplierId,
     invoice_num: document.getElementById('kinv-num').value.trim(),
@@ -9063,7 +9158,7 @@ async function saveDailyUsage(count) {
   setLS('kitchen_inventory', inv);
   _saveInvSnapshot();
   const log = getKitchenDailyUsage();
-  log.push({id:Date.now().toString(36), date, items, notes:(document.getElementById('du-notes').value||'').trim()});
+  log.push({id:_newTxId(), date, items, notes:(document.getElementById('du-notes').value||'').trim()});
   setLS('kitchen_daily_usage', log);
   if (_useFirebase) {
     clearTimeout(_saveTimer);
@@ -9157,7 +9252,7 @@ async function saveWriteoffRequest() {
   }
 
   const record = {
-    id: Date.now().toString(36),
+    id: _newTxId(),
     date: document.getElementById('wo-date').value,
     reason: document.getElementById('wo-reason').value,
     items,
@@ -10129,7 +10224,7 @@ async function saveBudgetTx(ledgerKey) {
   // that actually changes the amount/vendor/date/fund still resets the chain.
   const keepStatus = existing && !materialChange;
   const record = {
-    id: _editingBudgetTx || Date.now().toString(36),
+    id: _editingBudgetTx || _newTxId(),
     type, date,
     time: document.getElementById('bt-time').value||'',
     vendor, amount: Number(amount),
@@ -10521,7 +10616,7 @@ async function addBudgetFund() {
   const name = (document.getElementById('bf-new-name').value||'').trim();
   if (!name) return;
   const funds = getBudgetFunds();
-  funds.push({id:Date.now().toString(36), name});
+  funds.push({id:_newTxId(), name});
   setLS('finance_funds', funds);
   if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
   document.getElementById('bf-list').innerHTML = _renderBudgetFundsList(funds);
