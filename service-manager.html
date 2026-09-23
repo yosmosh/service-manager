@@ -1794,12 +1794,31 @@ const LEDGER_KEYS = ['finance_tx_maintenance', 'finance_tx_personal'];
 // the same per-id merge already used for the files registry. Concurrent work on different
 // invoices now all survives; only two people editing the very same invoice can overwrite
 // each other, which is the one case where last-write-wins is the correct answer anyway.
-const TX_KEYS = ['finance_tx_maintenance', 'finance_tx_personal', 'finance_tx_kitchen', 'finance_funds'];
+// Every shared list in the app, not just the financial ones — the hazard is identical
+// wherever two people work at once. Two roles closing different SOS items, or one adding
+// a maintenance job while another edits one, used to lose whichever save landed second.
+// telegram_drafts matters especially: the SERVER appends drafts to it while the app
+// approves and removes them, so a wholesale client write could delete drafts the bot had
+// just created. Every entry in these lists carries an id (verified against live data), so
+// a per-id replay is exact. Lists whose entries have no id must never be added here — the
+// merge is keyed on id and would drop them.
+const TX_KEYS = [
+  'finance_tx_maintenance', 'finance_tx_personal', 'finance_tx_kitchen', 'finance_funds',
+  'sos_items', 'maint_works', 'purchase_requests', 'activity_log',
+  'telegram_drafts', 'telegram_log',
+  'kitchen_invoices', 'kitchen_deliveries', 'kitchen_inventory', 'kitchen_writeoffs',
+];
 // payment_records is the same hazard in map form: it's the "Журнал оплат" tick-list,
 // keyed provider_year_month, and the accountant and the owner both tick it. Writing it
 // wholesale meant whichever of them saved second erased the other's ticks — exactly how
 // approvals and payments were being lost in the ledgers themselves.
-const TX_MAP_KEYS = ['payment_records'];
+// The keyed collections get the same treatment, merged per map key: svc_records is the
+// visit journal (one entry per record), and the provider_* maps are keyed by provider, so
+// two people updating different providers no longer overwrite each other. Configuration
+// objects (notify_config, telegram_config) are deliberately left out — they are edited
+// rarely, from one screen, and the server writes telegram_config too.
+const TX_MAP_KEYS = ['payment_records', 'svc_records', 'provider_contacts', 'provider_prices',
+  'provider_pins', 'provider_usernames'];
 let _txBaseline = {}; // key -> { id/key: JSON of that entry as the server last had it }
 
 // Map counterpart of _mergeTxAgainstServer: keep every key the server has, apply the keys
@@ -2131,6 +2150,7 @@ async function _loadState() {
 let _lastInteraction = 0;
 let _pendingRepaint = false;
 let _pendingSince = 0;
+let _pollTick = 0;
 ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(ev =>
   document.addEventListener(ev, () => { _lastInteraction = Date.now(); }, { passive: true, capture: true }));
 
@@ -2236,6 +2256,26 @@ async function _pollStateNow(force) {
   if (force || (ledVer && ledVer !== _docVer['appdata/finance_ledger'])) {
     const led = await _fsGetDoc('appdata/finance_ledger');
     if (led) { Object.assign(_state, led); changed = true; }
+  }
+
+  // Photos and documents uploaded by other people live in their own document, which the
+  // poll never re-read — so a record added by someone else showed up with its thumbnails
+  // broken until the page was reloaded. The registry is large, so it isn't probed on every
+  // tick: an upload is practically always accompanied by the record that references it, so
+  // checking whenever the state moved catches it, with a periodic check as a safety net.
+  _pollTick++;
+  if (force || changed || _pollTick % 6 === 0) {
+    const regVer = force ? null : await _fsDocVersion('appdata/files_registry');
+    if (force || (regVer && regVer !== _docVer['appdata/files_registry'])) {
+      const reg = await _fsGetDoc('appdata/files_registry');
+      if (reg) {
+        _state.files = reg.files || {};
+        // The baseline the files diff works against has to move with it. Polling only runs
+        // when no local file changes are pending, so this can't discard an unsaved upload.
+        _filesBaseline = JSON.parse(JSON.stringify(_state.files));
+        changed = true;
+      }
+    }
   }
 
   // _state now mirrors the server, so the ledger baseline has to move with it — leaving
@@ -5553,7 +5593,7 @@ async function saveMaint(editId) {
         list[idx] = updated;
       }
     } else {
-      const item = { id: Date.now().toString(), title, date, cost, category, status, description, fileIds, fileNames, fileTypes, createdBy: currentUser, createdAt: new Date().toISOString() };
+      const item = { id: _newTxId(), title, date, cost, category, status, description, fileIds, fileNames, fileTypes, createdBy: currentUser, createdAt: new Date().toISOString() };
       if (quarterlySection) item.quarterlySection = quarterlySection;
       if (linkedProviderId) item.linkedProviderId = linkedProviderId;
       if (draftExtra && draftExtra.sourceMessageId) item.telegramSourceMessageId = draftExtra.sourceMessageId;
@@ -6231,7 +6271,7 @@ async function saveSOS(editId) {
         fileTypes: [...(list[idx].fileTypes||[]), ...fileTypes]
       };
     } else {
-      const item = { id: Date.now().toString(), title, date, priority, status, description, fileIds, fileNames, fileTypes, createdBy: currentUser, createdAt: new Date().toISOString() };
+      const item = { id: _newTxId(), title, date, priority, status, description, fileIds, fileNames, fileTypes, createdBy: currentUser, createdAt: new Date().toISOString() };
       if (draftExtra && draftExtra.sourceMessageId) item.telegramSourceMessageId = draftExtra.sourceMessageId;
       if (draftExtra && (draftExtra.sourceMessageIds || []).length) item.telegramSourceMessageIds = draftExtra.sourceMessageIds;
       list.push(item);
@@ -8157,7 +8197,7 @@ const getActivityLog = () => getLS('activity_log') || [];
 
 function addActivity(type, actor, title, detail) {
   const log = getActivityLog();
-  log.push({ id: Date.now().toString(), ts: Date.now(), type, actor, title, detail });
+  log.push({ id: _newTxId(), ts: Date.now(), type, actor, title, detail });
   // keep last 200 entries
   if (log.length > 200) log.splice(0, log.length - 200);
   setLS('activity_log', log);
