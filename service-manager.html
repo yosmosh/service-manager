@@ -1775,8 +1775,27 @@ const LEDGER_KEYS = ['finance_tx_maintenance', 'finance_tx_personal'];
 // the same per-id merge already used for the files registry. Concurrent work on different
 // invoices now all survives; only two people editing the very same invoice can overwrite
 // each other, which is the one case where last-write-wins is the correct answer anyway.
-const TX_KEYS = ['finance_tx_maintenance', 'finance_tx_personal', 'finance_tx_kitchen'];
-let _txBaseline = {}; // key -> { txId: JSON of that tx as the server last had it }
+const TX_KEYS = ['finance_tx_maintenance', 'finance_tx_personal', 'finance_tx_kitchen', 'finance_funds'];
+// payment_records is the same hazard in map form: it's the "Журнал оплат" tick-list,
+// keyed provider_year_month, and the accountant and the owner both tick it. Writing it
+// wholesale meant whichever of them saved second erased the other's ticks — exactly how
+// approvals and payments were being lost in the ledgers themselves.
+const TX_MAP_KEYS = ['payment_records'];
+let _txBaseline = {}; // key -> { id/key: JSON of that entry as the server last had it }
+
+// Map counterpart of _mergeTxAgainstServer: keep every key the server has, apply the keys
+// this session actually added or changed, drop the ones it deliberately removed.
+function _mergeMapAgainstServer(serverMap, localMap, baseline) {
+  const out = Object.assign({}, (serverMap && typeof serverMap === 'object') ? serverMap : {});
+  const local = (localMap && typeof localMap === 'object') ? localMap : {};
+  const base = baseline || {};
+  Object.keys(local).forEach(id => {
+    const serialized = JSON.stringify(local[id]);
+    if (base[id] === undefined || base[id] !== serialized) out[id] = local[id];
+  });
+  Object.keys(base).forEach(id => { if (!(id in local)) delete out[id]; });
+  return out;
+}
 
 // Record ids used to be Date.now().toString(36) alone, which is only unique if no two
 // records are ever created in the same millisecond — across several people on several
@@ -1791,6 +1810,12 @@ function _snapshotTxBaseline() {
     (Array.isArray(_state[k]) ? _state[k] : []).forEach(t => {
       if (t && t.id != null) m[String(t.id)] = JSON.stringify(t);
     });
+    _txBaseline[k] = m;
+  });
+  TX_MAP_KEYS.forEach(k => {
+    const src = (_state[k] && typeof _state[k] === 'object') ? _state[k] : {};
+    const m = {};
+    Object.keys(src).forEach(id => { m[id] = JSON.stringify(src[id]); });
     _txBaseline[k] = m;
   });
 }
@@ -1961,7 +1986,8 @@ async function _doFlushState() {
       // own transaction changes onto whatever is there now, so a concurrent approval or
       // payment by another role is carried forward instead of being overwritten. See the
       // TX_KEYS comment for why the finance arrays can't be written wholesale.
-      const dirtyTxKeys = TX_KEYS.filter(k => _stateDirty.has(k) && Array.isArray(_state[k]));
+      const dirtyTxKeys = TX_KEYS.filter(k => _stateDirty.has(k) && Array.isArray(_state[k]))
+        .concat(TX_MAP_KEYS.filter(k => _stateDirty.has(k) && _state[k] && typeof _state[k] === 'object'));
       if (dirtyTxKeys.length) {
         const ledgerDirty = dirtyTxKeys.filter(k => LEDGER_KEYS.includes(k));
         const stateDirtyTx = dirtyTxKeys.filter(k => !LEDGER_KEYS.includes(k));
@@ -1976,8 +2002,13 @@ async function _doFlushState() {
           // or field missing), merging would treat the server as empty and drop every
           // transaction this session hadn't touched. Leave the key alone instead — the
           // plain whole-array write below is then the correct, safe behaviour.
-          if (!serverDoc || !Array.isArray(serverDoc[k])) return;
-          const merged = _mergeTxAgainstServer(serverDoc[k], _state[k], _txBaseline[k]);
+          const isMap = TX_MAP_KEYS.includes(k);
+          if (!serverDoc) return;
+          if (isMap ? (!serverDoc[k] || typeof serverDoc[k] !== 'object')
+                    : !Array.isArray(serverDoc[k])) return;
+          const merged = isMap
+            ? _mergeMapAgainstServer(serverDoc[k], _state[k], _txBaseline[k])
+            : _mergeTxAgainstServer(serverDoc[k], _state[k], _txBaseline[k]);
           _state[k] = merged;
           (isLedger ? ledgerPart : statePart)[k] = merged;
         });
