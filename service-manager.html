@@ -9985,10 +9985,72 @@ function _lastDayOfMonth(y, m) {
   return `${y}-${String(m).padStart(2,'0')}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
 }
 
+// The full register is 12-13 columns wide, which is far more than most exports actually
+// need — so the columns are chosen per download. "Кратко" is the four that answer the
+// usual question (what, when, how much, paid or not); "Полный" is everything, as before.
+// The choice is remembered per ledger in this browser only: it's a personal preference,
+// not shared data, so it deliberately doesn't go into the synced state.
+function _registerColumns(cfg) {
+  const cols = [
+    { id:'date',   label:'Дата',                  brief:true  },
+    { id:'time',   label:'Время',                 brief:false },
+    { id:'type',   label:'Тип',                   brief:false },
+    { id:'vendor', label:'Наименование/Источник', brief:true  },
+  ];
+  if (cfg.useFunds) cols.push({ id:'fund', label:'Фонд', brief:false });
+  cols.push({ id:'amount', label:'Сумма',  brief:true  });
+  cols.push({ id:'status', label:'Статус', brief:false });
+  cfg.approvers.forEach(role => cols.push({
+    id:'appr_'+role, role, brief:false,
+    label:'Согласовано: ' + (role === 'alexander' ? 'Александр' : 'Йосеф'),
+  }));
+  cols.push({ id:'paid',     label:'Оплачено',    brief:true  });
+  cols.push({ id:'paidDate', label:'Дата оплаты', brief:false });
+  cols.push({ id:'by',       label:'Кто добавил', brief:false });
+  cols.push({ id:'notes',    label:'Примечание',  brief:false });
+  return cols;
+}
+
+function _registerCellValue(col, t) {
+  const isIncome = t.type === 'income' || t.type === 'refund';
+  const paid = t.accountantConfirm && t.accountantConfirm.paid;
+  switch (col.id) {
+    case 'date':   return fmtDate(t.date);
+    case 'time':   return t.time || '';
+    case 'type':   return isIncome ? (t.type === 'refund' ? 'Возврат' : 'Приход') : 'Расход';
+    case 'vendor': return t.vendor || '';
+    case 'fund':   return t.fund || '';
+    // Signed, so selecting the column in Excel gives the net figure straight away.
+    case 'amount': return (isIncome ? 1 : -1) * (Number(t.amount) || 0);
+    case 'status': return t.status === 'rejected'
+      ? ('Отклонено' + (t.rejectReason ? (': ' + t.rejectReason) : '')) : 'Активно';
+    case 'paid':     return paid ? 'Да' : 'Нет';
+    case 'paidDate': return paid ? _fmtApprovalWhen(t.accountantConfirm.date) : '';
+    case 'by':       return _roleDisplayName(t.createdBy || '') || '';
+    case 'notes':    return t.notes || '';
+    default: {
+      const a = (t.approvals || {})[col.role];
+      return a && a.approved ? ('Да · ' + _fmtApprovalWhen(a.date)) : 'Нет';
+    }
+  }
+}
+
+function _savedRegisterCols(ledgerKey) {
+  try { return JSON.parse(localStorage.getItem('reg_cols_' + ledgerKey) || 'null'); } catch (e) { return null; }
+}
+
+function _setRegisterCols(kind, ledgerKey) {
+  const cols = _registerColumns(FINANCE_LEDGERS[ledgerKey]);
+  document.querySelectorAll('.reg-col').forEach(cb => {
+    const c = cols.find(x => x.id === cb.value);
+    cb.checked = kind === 'full' ? true : !!(c && c.brief);
+  });
+}
+
 function exportBudgetRegisterCsv(ledgerKey) {
   const cfg = FINANCE_LEDGERS[ledgerKey];
   if (!cfg) return;
-  document.getElementById('modal-title').textContent = '📊 Реестр — выберите период';
+  document.getElementById('modal-title').textContent = '📊 Реестр — период и колонки';
   document.getElementById('modal-body').innerHTML = `
     <div style="font-size:12px;color:#6b7280;margin-bottom:12px">Выгрузка по дате операции (столбец «Дата»).</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
@@ -10006,7 +10068,23 @@ function exportBudgetRegisterCsv(ledgerKey) {
       <label>По</label>
       <input type="date" id="reg-to" class="form-control" value="${_lastDayOfMonth(budgetYear, budgetMonth)}" oninput="_updateRegisterCount('${ledgerKey}')">
     </div>
-    <div id="reg-count" style="font-size:13px;font-weight:600;color:#2563eb;margin-top:4px"></div>`;
+    <div id="reg-count" style="font-size:13px;font-weight:600;color:#2563eb;margin:4px 0 16px"></div>
+
+    <div style="border-top:1px solid #e2e8f0;padding-top:12px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <span style="font-size:13px;font-weight:700;color:#1e293b">Колонки</span>
+        <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="_setRegisterCols('brief','${ledgerKey}')">Кратко</button>
+        <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="_setRegisterCols('full','${ledgerKey}')">Полный</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px 16px">
+        ${_registerColumns(cfg).map(c => {
+          const saved = _savedRegisterCols(ledgerKey);
+          const on = saved ? saved.includes(c.id) : c.brief;
+          return `<label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap">
+            <input type="checkbox" class="reg-col" value="${c.id}" ${on ? 'checked' : ''}> ${c.label}</label>`;
+        }).join('')}
+      </div>
+    </div>`;
   document.getElementById('modal-footer').innerHTML = `
     <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
     <button class="btn btn-primary" onclick="_runBudgetRegisterExport('${ledgerKey}')">📊 Скачать</button>`;
@@ -10059,36 +10137,21 @@ function _runBudgetRegisterExport(ledgerKey) {
   if (from && to && from > to) { alert('Дата «С» позже даты «По»'); return; }
   const tx = _registerRows(ledgerKey);
   if (!tx.length) { alert('За выбранный период операций нет'); return; }
+
+  const picked = Array.from(document.querySelectorAll('.reg-col')).filter(cb => cb.checked).map(cb => cb.value);
+  if (!picked.length) { alert('Выберите хотя бы одну колонку'); return; }
+  try { localStorage.setItem('reg_cols_' + ledgerKey, JSON.stringify(picked)); } catch (e) {}
+
   const rangeLabel = (from ? fmtDate(from) : '…') + '—' + (to ? fmtDate(to) : '…');
   closeModal();
-  _exportRegisterRows(ledgerKey, cfg, tx, rangeLabel);
+  _exportRegisterRows(ledgerKey, cfg, tx, rangeLabel, picked);
 }
 
-function _exportRegisterRows(ledgerKey, cfg, tx, rangeLabel) {
-
-  const headers = ['Дата','Время','Тип','Наименование/Источник'];
-  if (cfg.useFunds) headers.push('Фонд');
-  headers.push('Сумма','Статус');
-  cfg.approvers.forEach(role => headers.push('Согласовано: ' + (role==='alexander'?'Александр':'Йосеф')));
-  headers.push('Оплачено','Дата оплаты','Кто добавил','Примечание');
-
-  const rows = tx.map(t => {
-    const isIncome = t.type==='income' || t.type==='refund';
-    const row = [fmtDate(t.date), t.time||'', isIncome?(t.type==='refund'?'Возврат':'Приход'):'Расход', t.vendor||''];
-    if (cfg.useFunds) row.push(t.fund||'');
-    row.push((isIncome?1:-1) * (Number(t.amount)||0));
-    row.push(t.status==='rejected' ? ('Отклонено' + (t.rejectReason?(': '+t.rejectReason):'')) : 'Активно');
-    cfg.approvers.forEach(role => {
-      const a = (t.approvals||{})[role];
-      row.push(a && a.approved ? ('Да · ' + _fmtApprovalWhen(a.date)) : 'Нет');
-    });
-    const paid = t.accountantConfirm && t.accountantConfirm.paid;
-    row.push(paid ? 'Да' : 'Нет');
-    row.push(paid ? _fmtApprovalWhen(t.accountantConfirm.date) : '');
-    row.push(_roleDisplayName(t.createdBy||'') || '');
-    row.push(t.notes||'');
-    return row;
-  });
+function _exportRegisterRows(ledgerKey, cfg, tx, rangeLabel, picked) {
+  // Keep the ledger's natural column order regardless of what order they were ticked in.
+  const cols = _registerColumns(cfg).filter(c => picked.includes(c.id));
+  const headers = cols.map(c => c.label);
+  const rows = tx.map(t => cols.map(c => _registerCellValue(c, t)));
 
   const fname = {kitchen:'Кухня', maintenance:'ТО_и_зарплаты', personal:'Личный_бюджет'}[ledgerKey] || ledgerKey;
   // The period goes into the filename too, so several exports don't end up in Downloads
