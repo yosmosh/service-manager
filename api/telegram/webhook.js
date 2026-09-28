@@ -26,9 +26,9 @@
 // ANTHROPIC_API_KEY (shared with api/cron/telegram-digest.js — Phase 2b features are
 // silently skipped if it's not set).
 
+const { readDoc, updateDoc, registerFiles } = require('../_lib/firestore');
+
 const FIRESTORE_MESSAGES_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/telegram_messages';
-const FIRESTORE_STATE_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/appdata/state';
-const FIRESTORE_FILES_REGISTRY_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/appdata/files_registry';
 const STORAGE_BUCKET = 'sad-budushego.firebasestorage.app';
 const BUILD_DRAFTS_URL = 'https://sad-budushego.ru/api/telegram/build-drafts';
 const TELEGRAM_CHAT_ID = -1004438968318; // Сад Будущего | Рабочая группа — ignore anything from elsewhere
@@ -90,21 +90,10 @@ async function uploadPhotoToStorage(buf, ext) {
   return { id, name: `telegram-photo.${ext}`, type: mime, size: Number(meta.size) || buf.length, url };
 }
 
+// Registered by its own per-id path, never by reading the whole registry and writing it
+// back — that used to erase any photo another user uploaded in between.
 async function registerFile(fileMeta) {
-  const res = await fetch(`${FIRESTORE_FILES_REGISTRY_URL}?mask.fieldPaths=files`);
-  const doc = await res.json();
-  const existingFields = (doc.fields && doc.fields.files && doc.fields.files.mapValue.fields) || {};
-  const merged = Object.assign({}, existingFields, {
-    [fileMeta.id]: { mapValue: { fields: {
-      id: fsString(fileMeta.id), name: fsString(fileMeta.name), type: fsString(fileMeta.type),
-      size: fsInt(fileMeta.size), url: fsString(fileMeta.url),
-    } } },
-  });
-  await fetch(`${FIRESTORE_FILES_REGISTRY_URL}?updateMask.fieldPaths=files`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ fields: { files: { mapValue: { fields: merged } } } }),
-  });
+  await registerFiles([fileMeta]);
 }
 
 async function capturePhotoFromMessage(msg) {
@@ -125,21 +114,11 @@ async function capturePhotoFromMessage(msg) {
 // and it gets appended to whatever that issue currently is — a pending draft, or the
 // SOS/maintenance record it has since become. It only ever ADDS a photo; changing the
 // status stays a human decision. No AI is involved — a keyword test on the reply is enough.
-async function attachCompletionPhoto(msg, text) {
-  const replyToId = String(msg.reply_to_message.message_id);
-
-  const stateRes = await fetch(`${FIRESTORE_STATE_URL}?mask.fieldPaths=telegram_config&mask.fieldPaths=telegram_drafts&mask.fieldPaths=sos_items&mask.fieldPaths=maint_works`);
-  const stateDoc = await stateRes.json();
-  const cfgFields = (stateDoc.fields && stateDoc.fields.telegram_config && stateDoc.fields.telegram_config.mapValue.fields) || {};
-  const draftsCfg = (cfgFields.drafts && cfgFields.drafts.mapValue && cfgFields.drafts.mapValue.fields) || {};
-  if (!draftsCfg.enabled || !draftsCfg.enabled.booleanValue) return { skip: 'drafts disabled' };
-
-  const draftsRaw = (stateDoc.fields && stateDoc.fields.telegram_drafts && stateDoc.fields.telegram_drafts.arrayValue.values) || [];
-  const sosRaw = (stateDoc.fields && stateDoc.fields.sos_items && stateDoc.fields.sos_items.arrayValue.values) || [];
-  const maintRaw = (stateDoc.fields && stateDoc.fields.maint_works && stateDoc.fields.maint_works.arrayValue.values) || [];
-
-  // A draft (and the record it becomes) carries EVERY message id its issue was built
-  // from, so a reply to any message in that thread — not just the first — still matches.
+// A draft (and the record it becomes) carries EVERY message id its issue was built from, so
+// a reply to any message in that thread — not just the first — still matches. Pure: it is
+// run once to decide whether to bother fetching the photo, and again on fresh data inside
+// the conditional write.
+function findCompletionTarget(fields, replyToId) {
   const idsOf = (f, singleKey, arrayKey) => {
     const out = [];
     if (f[singleKey] && f[singleKey].stringValue) out.push(f[singleKey].stringValue);
@@ -147,40 +126,50 @@ async function attachCompletionPhoto(msg, text) {
     (arr || []).forEach(v => { if (v.stringValue) out.push(v.stringValue); });
     return out;
   };
-  const draftIdx = draftsRaw.findIndex(r => idsOf(r.mapValue.fields, 'sourceMessageId', 'sourceMessageIds').includes(replyToId));
-  const sosIdx = sosRaw.findIndex(r => idsOf(r.mapValue.fields, 'telegramSourceMessageId', 'telegramSourceMessageIds').includes(replyToId));
-  const maintIdx = maintRaw.findIndex(r => idsOf(r.mapValue.fields, 'telegramSourceMessageId', 'telegramSourceMessageIds').includes(replyToId));
-  if (draftIdx === -1 && sosIdx === -1 && maintIdx === -1) return { skip: 'reply does not match a tracked issue' };
+  const places = [
+    ['telegram_drafts', 'sourceMessageId', 'sourceMessageIds'],
+    ['sos_items', 'telegramSourceMessageId', 'telegramSourceMessageIds'],
+    ['maint_works', 'telegramSourceMessageId', 'telegramSourceMessageIds'],
+  ];
+  for (const [field, single, multi] of places) {
+    const list = (fields[field] && fields[field].arrayValue && fields[field].arrayValue.values) || [];
+    const idx = list.findIndex(r => r.mapValue && idsOf(r.mapValue.fields || {}, single, multi).includes(replyToId));
+    if (idx !== -1) return { field, idx, list };
+  }
+  return null;
+}
 
+async function attachCompletionPhoto(msg, text) {
+  const replyToId = String(msg.reply_to_message.message_id);
+  const TRACKED = ['telegram_drafts', 'sos_items', 'maint_works'];
+
+  const pre = await readDoc('appdata/state', ['telegram_config'].concat(TRACKED));
+  const cfgFields = (pre.fields.telegram_config && pre.fields.telegram_config.mapValue.fields) || {};
+  const draftsCfg = (cfgFields.drafts && cfgFields.drafts.mapValue && cfgFields.drafts.mapValue.fields) || {};
+  if (!draftsCfg.enabled || !draftsCfg.enabled.booleanValue) return { skip: 'drafts disabled' };
+  if (!findCompletionTarget(pre.fields, replyToId)) return { skip: 'reply does not match a tracked issue' };
+
+  // The slow part — download from Telegram, upload, register — happens before the write,
+  // not between a read and a write of the whole list as it used to. The list is re-read and
+  // the photo appended to the record as it stands *now*, under a version condition, so a
+  // status change or new record saved from the app in the meantime is kept, not reverted.
   const photoMeta = await capturePhotoFromMessage(msg).catch(() => null);
   if (!photoMeta) return { skip: 'photo capture failed' };
 
-  const appendTo = (f) => {
-    const ids = ((f.fileIds && f.fileIds.arrayValue.values) || []).map(v => v.stringValue).concat([photoMeta.id]);
-    const names = ((f.fileNames && f.fileNames.arrayValue.values) || []).map(v => v.stringValue).concat(['После: ' + photoMeta.name]);
-    const types = ((f.fileTypes && f.fileTypes.arrayValue.values) || []).map(v => v.stringValue).concat([photoMeta.type]);
-    f.fileIds = fsStringArray(ids);
-    f.fileNames = fsStringArray(names);
-    f.fileTypes = fsStringArray(types);
-  };
-
-  if (draftIdx !== -1) {
-    appendTo(draftsRaw[draftIdx].mapValue.fields);
-    await fetch(`${FIRESTORE_STATE_URL}?updateMask.fieldPaths=telegram_drafts`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      body: JSON.stringify({ fields: { telegram_drafts: { arrayValue: { values: draftsRaw } } } }),
-    });
-    return { action: 'after-photo attached to pending draft' };
-  }
-  const isSos = sosIdx !== -1;
-  const targetRaw = isSos ? sosRaw : maintRaw;
-  const fieldName = isSos ? 'sos_items' : 'maint_works';
-  appendTo(targetRaw[isSos ? sosIdx : maintIdx].mapValue.fields);
-  await fetch(`${FIRESTORE_STATE_URL}?updateMask.fieldPaths=${fieldName}`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ fields: { [fieldName]: { arrayValue: { values: targetRaw } } } }),
+  let where = null;
+  await updateDoc('appdata/state', TRACKED, fields => {
+    where = null;
+    const t = findCompletionTarget(fields, replyToId);
+    if (!t) return null; // resolved or removed meanwhile — nothing left to attach to
+    const f = t.list[t.idx].mapValue.fields;
+    const vals = k => ((f[k] && f[k].arrayValue && f[k].arrayValue.values) || []).map(v => v.stringValue);
+    f.fileIds = fsStringArray(vals('fileIds').concat([photoMeta.id]));
+    f.fileNames = fsStringArray(vals('fileNames').concat(['После: ' + photoMeta.name]));
+    f.fileTypes = fsStringArray(vals('fileTypes').concat([photoMeta.type]));
+    where = t.field;
+    return { [t.field]: { arrayValue: { values: t.list } } };
   });
-  return { action: 'after-photo attached to ' + fieldName };
+  return where ? { action: 'after-photo attached to ' + where } : { skip: 'issue resolved before the photo landed' };
 }
 
 // ---------- Digest subscription (Phase 1) ----------
@@ -202,35 +191,32 @@ async function handleStartDM(msg) {
   const name = [msg.from && msg.from.first_name, msg.from && msg.from.last_name].filter(Boolean).join(' ')
     || (msg.from && msg.from.username) || chatId;
 
-  const stateRes = await fetch(`${FIRESTORE_STATE_URL}?mask.fieldPaths=telegram_config`);
-  const stateDoc = await stateRes.json();
-  const raw = stateDoc.fields && stateDoc.fields.telegram_config;
-  const topFields = (raw && raw.mapValue && raw.mapValue.fields) || {};
-  const digestFields = (topFields.digest && topFields.digest.mapValue && topFields.digest.mapValue.fields) || {};
-  const configuredCode = (digestFields.code && digestFields.code.stringValue) || '';
+  const digestOf = fields => {
+    const top = (fields.telegram_config && fields.telegram_config.mapValue && fields.telegram_config.mapValue.fields) || {};
+    return { top, digest: (top.digest && top.digest.mapValue && top.digest.mapValue.fields) || {} };
+  };
+  const pre = await readDoc('appdata/state', ['telegram_config']);
+  const configuredCode = (digestOf(pre.fields).digest.code && digestOf(pre.fields).digest.code.stringValue) || '';
 
   if (!configuredCode || payload !== configuredCode) {
     await sendTelegramDM(chatId, '⛔ Неверный или отсутствующий код доступа. Эта подписка только по персональной ссылке от руководителя.');
     return;
   }
 
-  const subsRaw = (digestFields.subscribers && digestFields.subscribers.arrayValue && digestFields.subscribers.arrayValue.values) || [];
-  const existing = subsRaw.map(v => {
-    const f = v.mapValue.fields;
-    return { chatId: f.chatId.stringValue, name: f.name.stringValue, subscribedAt: f.subscribedAt.stringValue };
+  // The subscriber is added to the config as it stands at write time, under a version
+  // condition — so a settings change the owner saves at the same moment, or a second
+  // person subscribing alongside, isn't overwritten by a config read a moment earlier.
+  let alreadyIn = false;
+  await updateDoc('appdata/state', ['telegram_config'], fields => {
+    const { top, digest } = digestOf(fields);
+    const subs = (digest.subscribers && digest.subscribers.arrayValue && digest.subscribers.arrayValue.values) || [];
+    alreadyIn = subs.some(v => v.mapValue && v.mapValue.fields && v.mapValue.fields.chatId
+      && v.mapValue.fields.chatId.stringValue === chatId);
+    if (alreadyIn) return null;
+    const newDigest = Object.assign({}, digest, { subscribers: { arrayValue: {
+      values: subs.concat([fsSubscriber({ chatId, name, subscribedAt: new Date().toISOString() })]) } } });
+    return { telegram_config: { mapValue: { fields: Object.assign({}, top, { digest: { mapValue: { fields: newDigest } } }) } } };
   });
-  const alreadyIn = existing.some(s => s.chatId === chatId);
-  const newSubs = alreadyIn ? existing : existing.concat([{ chatId, name, subscribedAt: new Date().toISOString() }]);
-
-  if (!alreadyIn) {
-    const mergedDigest = Object.assign({}, digestFields, { subscribers: { arrayValue: { values: newSubs.map(fsSubscriber) } } });
-    const mergedTop = Object.assign({}, topFields, { digest: { mapValue: { fields: mergedDigest } } });
-    await fetch(`${FIRESTORE_STATE_URL}?updateMask.fieldPaths=telegram_config`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      body: JSON.stringify({ fields: { telegram_config: { mapValue: { fields: mergedTop } } } }),
-    });
-  }
 
   await sendTelegramDM(chatId, alreadyIn
     ? '✅ Вы уже подписаны на дайджест — сводка приходит вам ежедневно.'

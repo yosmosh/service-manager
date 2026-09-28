@@ -17,6 +17,8 @@
 //
 // Wired up in vercel.json's "crons" list — Hobby plan allows once/day.
 
+const { recordReminders } = require('../_lib/firestore');
+
 const FIRESTORE_BASE = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/appdata/state';
 const TELEGRAM_CHAT_ID = -1004438968318; // Сад Будущего | Рабочая группа
 const TOPIC_HOZCHAST = 57; // Хозчасть и Ремонт
@@ -29,20 +31,6 @@ const LOG_CAP = 50;
 function fsGet(fields) {
   const mask = fields.map(f => `mask.fieldPaths=${f}`).join('&');
   return fetch(`${FIRESTORE_BASE}?${mask}`).then(r => r.json());
-}
-
-// Patches several top-level fields in one request — keeps sos_items and telegram_log
-// changes atomic instead of racing a second call against whatever else might write to
-// this document (the app itself, mid-session, via its own merge-write flushes).
-function fsPatchMulti(fieldValues) {
-  const fieldNames = Object.keys(fieldValues);
-  const mask = fieldNames.map(f => `updateMask.fieldPaths=${f}`).join('&');
-  const body = { fields: fieldValues };
-  return fetch(`${FIRESTORE_BASE}?${mask}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify(body),
-  }).then(r => r.json());
 }
 
 function fsString(v) { return { stringValue: v == null ? '' : String(v) }; }
@@ -118,10 +106,10 @@ module.exports = async (req, res) => {
     const escalateTemplate = cfg.sos.escalateTemplate || DEFAULT_ESCALATE_TEMPLATE;
 
     const rawList = (doc.fields && doc.fields.sos_items && doc.fields.sos_items.arrayValue.values) || [];
-    const rawLog = (doc.fields && doc.fields.telegram_log && doc.fields.telegram_log.arrayValue.values) || [];
     const now = Date.now();
     const notified = [];
     const newLogEntries = [];
+    const markers = {};
 
     for (const rawItem of rawList) {
       const it = fromFsMap(rawItem);
@@ -142,8 +130,7 @@ module.exports = async (req, res) => {
 
       if (!dryRun) {
         await sendTelegram(token, text);
-        rawItem.mapValue.fields.telegramNotifyLevel = fsInt(sendLevel);
-        rawItem.mapValue.fields.telegramNotifiedAt = fsString(new Date().toISOString());
+        markers[it.id] = { level: sendLevel, at: new Date().toISOString() };
         newLogEntries.push({
           mapValue: { fields: {
             id: fsString(`${it.id}-${sendLevel}-${now}`),
@@ -159,11 +146,9 @@ module.exports = async (req, res) => {
     }
 
     if (notified.length && !dryRun) {
-      const mergedLog = [...rawLog, ...newLogEntries].slice(-LOG_CAP);
-      await fsPatchMulti({
-        sos_items: { arrayValue: { values: rawList } },
-        telegram_log: { arrayValue: { values: mergedLog } },
-      });
+      // Stamped onto the list as it is now, not the copy read before sending (see
+      // recordReminders) — an item closed while these went out stays closed.
+      await recordReminders('sos_items', markers, newLogEntries, LOG_CAP);
     }
 
     res.status(200).json({ ok: true, dryRun: !!dryRun, notified });

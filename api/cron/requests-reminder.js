@@ -9,6 +9,8 @@
 // Required Vercel environment variables: TELEGRAM_BOT_TOKEN, CRON_SECRET (see
 // sos-reminder.js for details — both files share the same bot/secret).
 
+const { recordReminders } = require('../_lib/firestore');
+
 const FIRESTORE_BASE = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/appdata/state';
 const TELEGRAM_CHAT_ID = -1004438968318; // Сад Будущего | Рабочая группа
 const TOPIC_POKUPKI = 34; // Покупки
@@ -23,16 +25,6 @@ function fsGet(fields) {
   return fetch(`${FIRESTORE_BASE}?${mask}`).then(r => r.json());
 }
 
-function fsPatchMulti(fieldValues) {
-  const fieldNames = Object.keys(fieldValues);
-  const mask = fieldNames.map(f => `updateMask.fieldPaths=${f}`).join('&');
-  const body = { fields: fieldValues };
-  return fetch(`${FIRESTORE_BASE}?${mask}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify(body),
-  }).then(r => r.json());
-}
 
 function fsString(v) { return { stringValue: v == null ? '' : String(v) }; }
 function fsInt(v) { return { integerValue: String(Math.round(v)) }; }
@@ -102,10 +94,10 @@ module.exports = async (req, res) => {
     const escalateTemplate = cfg.requests.escalateTemplate || DEFAULT_ESCALATE_TEMPLATE;
 
     const rawList = (doc.fields && doc.fields.purchase_requests && doc.fields.purchase_requests.arrayValue.values) || [];
-    const rawLog = (doc.fields && doc.fields.telegram_log && doc.fields.telegram_log.arrayValue.values) || [];
     const now = Date.now();
     const notified = [];
     const newLogEntries = [];
+    const markers = {};
 
     for (const rawItem of rawList) {
       const it = fromFsMap(rawItem);
@@ -125,8 +117,7 @@ module.exports = async (req, res) => {
 
       if (!dryRun) {
         await sendTelegram(token, text);
-        rawItem.mapValue.fields.telegramNotifyLevel = fsInt(sendLevel);
-        rawItem.mapValue.fields.telegramNotifiedAt = fsString(new Date().toISOString());
+        markers[it.id] = { level: sendLevel, at: new Date().toISOString() };
         newLogEntries.push({
           mapValue: { fields: {
             id: fsString(`${it.id}-${sendLevel}-${now}`),
@@ -142,11 +133,9 @@ module.exports = async (req, res) => {
     }
 
     if (notified.length && !dryRun) {
-      const mergedLog = [...rawLog, ...newLogEntries].slice(-LOG_CAP);
-      await fsPatchMulti({
-        purchase_requests: { arrayValue: { values: rawList } },
-        telegram_log: { arrayValue: { values: mergedLog } },
-      });
+      // Stamped onto the list as it is now, not the copy read before sending (see
+      // recordReminders) — a request approved while these went out stays approved.
+      await recordReminders('purchase_requests', markers, newLogEntries, LOG_CAP);
     }
 
     res.status(200).json({ ok: true, dryRun: !!dryRun, notified });

@@ -22,8 +22,10 @@
 //
 // Required Vercel environment variables: TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, CRON_SECRET.
 
-const FIRESTORE_STATE_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/appdata/state';
-const FIRESTORE_FILES_REGISTRY_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/appdata/files_registry';
+const {
+  fsString, fsStringArray, readDoc, updateDoc, registerFiles, acquireLease, releaseLease,
+} = require('../_lib/firestore');
+
 const FIRESTORE_QUERY_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents:runQuery';
 const STORAGE_BUCKET = 'sad-budushego.firebasestorage.app';
 const TELEGRAM_CHAT_ID = -1004438968318;
@@ -37,26 +39,14 @@ const THROTTLE_MINUTES = 10;
 // was already typing. The frequent cron therefore lags reality by a few minutes on
 // purpose; the app's own button passes force=1 to skip the wait.
 const SETTLE_MINUTES = 8;
-const PROCESSED_CAP = 800; // ids remembered so the same messages never produce a second draft
 
-function fsString(v) { return { stringValue: v == null ? '' : String(v) }; }
-function fsInt(v) { return { integerValue: String(Math.round(v)) }; }
-function fsStringArray(arr) { return { arrayValue: { values: (arr || []).map(fsString) } }; }
-
-async function fsGetState(fields) {
-  const mask = fields.map(f => `mask.fieldPaths=${f}`).join('&');
-  const r = await fetch(`${FIRESTORE_STATE_URL}?${mask}`);
-  return r.json();
-}
-async function fsPatchState(fieldValues) {
-  const mask = Object.keys(fieldValues).map(f => `updateMask.fieldPaths=${f}`).join('&');
-  const r = await fetch(`${FIRESTORE_STATE_URL}?${mask}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ fields: fieldValues }),
-  });
-  return r.json();
-}
+// Only one run at a time. Every message in the group nudges this endpoint, and a run takes
+// tens of seconds (the AI call, the photos) — so before this, a burst of messages started
+// several overlapping runs that each drafted the same messages and each asked the worker the
+// same question. The lease outlives the function's 60s maxDuration, so a live run can't lose
+// it, and it expires on its own so a run that dies can't block the next one for long.
+const LEASE_DOC = 'appdata/_drafts_lease';
+const LEASE_TTL_MS = 90000;
 
 // Reads the last LOOKBACK_HOURS of captured messages. Filtering by topic is done here in
 // JS rather than in the query: combining a topicId filter with an orderBy on date needs a
@@ -73,7 +63,10 @@ async function fetchRecentMessages(sinceIso) {
     method: 'POST', headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(body),
   });
   const rows = await res.json();
-  return (Array.isArray(rows) ? rows : []).filter(r => r.document).map(r => {
+  // A failed query must not look like an empty window: the processed-id list is pruned to
+  // the messages found here, so "no messages" would wrongly forget everything processed.
+  if (!res.ok || !Array.isArray(rows)) throw new Error('telegram_messages query failed: ' + JSON.stringify(rows).slice(0, 200));
+  return rows.filter(r => r.document).map(r => {
     const f = r.document.fields || {};
     return {
       messageId: f.messageId ? String(f.messageId.integerValue) : '',
@@ -111,24 +104,6 @@ async function uploadPhotoToStorage(buf, ext) {
   if (!meta.downloadTokens) return null;
   const url = `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o/${encodeURIComponent(name)}?alt=media&token=${meta.downloadTokens}`;
   return { id, name: `telegram-photo.${ext}`, type: mime, size: Number(meta.size) || buf.length, url };
-}
-
-// One read-modify-write for the whole batch — registering photos one at a time would race
-// with itself when an issue carries several pictures.
-async function registerFiles(metas) {
-  if (!metas.length) return;
-  const res = await fetch(`${FIRESTORE_FILES_REGISTRY_URL}?mask.fieldPaths=files`);
-  const doc = await res.json();
-  const merged = Object.assign({}, (doc.fields && doc.fields.files && doc.fields.files.mapValue.fields) || {});
-  metas.forEach(m => {
-    merged[m.id] = { mapValue: { fields: {
-      id: fsString(m.id), name: fsString(m.name), type: fsString(m.type), size: fsInt(m.size), url: fsString(m.url),
-    } } };
-  });
-  await fetch(`${FIRESTORE_FILES_REGISTRY_URL}?updateMask.fieldPaths=files`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ fields: { files: { mapValue: { fields: merged } } } }),
-  });
 }
 
 // ---------- Clustering ----------
@@ -207,6 +182,73 @@ function fsDraftEntry(d) {
   } } };
 }
 
+
+// What telegram_drafts and telegram_processed_ids should be after this run, computed from
+// the document's fields as they are AT WRITE TIME. Pure — updateDoc may call it more than
+// once (after losing a race), so nothing here sends or uploads; the questions to post are
+// returned instead of sent.
+//
+// The old code instead wrote back the drafts list it had read at the very start, before the
+// AI call and the photo downloads (tens of seconds). A draft the manager approved or rejected
+// in the meantime was therefore restored — and could be approved a second time, creating a
+// duplicate SOS/maintenance record.
+function applyDraftPlan(fields, plan) {
+  const current = (fields.telegram_drafts && fields.telegram_drafts.arrayValue
+    && fields.telegram_drafts.arrayValue.values) || [];
+  const byId = new Map();
+  const withoutId = [];
+  current.forEach(v => {
+    const f = v && v.mapValue && v.mapValue.fields;
+    const id = f && f.id && f.id.stringValue;
+    if (id) byId.set(id, v); else withoutId.push(v);
+  });
+  const strs = (f, k) => ((f[k] && f[k].arrayValue && f[k].arrayValue.values) || []).map(x => x.stringValue);
+  const toAsk = [];
+
+  plan.updates.forEach(u => {
+    const v = byId.get(u.draftId);
+    if (!v) return; // approved or rejected since — never bring it back
+    const f = JSON.parse(JSON.stringify(v.mapValue.fields));
+    f.sourceMessageIds = fsStringArray([...new Set(strs(f, 'sourceMessageIds').concat(u.messageIds))]);
+    f.sourceText = fsString(((f.sourceText && f.sourceText.stringValue) || '') + '\n' + u.sourceText);
+    if (u.description) f.description = fsString(u.description);
+    if (u.title) f.title = fsString(u.title);
+    if (u.priority) f.priority = fsString(u.priority);
+    if (u.files.ids.length) {
+      f.fileIds = fsStringArray(strs(f, 'fileIds').concat(u.files.ids));
+      f.fileNames = fsStringArray(strs(f, 'fileNames').concat(u.files.names));
+      f.fileTypes = fsStringArray(strs(f, 'fileTypes').concat(u.files.types));
+    }
+    // At most one question per draft, judged against the draft as it is now.
+    if (u.question && !(f.askedQuestion && f.askedQuestion.stringValue)) {
+      f.askedQuestion = fsString(u.question);
+      toAsk.push({ topicId: u.topicId, replyTo: u.replyTo, text: u.question });
+    }
+    byId.set(u.draftId, { mapValue: { fields: f } });
+  });
+
+  plan.newDrafts.forEach(d => {
+    if (byId.has(d.id)) return;
+    byId.set(d.id, fsDraftEntry(Object.assign({}, d, { askedQuestion: d.question || '' })));
+    if (d.question) toAsk.push({ topicId: d.topicId, replyTo: d.sourceMessageIds[0], text: d.question });
+  });
+
+  // Processed ids are kept exactly as long as their message is still inside the look-back
+  // window — the only time it could be picked up again — rather than by a fixed count, which
+  // on a busy day evicted ids still inside the window and got those messages drafted twice.
+  const already = ((fields.telegram_processed_ids && fields.telegram_processed_ids.arrayValue
+    && fields.telegram_processed_ids.arrayValue.values) || []).map(v => v.stringValue);
+  const processed = [...new Set(already.concat(plan.processedAdd))].filter(id => plan.windowIds.has(id));
+
+  return {
+    out: {
+      telegram_drafts: { arrayValue: { values: [...byId.values()].concat(withoutId) } },
+      telegram_processed_ids: fsStringArray(processed),
+    },
+    toAsk,
+  };
+}
+
 module.exports = async (req, res) => {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) { res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN not configured' }); return; }
@@ -215,45 +257,75 @@ module.exports = async (req, res) => {
   const isCron = !!process.env.CRON_SECRET && (req.headers['authorization'] || '') === `Bearer ${process.env.CRON_SECRET}`;
   const dryRun = req.query && (req.query.dryRun === '1' || req.query.dryRun === 'true');
   const force = req.query && (req.query.force === '1' || req.query.force === 'true');
+  const holder = 'run-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  let leaseHeld = false;
 
   try {
-    const doc = await fsGetState(['telegram_config', 'telegram_drafts', 'telegram_processed_ids', 'telegram_drafts_run_at']);
-    const cfgFields = (doc.fields && doc.fields.telegram_config && doc.fields.telegram_config.mapValue.fields) || {};
+    const cfg = await readDoc('appdata/state', ['telegram_config']);
+    const cfgFields = (cfg.fields.telegram_config && cfg.fields.telegram_config.mapValue.fields) || {};
     const draftsCfg = (cfgFields.drafts && cfgFields.drafts.mapValue && cfgFields.drafts.mapValue.fields) || {};
     if (!draftsCfg.enabled || !draftsCfg.enabled.booleanValue) {
       res.status(200).json({ ok: true, skipped: 'drafts disabled in telegram_config' });
       return;
     }
 
-    // Only the manual (app button) path is throttled; the daily cron always runs.
-    const lastRunIso = (doc.fields && doc.fields.telegram_drafts_run_at && doc.fields.telegram_drafts_run_at.stringValue) || '';
+    // Cheap early exits before touching the lease: a run already in progress, or (for the
+    // manual/nudge path only — the daily cron always runs) one that finished moments ago.
+    const lease = await readDoc(LEASE_DOC, ['leaseUntil', 'lastRunAt']);
+    const leaseUntil = lease.fields.leaseUntil ? Date.parse(lease.fields.leaseUntil.stringValue) : 0;
+    if (!dryRun && leaseUntil > Date.now()) {
+      res.status(200).json({ ok: true, skipped: 'another run is in progress' });
+      return;
+    }
+    const lastRunIso = (lease.fields.lastRunAt && lease.fields.lastRunAt.stringValue) || '';
     if (!isCron && !dryRun && lastRunIso) {
-      const minsSince = (Date.now() - new Date(lastRunIso).getTime()) / 60000;
+      const minsSince = (Date.now() - Date.parse(lastRunIso)) / 60000;
       if (minsSince < THROTTLE_MINUTES) {
         res.status(200).json({ ok: true, skipped: 'throttled', minutesUntilNextRun: Math.ceil(THROTTLE_MINUTES - minsSince) });
         return;
       }
     }
 
-    const processedRaw = (doc.fields && doc.fields.telegram_processed_ids && doc.fields.telegram_processed_ids.arrayValue.values) || [];
-    const processed = new Set(processedRaw.map(v => v.stringValue));
-
-    const sinceIso = new Date(Date.now() - LOOKBACK_HOURS * 3600000).toISOString();
-    const all = await fetchRecentMessages(sinceIso);
+    const all = await fetchRecentMessages(new Date(Date.now() - LOOKBACK_HOURS * 3600000).toISOString());
+    const windowIds = new Set(all.map(m => m.messageId).filter(Boolean));
     const settleBefore = Date.now() - SETTLE_MINUTES * 60000;
-    const fresh = all.filter(m => DRAFT_TOPIC_IDS.includes(m.topicId) && m.messageId && !processed.has(m.messageId)
-      && (force || !m.date || new Date(m.date).getTime() <= settleBefore));
-    if (!fresh.length) {
+    const readWork = async () => {
+      const d = await readDoc('appdata/state', ['telegram_drafts', 'telegram_processed_ids']);
+      const done = new Set(((d.fields.telegram_processed_ids && d.fields.telegram_processed_ids.arrayValue
+        && d.fields.telegram_processed_ids.arrayValue.values) || []).map(v => v.stringValue));
+      const fresh = all.filter(m => DRAFT_TOPIC_IDS.includes(m.topicId) && m.messageId && !done.has(m.messageId)
+        && (force || !m.date || new Date(m.date).getTime() <= settleBefore));
+      return { fields: d.fields, fresh };
+    };
+
+    let work = await readWork();
+    if (!work.fresh.length) {
       res.status(200).json({ ok: true, created: 0, note: 'no new messages in the watched topic' });
       return;
     }
+    if (!dryRun) {
+      leaseHeld = await acquireLease(LEASE_DOC, holder, LEASE_TTL_MS);
+      if (!leaseHeld) {
+        res.status(200).json({ ok: true, skipped: 'another run is in progress' });
+        return;
+      }
+      // Re-read under the lease: a run that finished between the check above and now may
+      // already have processed exactly these messages.
+      work = await readWork();
+      if (!work.fresh.length) {
+        res.status(200).json({ ok: true, created: 0, note: 'no new messages in the watched topic' });
+        return;
+      }
+    }
+    const fresh = work.fresh;
 
-    // The drafts still waiting for the owner, passed to the model as context so a reply
-    // that arrives after its issue was already drafted updates that draft instead of
-    // becoming a stray new one.
-    const draftsRaw = (doc.fields && doc.fields.telegram_drafts && doc.fields.telegram_drafts.arrayValue.values) || [];
+    // The drafts still waiting for the owner, passed to the model as context so a reply that
+    // arrives after its issue was already drafted updates that draft instead of becoming a
+    // stray new one.
+    const draftsRaw = (work.fields.telegram_drafts && work.fields.telegram_drafts.arrayValue
+      && work.fields.telegram_drafts.arrayValue.values) || [];
     const openDrafts = draftsRaw.map(r => {
-      const f = r.mapValue.fields;
+      const f = (r.mapValue && r.mapValue.fields) || {};
       return {
         id: (f.id && f.id.stringValue) || '',
         title: (f.title && f.title.stringValue) || '',
@@ -261,16 +333,20 @@ module.exports = async (req, res) => {
         askedQuestion: (f.askedQuestion && f.askedQuestion.stringValue) || '',
       };
     }).filter(d => d.id);
+    const openIds = new Set(openDrafts.map(d => d.id));
 
     const issues = await clusterIssues(fresh, openDrafts);
-    const byId = {};
-    fresh.forEach(m => { byId[m.messageId] = m; });
+    const byMsg = {};
+    fresh.forEach(m => { byMsg[m.messageId] = m; });
 
-    const newDrafts = [], summary = [];
+    // Every message seen this run is marked processed — including ones Claude decided were
+    // not a real issue — so they are never re-analysed or re-asked about.
+    const plan = { newDrafts: [], updates: [], processedAdd: fresh.map(m => m.messageId), windowIds };
+    const summary = [];
     for (const issue of issues) {
-      const ids = (issue.messageIds || []).map(String).filter(id => byId[id]);
+      const ids = (issue.messageIds || []).map(String).filter(id => byMsg[id]);
       if (!ids.length) continue;
-      const msgs = ids.map(id => byId[id]);
+      const msgs = ids.map(id => byMsg[id]);
 
       // Every photo attached to ANY message of this issue, in message order.
       const metas = [];
@@ -286,88 +362,63 @@ module.exports = async (req, res) => {
         }
         await registerFiles(metas);
       }
-
+      const files = { ids: metas.map(m => m.id), names: metas.map(m => m.name), types: metas.map(m => m.type) };
       const sourceText = msgs.map(m => `${m.fromName}: ${m.text || '(фото)'}`).join('\n');
-      const authors = [...new Set(msgs.map(m => m.fromName).filter(Boolean))].join(', ');
+      const question = (issue.sufficient === false && issue.clarifyingQuestion) ? String(issue.clarifyingQuestion) : '';
 
-      // An update to an existing draft: fold the new messages, summary and photos into
-      // the draft already on screen rather than creating a second one for the same issue.
-      const updIdx = issue.updatesDraftId
-        ? draftsRaw.findIndex(r => (r.mapValue.fields.id || {}).stringValue === issue.updatesDraftId)
-        : -1;
-      if (updIdx !== -1) {
-        const f = draftsRaw[updIdx].mapValue.fields;
-        const prevIds = ((f.sourceMessageIds && f.sourceMessageIds.arrayValue.values) || []).map(v => v.stringValue);
-        f.sourceMessageIds = fsStringArray([...new Set(prevIds.concat(ids))]);
-        f.sourceText = fsString(((f.sourceText && f.sourceText.stringValue) || '') + '\n' + sourceText);
-        if (issue.description) f.description = fsString(issue.description);
-        if (issue.title) f.title = fsString((issue.title || '').slice(0, 120));
-        if (['high', 'medium', 'low'].includes(issue.priority)) f.priority = fsString(issue.priority);
-        if (metas.length) {
-          const prevFiles = ((f.fileIds && f.fileIds.arrayValue.values) || []).map(v => v.stringValue);
-          const prevNames = ((f.fileNames && f.fileNames.arrayValue.values) || []).map(v => v.stringValue);
-          const prevTypes = ((f.fileTypes && f.fileTypes.arrayValue.values) || []).map(v => v.stringValue);
-          f.fileIds = fsStringArray(prevFiles.concat(metas.map(m => m.id)));
-          f.fileNames = fsStringArray(prevNames.concat(metas.map(m => m.name)));
-          f.fileTypes = fsStringArray(prevTypes.concat(metas.map(m => m.type)));
-        }
-        // Only ever ask once per draft — a worker who has already been asked and simply
-        // hasn't answered yet should not be pinged again on every run.
-        const alreadyAsked = !!(f.askedQuestion && f.askedQuestion.stringValue);
-        if (issue.sufficient === false && issue.clarifyingQuestion && !alreadyAsked && !dryRun) {
-          try {
-            await sendTelegramReply(msgs[0].topicId, ids[0], issue.clarifyingQuestion);
-            f.askedQuestion = fsString(issue.clarifyingQuestion);
-          } catch (e) {}
-        }
+      if (issue.updatesDraftId && openIds.has(issue.updatesDraftId)) {
+        plan.updates.push({
+          draftId: issue.updatesDraftId, messageIds: ids, sourceText,
+          description: issue.description || '', title: (issue.title || '').slice(0, 120),
+          priority: ['high', 'medium', 'low'].includes(issue.priority) ? issue.priority : '',
+          files, question, topicId: msgs[0].topicId, replyTo: ids[0],
+        });
         summary.push({ updated: issue.updatesDraftId, title: issue.title, messageIds: ids, photos: metas.length });
         continue;
       }
-
-      // Asked once, as a reply to the issue's first message, with the whole thread already
-      // taken into account — better than asking per message as it arrives. The draft is
-      // still created either way, so nothing is lost while waiting for an answer, and the
-      // question is recorded on it so later runs neither repeat it nor lose the thread.
-      let askedQuestion = '';
-      if (issue.sufficient === false && issue.clarifyingQuestion && !dryRun) {
-        try {
-          await sendTelegramReply(msgs[0].topicId, ids[0], issue.clarifyingQuestion);
-          askedQuestion = issue.clarifyingQuestion;
-        } catch (e) {}
-      }
-
-      newDrafts.push({
+      plan.newDrafts.push({
         id: String(Date.now()) + Math.random().toString(36).slice(2, 6),
         type: issue.type === 'sos' ? 'sos' : 'maintenance',
         title: (issue.title || '').slice(0, 120),
         description: issue.description || '',
         priority: ['high', 'medium', 'low'].includes(issue.priority) ? issue.priority : 'medium',
         category: issue.category || 'other',
-        sourceText, sourceFrom: authors, sourceTopic: msgs[0].topicName, sourceDate: msgs[0].date,
+        sourceText,
+        sourceFrom: [...new Set(msgs.map(m => m.fromName).filter(Boolean))].join(', '),
+        sourceTopic: msgs[0].topicName, sourceDate: msgs[0].date,
         sourceMessageIds: ids,
         createdAt: new Date().toISOString(),
-        askedQuestion,
-        fileIds: metas.map(m => m.id),
-        fileNames: metas.map(m => m.name),
-        fileTypes: metas.map(m => m.type),
+        fileIds: files.ids, fileNames: files.names, fileTypes: files.types,
+        question, topicId: msgs[0].topicId,
       });
-      summary.push({ title: issue.title, type: issue.type, messageIds: ids, photos: metas.length, asked: !!askedQuestion });
+      summary.push({ title: issue.title, type: issue.type, messageIds: ids, photos: metas.length, asked: !!question });
     }
 
     if (!dryRun) {
-      const mergedDrafts = draftsRaw.concat(newDrafts.map(fsDraftEntry));
-      // Every message seen this run is marked processed — including ones Claude decided
-      // were not a real issue — so they are never re-analysed or re-asked about.
-      const mergedProcessed = [...processed, ...fresh.map(m => m.messageId)].slice(-PROCESSED_CAP);
-      await fsPatchState({
-        telegram_drafts: { arrayValue: { values: mergedDrafts } },
-        telegram_processed_ids: fsStringArray(mergedProcessed),
-        telegram_drafts_run_at: fsString(new Date().toISOString()),
+      let toAsk = [];
+      await updateDoc('appdata/state', ['telegram_drafts', 'telegram_processed_ids'], fields => {
+        const r = applyDraftPlan(fields, plan);
+        toAsk = r.toAsk;
+        return r.out;
       });
+      // Questions go out only once the drafts are safely written, so a run that dies before
+      // that point leaves no question behind for the next run to ask a second time.
+      for (const q of toAsk) {
+        try { await sendTelegramReply(q.topicId, q.replyTo, q.text); } catch (e) { /* draft already records it */ }
+      }
+      await releaseLease(LEASE_DOC, holder, { lastRunAt: fsString(new Date().toISOString()) });
+      leaseHeld = false;
     }
 
-    res.status(200).json({ ok: true, dryRun: !!dryRun, analysed: fresh.length, created: newDrafts.length, issues: summary });
+    res.status(200).json({ ok: true, dryRun: !!dryRun, analysed: fresh.length, created: plan.newDrafts.length, issues: summary });
   } catch (e) {
     res.status(500).json({ ok: false, error: String((e && e.message) || e) });
+  } finally {
+    // Any exit that didn't complete the run hands the lease straight back rather than making
+    // the next run wait out the timeout — without recording a completed run.
+    if (leaseHeld) { try { await releaseLease(LEASE_DOC, holder); } catch (e) { /* expires anyway */ } }
   }
 };
+
+// Exposed for tests only.
+module.exports.applyDraftPlan = applyDraftPlan;

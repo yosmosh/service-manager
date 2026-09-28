@@ -12,6 +12,8 @@
 //   ANTHROPIC_API_KEY   — for the summarization call
 //   CRON_SECRET         — shared with the other cron functions
 
+const { appendLog } = require('../_lib/firestore');
+
 const FIRESTORE_STATE_BASE = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/appdata/state';
 const FIRESTORE_QUERY_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents:runQuery';
 const LOG_CAP = 50;
@@ -19,16 +21,6 @@ const LOG_CAP = 50;
 function fsGet(fields) {
   const mask = fields.map(f => `mask.fieldPaths=${f}`).join('&');
   return fetch(`${FIRESTORE_STATE_BASE}?${mask}`).then(r => r.json());
-}
-
-function fsPatchMulti(fieldValues) {
-  const fieldNames = Object.keys(fieldValues);
-  const mask = fieldNames.map(f => `updateMask.fieldPaths=${f}`).join('&');
-  return fetch(`${FIRESTORE_STATE_BASE}?${mask}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ fields: fieldValues }),
-  }).then(r => r.json());
 }
 
 function fsString(v) { return { stringValue: v == null ? '' : String(v) }; }
@@ -193,7 +185,6 @@ module.exports = async (req, res) => {
       for (const chatId of cfg.digest.ownerChatIds) {
         await sendTelegramDM(token, chatId, `📋 Дайджест за сутки:\n\n${digestText}`);
       }
-      const rawLog = (stateDoc.fields && stateDoc.fields.telegram_log && stateDoc.fields.telegram_log.arrayValue.values) || [];
       const entry = {
         mapValue: { fields: {
           id: fsString(`digest-${Date.now()}`),
@@ -203,8 +194,8 @@ module.exports = async (req, res) => {
           sentAt: fsString(new Date().toISOString()),
         } }
       };
-      const mergedLog = [...rawLog, entry].slice(-LOG_CAP);
-      await fsPatchMulti({ telegram_log: { arrayValue: { values: mergedLog } } });
+      // Appended to the log as it is at write time, not the copy read before the AI summary.
+      await appendLog([entry], LOG_CAP);
     }
 
     res.status(200).json({ ok: true, dryRun: !!dryRun, messageCount: messages.length, topics: Object.keys(byTopic), digestText });
