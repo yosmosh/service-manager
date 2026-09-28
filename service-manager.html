@@ -1847,6 +1847,33 @@ const TX_MAP_KEYS = ['payment_records', 'svc_records', 'provider_contacts', 'pro
   'provider_pins', 'provider_usernames'];
 let _txBaseline = {}; // key -> { id/key: JSON of that entry as the server last had it }
 
+// One entry (an invoice, a report, a journal record) this session changed since its last
+// sync — what goes to the server. If nobody else touched it, simply this session's copy.
+// If the server's copy changed TOO, taking this session's whole copy used to erase the other
+// change: Alexander's approval vanished when the owner approved the same invoice a moment
+// later, and an invoice the owner rejected went back to "pending" when the accountant, whose
+// screen hadn't caught up, marked it paid. So then it is merged field by field against the
+// baseline: a field takes this session's value only where this session changed it, and
+// objects are merged the same way one level down (approvals: one slot per approver). Where
+// both changed the very same value, this session's value is kept, as before.
+function _mergeChangedEntry(baseJson, server, local) {
+  if (baseJson === undefined || server === undefined || JSON.stringify(server) === baseJson) return local;
+  return _merge3(JSON.parse(baseJson), server, local);
+}
+function _merge3(base, server, local) {
+  const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!isObj(base) || !isObj(server) || !isObj(local)) return local;
+  const out = {};
+  new Set(Object.keys(base).concat(Object.keys(server), Object.keys(local))).forEach(k => {
+    const b = JSON.stringify(base[k]), s = JSON.stringify(server[k]), l = JSON.stringify(local[k]);
+    const v = l === b ? server[k]                   // untouched here — keep theirs
+      : s === b ? local[k]                          // untouched there — keep ours
+      : _merge3(base[k], server[k], local[k]);      // both — go deeper (ours for a plain value)
+    if (v !== undefined) out[k] = v;
+  });
+  return out;
+}
+
 // Map counterpart of _mergeTxAgainstServer: keep every key the server has, apply the keys
 // this session actually added or changed, drop the ones it deliberately removed.
 function _mergeMapAgainstServer(serverMap, localMap, baseline) {
@@ -1855,7 +1882,7 @@ function _mergeMapAgainstServer(serverMap, localMap, baseline) {
   const base = baseline || {};
   Object.keys(local).forEach(id => {
     const serialized = JSON.stringify(local[id]);
-    if (base[id] === undefined || base[id] !== serialized) out[id] = local[id];
+    if (base[id] === undefined || base[id] !== serialized) out[id] = _mergeChangedEntry(base[id], out[id], local[id]);
   });
   Object.keys(base).forEach(id => { if (!(id in local)) delete out[id]; });
   return out;
@@ -1906,10 +1933,11 @@ function _mergeTxAgainstServer(serverList, localList, baseline) {
   (Array.isArray(localList) ? localList : []).forEach(t => {
     if (t && t.id != null) localById.set(String(t.id), t);
   });
-  // Local additions and local edits win over the server copy of those same ids.
+  // Local additions and local edits are applied over the server copy of those same ids —
+  // field by field when someone else changed that same entry too (see _mergeChangedEntry).
   localById.forEach((t, id) => {
     const serialized = JSON.stringify(t);
-    if (base[id] === undefined || base[id] !== serialized) byId.set(id, t);
+    if (base[id] === undefined || base[id] !== serialized) byId.set(id, _mergeChangedEntry(base[id], byId.get(id), t));
   });
   // Anything this session deliberately deleted (present at baseline, gone locally) goes.
   Object.keys(base).forEach(id => { if (!localById.has(id)) byId.delete(id); });
@@ -2460,6 +2488,17 @@ async function _pollState() {
       _pendingRepaint = false;
     }
   } catch (e) { /* transient poll failure — next tick retries */ }
+}
+
+// Before an approval, rejection or payment decision: pull in what others changed since this
+// screen last synced, so the decision is checked against the record as it is now. The poll
+// above does nothing while a modal is open — and the owner's approval queue and the
+// accountant's payment queue ARE modals, where these decisions are taken one after another.
+// Costs only the version probes when nothing changed. With unsent edits of its own this tab
+// can't replace its copy; the field-level merge in the flush (_mergeChangedEntry) covers that.
+async function _syncBeforeDecision() {
+  if (!_useFirebase || !_firestoreDB) return;
+  try { await _pollStateNow(false); } catch (e) { /* offline — decide on what's on screen */ }
 }
 
 // The fetch half of the poll, without its skip-conditions: used directly after an action
@@ -11401,16 +11440,24 @@ async function _saveBudgetTxInner(ledgerKey) {
   if (!(await finish())) _offerResend(formGen, 'bt-save-btn', finish);
 }
 
+// What a decision on a record someone has meanwhile rejected is told — who, and why.
+function _rejectedNote(t) {
+  return '⛔ Эту операцию уже отклонил(а) ' + (t.rejectedBy ? _roleDisplayName(t.rejectedBy) : 'другой пользователь')
+    + (t.rejectReason ? ': «' + t.rejectReason + '»' : '') + '.';
+}
+
 async function approveBudgetTx(ledgerKey, id, asRole) {
   // The owner can stand in for Alexander (e.g. while he's unavailable) and approve
   // on his behalf — but only the owner gets that override, and only for his slot.
   let myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : null;
   if (asRole === 'alexander' && currentUser === 'owner') myRole = 'alexander';
   if (!myRole) return;
+  await _syncBeforeDecision();
   const list = getBudgetTx(ledgerKey);
   const t = list.find(x=>x.id===id);
-  if (!t) return;
-  if (t.accountantConfirm && t.accountantConfirm.paid) { alert('Уже оплачено — согласование изменить нельзя'); return; }
+  if (!t) { render(); return; }
+  if (t.accountantConfirm && t.accountantConfirm.paid) { alert('Уже оплачено — согласование изменить нельзя'); render(); return; }
+  if (t.status === 'rejected') { alert(_rejectedNote(t)); render(); return; }
   t.approvals = t.approvals || {};
   const alreadyApproved = t.approvals[myRole] && t.approvals[myRole].approved;
   // Toggle: approving is not a one-way door — the same button lets you take back
@@ -11463,10 +11510,12 @@ async function rejectBudgetTx(ledgerKey, id) {
   // something that's already been paid (money already moved by then).
   const myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : null;
   if (!myRole || !FINANCE_LEDGERS[ledgerKey].approvers.includes(myRole)) return;
+  await _syncBeforeDecision();
   const list = getBudgetTx(ledgerKey);
   const t = list.find(x=>x.id===id);
-  if (!t) return;
-  if (t.accountantConfirm && t.accountantConfirm.paid) { alert('Уже оплачено — отклонить нельзя'); return; }
+  if (!t) { render(); return; }
+  if (t.accountantConfirm && t.accountantConfirm.paid) { alert('Уже оплачено — отклонить нельзя'); render(); return; }
+  if (t.status === 'rejected') { alert(_rejectedNote(t)); render(); return; }
   const reason = prompt('Причина отклонения (необязательно):');
   if (reason === null) return;
   t.status = 'rejected';
@@ -11626,10 +11675,18 @@ async function _acctQueueDeclinePaid(ledgerKey, id) {
 
 async function confirmBudgetPaid(ledgerKey, id) {
   if (currentUser !== 'accountant' && currentUser !== 'owner') return;
-  if (!confirm('Подтвердить оплату?')) return;
+  // Checked on the record as it is NOW, not as the payment queue showed it when opened: the
+  // same conditions that put the pay button there (see _renderBudgetTxCard).
+  await _syncBeforeDecision();
   const list = getBudgetTx(ledgerKey);
   const t = list.find(x=>x.id===id);
-  if (!t) return;
+  if (!t) { render(); return; }
+  if (t.accountantConfirm && t.accountantConfirm.paid) { alert('Оплата этой операции уже подтверждена'); render(); return; }
+  if (t.status === 'rejected') { alert(_rejectedNote(t) + '\n\nОплата НЕ подтверждена.'); render(); return; }
+  if (!FINANCE_LEDGERS[ledgerKey].approvers.every(r => (t.approvals||{})[r] && t.approvals[r].approved)) {
+    alert('Согласование этой операции было отозвано — оплату пока подтвердить нельзя.'); render(); return;
+  }
+  if (!confirm('Подтвердить оплату?')) return;
   t.accountantConfirm = {paid:true, date:new Date().toISOString()};
   setBudgetTx(ledgerKey, list);
   if (_useFirebase) {
@@ -11648,10 +11705,12 @@ async function confirmBudgetPaid(ledgerKey, id) {
 // forever and quietly dragging every later month down.
 async function declineBudgetPaid(ledgerKey, id) {
   if (currentUser !== 'accountant' && currentUser !== 'owner') return;
+  await _syncBeforeDecision();
   const list = getBudgetTx(ledgerKey);
   const t = list.find(x=>x.id===id);
-  if (!t) return;
-  if (t.accountantConfirm && t.accountantConfirm.paid) { alert('Уже оплачено — отклонить нельзя'); return; }
+  if (!t) { render(); return; }
+  if (t.accountantConfirm && t.accountantConfirm.paid) { alert('Уже оплачено — отклонить нельзя'); render(); return; }
+  if (t.status === 'rejected') { alert(_rejectedNote(t)); render(); return; }
   const reason = prompt('Причина отказа в оплате (например: неверный счёт, не подлежит оплате):');
   if (reason === null) return;
   t.status = 'rejected';
