@@ -64,22 +64,40 @@ const MAX_BATCH = 40;
 // Instead: when the previous attempt started at this same message and didn't finish (and
 // wasn't a failure of the service itself — out of credit, unreachable — which says nothing
 // about the messages), take half as many. The batches keep halving until the message that
-// can't be processed is alone, and then it is set aside as a draft for a person to read
-// rather than retried forever. While still inside the stretch that failed, the small size
-// is kept even after a success, so the next attempt doesn't jump straight back to the
-// whole failing batch.
+// can't be processed is alone; alone it gets ALONE_TRIES attempts, and only then is it set
+// aside as a draft for a person to read rather than retried forever. While still inside the
+// stretch that failed, the small size is kept even after a success, so the next attempt
+// doesn't jump straight back to the whole failing batch.
+//
+// Why a message alone gets more than one attempt: on a quiet day a lone report is a batch of
+// one from the start, and "didn't finish" includes a run killed at the time limit just
+// because the model answered slowly that once. Setting it aside after that single attempt
+// turned an urgent report into a generic "couldn't parse" maintenance draft.
+const ALONE_TRIES = 2;
 function planBatch(lf, head, maxBatch) {
   const str = k => (lf[k] && lf[k].stringValue) || '';
   const num = k => Number((lf[k] && (lf[k].integerValue || lf[k].stringValue)) || 0);
   const prevSize = num('attemptSize') || maxBatch;
+  const prevTries = num('attemptTries') || 1;
   const prevUnfinished = str('lastAttemptAt') > str('lastRunAt');
-  if (prevUnfinished && str('lastFailKind') !== 'global' && str('attemptHead') === head) {
-    if (prevSize <= 1) return { size: 1, quarantine: true, suspectEnd: '' };
-    return { size: Math.max(1, Math.floor(prevSize / 2)), quarantine: false, suspectEnd: str('attemptEnd') };
+  if (prevUnfinished && str('attemptHead') === head) {
+    if (str('lastFailKind') === 'global') {
+      // The service failed (credit, outage, database) — nothing learned about these messages.
+      // An attempt already narrowed down (halved, retried alone, or a set-aside under way) is
+      // repeated exactly as it was; falling through to a full batch restarted the whole
+      // halving from the top. An ordinary attempt falls through to a full batch, as before.
+      if (prevTries > 1 || str('suspectEnd')) {
+        return { size: prevSize, tries: prevTries, quarantine: prevSize <= 1 && prevTries > ALONE_TRIES, suspectEnd: str('suspectEnd') };
+      }
+    } else if (prevSize <= 1) {
+      return { size: 1, tries: prevTries + 1, quarantine: prevTries >= ALONE_TRIES, suspectEnd: str('suspectEnd') };
+    } else {
+      return { size: Math.max(1, Math.floor(prevSize / 2)), tries: 1, quarantine: false, suspectEnd: str('attemptEnd') };
+    }
   }
   const suspectEnd = str('suspectEnd');
-  if (suspectEnd && Number(head) <= Number(suspectEnd)) return { size: prevSize, quarantine: false, suspectEnd };
-  return { size: maxBatch, quarantine: false, suspectEnd: '' };
+  if (suspectEnd && Number(head) <= Number(suspectEnd)) return { size: prevSize, tries: 1, quarantine: false, suspectEnd };
+  return { size: maxBatch, tries: 1, quarantine: false, suspectEnd: '' };
 }
 
 // Reads the last LOOKBACK_HOURS of captured messages. Filtering by topic is done here in
@@ -319,7 +337,7 @@ module.exports = async (req, res) => {
     // Everything here is ordered cheapest-first, because this runs on every message in the
     // group. The lease document answers the common case — nothing to do — in one read.
     const lease = await readDoc(LEASE_DOC, ['leaseUntil', 'lastRunAt', 'pendingSince', 'lastWatchedAt',
-      'lastAttemptAt', 'attemptHead', 'attemptEnd', 'attemptSize', 'suspectEnd', 'lastFailKind']);
+      'lastAttemptAt', 'attemptHead', 'attemptEnd', 'attemptSize', 'attemptTries', 'suspectEnd', 'lastFailKind']);
     const leaseUntil = lease.fields.leaseUntil ? Date.parse(lease.fields.leaseUntil.stringValue) : 0;
     if (!dryRun && leaseUntil > Date.now()) {
       res.status(200).json({ ok: true, skipped: 'another run is in progress' });
@@ -414,10 +432,10 @@ module.exports = async (req, res) => {
     if (!dryRun) {
       // Recorded before the model is called, so a run that dies (or is killed at the time
       // limit) still counts as an attempt: for the throttle, and for planBatch next time.
-      await updateDoc(LEASE_DOC, ['lastAttemptAt', 'attemptHead', 'attemptEnd', 'attemptSize', 'suspectEnd', 'lastFailKind'], () => ({
+      await updateDoc(LEASE_DOC, ['lastAttemptAt', 'attemptHead', 'attemptEnd', 'attemptSize', 'attemptTries', 'suspectEnd', 'lastFailKind'], () => ({
         lastAttemptAt: fsString(new Date().toISOString()),
         attemptHead: fsString(head), attemptEnd: fsString(fresh[fresh.length - 1].messageId),
-        attemptSize: fsInt(fresh.length), suspectEnd: fsString(batchPlan.suspectEnd), lastFailKind: fsString(''),
+        attemptSize: fsInt(fresh.length), attemptTries: fsInt(batchPlan.tries), suspectEnd: fsString(batchPlan.suspectEnd), lastFailKind: fsString(''),
       }));
       attemptRecorded = true;
     }
