@@ -4052,6 +4052,15 @@ async function _galShow(index) {
   _gal.cur = { url, ft, fn, id };
   const isMobile = window.innerWidth <= 640;
 
+  // max-height:100% on this <img> only works because the row below is align-items:stretch,
+  // which is what actually gives its wrapper div a definite height to be 100% OF. Center
+  // it there instead (as it used to be) and that height goes back to being auto/content-
+  // sized — a percentage against an auto height resolves to none, so max-height:100% stops
+  // constraining anything and the browser renders the photo at its native pixel size, which
+  // for an ordinary landscape phone photo is comfortably taller than the viewer: exactly
+  // what was clipping the top and bottom of every photo, in every gallery in the app (they
+  // all open through this one function). object-fit:contain only scales an image DOWN to
+  // fit a box it's actually been given — it can't shrink a box that was never constrained.
   let media;
   if (ft.startsWith('image/')) {
     media = `<img src="${url}"
@@ -4119,7 +4128,7 @@ async function _galShow(index) {
           style="color:white;background:rgba(255,255,255,.18);border:none;padding:${isMobile?'7px 14px':'5px 12px'};border-radius:6px;font-size:${isMobile?16:13}px;cursor:pointer;-webkit-tap-highlight-color:transparent">✕</button>
       </div>
     </div>
-    <div style="flex:1;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;padding:${total>1?(isMobile?'8px 0 32px':'12px 0 30px'):'8px 0'}">
+    <div style="flex:1;display:flex;align-items:stretch;justify-content:center;position:relative;overflow:hidden;padding:${total>1?(isMobile?'8px 0 32px':'12px 0 30px'):'8px 0'}">
       ${index > 0 ? navBtn(-1,'‹') : ''}
       <div style="max-width:100%;max-height:100%;display:flex;align-items:center;justify-content:center;padding:0 ${total>1&&!isMobile?'64px':'8px'}">${media}</div>
       ${index < total-1 ? navBtn(1,'›') : ''}
