@@ -1711,20 +1711,39 @@ async function _fsGetDoc(path, maskFields) {
 }
 // Low-level merge PATCH: caller supplies already-encoded Firestore `fields` and the exact
 // updateMask field paths. Only the named paths are touched; everything else is left as-is.
-async function _fsRawPatch(path, fields, maskPaths) {
-  if (!maskPaths.length) return true;
-  const qs = maskPaths.map(p => 'updateMask.fieldPaths=' + encodeURIComponent(p)).join('&');
+//
+// ifUpdateTime makes the write conditional: Firestore applies it only if the document is
+// still at exactly that version, and otherwise rejects it (400 FAILED_PRECONDITION) without
+// changing anything. That is what makes a read → merge → write sequence safe: if anyone
+// else wrote in between, the write fails instead of overwriting them with a copy that was
+// merged against data that no longer exists, and the caller re-reads and tries again.
+// Returns { conflict: true } for that case, else { updateTime } of the new version.
+async function _fsRawPatch(path, fields, maskPaths, ifUpdateTime) {
+  if (!maskPaths.length) return { updateTime: null };
+  let qs = maskPaths.map(p => 'updateMask.fieldPaths=' + encodeURIComponent(p)).join('&');
+  if (ifUpdateTime) qs += '&currentDocument.updateTime=' + encodeURIComponent(ifUpdateTime);
   const r = await fetch(_FS_DOCS + '/' + path + '?' + qs + '&key=' + _FS_KEY, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields })
   });
-  if (!r.ok) throw new Error('Firestore PATCH ' + path + ' → ' + r.status + ' ' + (await r.text()).slice(0, 200));
-  return true;
+  if (!r.ok) {
+    const body = await r.text();
+    if (ifUpdateTime && r.status === 400 && body.indexOf('FAILED_PRECONDITION') !== -1) return { conflict: true };
+    throw new Error('Firestore PATCH ' + path + ' → ' + r.status + ' ' + body.slice(0, 200));
+  }
+  const j = await r.json().catch(() => ({}));
+  return { updateTime: j.updateTime || null };
 }
-// Merge only the given top-level keys of `obj` (equivalent to the SDK's set(part,{merge:true})).
-async function _fsMergeDoc(path, obj) {
-  const fields = {}, maskPaths = [];
-  for (const k of Object.keys(obj || {})) { if (obj[k] !== undefined) { fields[k] = _toFs(obj[k]); maskPaths.push(k); } }
-  return _fsRawPatch(path, fields, maskPaths);
+
+// A masked read that also reports the document's version — the version a following
+// conditional write is pinned to. A mask naming no real field returns just the version.
+async function _fsGetDocMeta(path, maskFields) {
+  const mask = '&' + (maskFields && maskFields.length ? maskFields : ['zzVersionProbe'])
+    .map(f => 'mask.fieldPaths=' + encodeURIComponent(f)).join('&');
+  const r = await fetch(_FS_DOCS + '/' + path + '?key=' + _FS_KEY + mask);
+  if (r.status === 404) return { data: {}, updateTime: null };
+  if (!r.ok) throw new Error('Firestore GET ' + path + ' → ' + r.status + ' ' + (await r.text()).slice(0, 200));
+  const j = await r.json();
+  return { data: _fsFieldsToObj(j.fields || {}), updateTime: j.updateTime || null };
 }
 // Overwrite the document's fields with `obj` (equivalent to the SDK's set() without merge).
 async function _fsSetDoc(path, obj) {
@@ -1772,6 +1791,12 @@ const _filesDeleted = new Set();
 // `_stateDirty` tracks only the keys THIS session's own setLS() calls actually changed, so
 // the flush can merge-write just those, never fields it merely happens to be holding stale.
 const _stateDirty = new Set();
+// Bumped on every setLS of a key. A flush records each key's generation at the moment its
+// write is built, and afterwards clears the dirty mark only if the generation is unchanged —
+// i.e. only if nobody edited that key again while the write was in flight. Clearing the
+// whole set instead (as this used to) silently dropped any edit made during those seconds:
+// the key was marked clean although its newest value had never been sent.
+const _dirtyGen = {};
 // These two alone were ~530KB of the ~1.24MB appdata/state had grown to when it crossed
 // Firestore's 1MB cap and every read/write against it started failing outright (2026-09-21
 // incident) — moved into their own document (appdata/finance_ledger), same split pattern
@@ -1842,19 +1867,28 @@ function _mergeMapAgainstServer(serverMap, localMap, baseline) {
 // The random suffix is the same shape already used for file ids elsewhere in this file.
 function _newTxId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
-function _snapshotTxBaseline() {
-  TX_KEYS.forEach(k => {
-    const m = {};
-    (Array.isArray(_state[k]) ? _state[k] : []).forEach(t => {
+// The baseline form of one key's value: entry id (or map key) → that entry's JSON.
+function _serializeForBaseline(k, value) {
+  const m = {};
+  if (TX_MAP_KEYS.includes(k)) {
+    const src = (value && typeof value === 'object') ? value : {};
+    Object.keys(src).forEach(id => { m[id] = JSON.stringify(src[id]); });
+  } else {
+    (Array.isArray(value) ? value : []).forEach(t => {
       if (t && t.id != null) m[String(t.id)] = JSON.stringify(t);
     });
-    _txBaseline[k] = m;
-  });
-  TX_MAP_KEYS.forEach(k => {
-    const src = (_state[k] && typeof _state[k] === 'object') ? _state[k] : {};
-    const m = {};
-    Object.keys(src).forEach(id => { m[id] = JSON.stringify(src[id]); });
-    _txBaseline[k] = m;
+  }
+  return m;
+}
+
+// Records `keys` (default: all merge-protected keys) as "what the server holds right now".
+// Must only ever be called at a moment when _state for those keys really does equal the
+// server — right after a full load or an applied poll, synchronously, before any await
+// lets an edit slip in. Snapshotting a value that includes an unsaved edit would make the
+// merge treat that edit as already saved, and it would never be sent.
+function _snapshotTxBaseline(keys) {
+  (keys || TX_KEYS.concat(TX_MAP_KEYS)).forEach(k => {
+    _txBaseline[k] = _serializeForBaseline(k, _state[k]);
   });
 }
 
@@ -1878,7 +1912,21 @@ function _mergeTxAgainstServer(serverList, localList, baseline) {
   });
   // Anything this session deliberately deleted (present at baseline, gone locally) goes.
   Object.keys(base).forEach(id => { if (!localById.has(id)) byId.delete(id); });
-  return Array.from(byId.values());
+
+  // Entries without an id can't be tracked by this merge at all. Silently skipping them
+  // (as this used to) meant writing the result back deleted them from the server — and
+  // this merge now guards fourteen collections. The server's own id-less entries are kept
+  // as they are; a local id-less entry is added only if the server doesn't already have an
+  // identical one, so a legacy entry can't be duplicated either. The one thing that can't
+  // be expressed is deleting an id-less entry — erring towards keeping it is the safe side.
+  const serverNoId = (Array.isArray(serverList) ? serverList : []).filter(t => !(t && t.id != null));
+  const serverNoIdJson = new Set(serverNoId.map(t => JSON.stringify(t)));
+  const localNoIdNew = (Array.isArray(localList) ? localList : [])
+    .filter(t => !(t && t.id != null) && !serverNoIdJson.has(JSON.stringify(t)));
+  if (serverNoId.length || localNoIdNew.length) {
+    console.warn('[MERGE] entries without an id were kept untracked:', serverNoId.length + localNoIdNew.length);
+  }
+  return Array.from(byId.values()).concat(serverNoId, localNoIdNew);
 }
 
 const getLS = k => {
@@ -1898,6 +1946,7 @@ const setLS = (k, v) => {
       });
     } else {
       _stateDirty.add(k);
+      _dirtyGen[k] = (_dirtyGen[k] || 0) + 1;
     }
     _state[k] = v; _scheduleSave();
   }
@@ -1954,6 +2003,118 @@ function _flushState() {
   return _flushChain;
 }
 
+// Saves the dirty keys that live in one document (appdata/state, or the finance ledger).
+//
+// Each attempt reads the server's current copy of every merge-protected key being saved,
+// replays only this session's own changes onto it, and writes conditionally on the version
+// it read. If anyone else wrote that document in between, the write is rejected untouched
+// and the attempt repeats with fresh data — so a concurrent change can't be overwritten by
+// a copy merged against data that no longer exists (a window the merge alone left open).
+//
+// Only what was actually sent is marked clean, and only if it wasn't edited again while the
+// write was in flight; anything newer stays dirty for the next flush.
+async function _flushStateDocument(docPath, isLedger) {
+  const inDoc = k => k !== 'files' && LEDGER_KEYS.includes(k) === isLedger;
+  // An undefined value can't be written (Firestore rejects it) — nothing to save there.
+  Array.from(_stateDirty).forEach(k => { if (inDoc(k) && _state[k] === undefined) _stateDirty.delete(k); });
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const keys = Array.from(_stateDirty).filter(inDoc);
+    if (!keys.length) return;
+    const mergeKeys = keys.filter(k => TX_KEYS.includes(k) || TX_MAP_KEYS.includes(k));
+    const pre = await _fsGetDocMeta(docPath, mergeKeys);
+
+    // ---- From here until the request is sent, nothing awaits: what is merged, sent and
+    // recorded below is one consistent snapshot. Keys that turned dirty during the read
+    // aren't in `keys`, so they're left for the next attempt instead of going out unmerged.
+    const fields = {}, maskPaths = [], gen = {}, sentBaseline = {};
+    keys.forEach(k => {
+      if (_state[k] === undefined) return;
+      let value = _state[k];
+      const isMap = TX_MAP_KEYS.includes(k), isList = TX_KEYS.includes(k);
+      if (isMap || isList) {
+        const server = pre.data[k];
+        // If the server has no such field yet there is nothing to merge against, and the
+        // local value is simply the first version of it. Treating a missing field as an
+        // empty list would instead delete every entry this session hadn't touched.
+        const serverHasIt = isMap ? (server && typeof server === 'object' && !Array.isArray(server))
+                                  : Array.isArray(server);
+        if (serverHasIt) {
+          value = isMap ? _mergeMapAgainstServer(server, value, _txBaseline[k])
+                        : _mergeTxAgainstServer(server, value, _txBaseline[k]);
+          _state[k] = value;
+        }
+        // Serialized now, not after the write: entries are shared objects that a later
+        // edit may mutate in place, and the baseline must describe what was really sent.
+        sentBaseline[k] = _serializeForBaseline(k, value);
+      }
+      fields[k] = _toFs(value);
+      maskPaths.push(k);
+      gen[k] = _dirtyGen[k] || 0;
+    });
+    if (!maskPaths.length) return;
+
+    const res = await _fsRawPatch(docPath, fields, maskPaths, pre.updateTime);
+    if (res.conflict) continue;
+
+    // The document equals "what this tab last fully synced + this write" only if nobody
+    // else had written it since that sync. Only then may the version stamp move forward
+    // (sparing the next poll a full download); otherwise it stays stale on purpose, so the
+    // next poll does fetch the other writer's changes instead of silently skipping them.
+    if (pre.updateTime && pre.updateTime === _docVer[docPath] && res.updateTime) _docVer[docPath] = res.updateTime;
+    Object.keys(sentBaseline).forEach(k => { _txBaseline[k] = sentBaseline[k]; });
+    keys.forEach(k => { if (gen[k] !== undefined && (_dirtyGen[k] || 0) === gen[k]) _stateDirty.delete(k); });
+    return;
+  }
+  throw new Error('данные одновременно изменяются другими пользователями — сохранение не удалось, повторите попытку');
+}
+
+// Same discipline for the files registry. Its writes are per file id (files.<id> paths), so
+// they can't clobber anyone else's entries in the first place; the version condition is
+// only there so a successful write can safely advance the version stamp. If it keeps
+// losing races, a final unconditional write is still safe — it just doesn't advance it.
+async function _flushFilesRegistry() {
+  if (!_filesBaseline) _filesBaseline = {};
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const last = attempt === 4;
+    const pre = last ? { updateTime: null } : await _fsGetDocMeta('appdata/files_registry', []);
+
+    // ---- Synchronous from here until the request is sent.
+    const cur = _state.files || {};
+    // A dirty id whose entry is gone has nothing to write (its removal is tracked separately).
+    Array.from(_filesDirty).forEach(id => { if (cur[id] === undefined) _filesDirty.delete(id); });
+    const fields = { files: { mapValue: { fields: {} } } }, maskPaths = [], sent = {}, removed = [];
+    _filesDirty.forEach(id => {
+      sent[id] = JSON.stringify(cur[id]);
+      fields.files.mapValue.fields[id] = _toFs(cur[id]);
+      maskPaths.push('files.' + id);
+    });
+    // An id in the path list with no value in the body is how REST deletes one map key.
+    _filesDeleted.forEach(id => { if (!(id in cur)) { removed.push(id); maskPaths.push('files.' + id); } });
+    if (!maskPaths.length) return;
+
+    const res = await _fsRawPatch('appdata/files_registry', fields, maskPaths, pre.updateTime);
+    if (res.conflict) continue;
+
+    const REG = 'appdata/files_registry';
+    if (pre.updateTime && pre.updateTime === _docVer[REG] && res.updateTime) _docVer[REG] = res.updateTime;
+    // Clear only what was sent, and only if it's still exactly what was sent — a photo added
+    // or changed during the write stays dirty. Clearing wholesale (as this used to) marked a
+    // photo uploaded mid-write as saved when it never reached the registry: a broken thumbnail.
+    const after = _state.files || {};
+    Object.keys(sent).forEach(id => {
+      if (after[id] !== undefined && JSON.stringify(after[id]) === sent[id]) {
+        _filesDirty.delete(id);
+        _filesBaseline[id] = JSON.parse(sent[id]);
+      }
+    });
+    removed.forEach(id => {
+      if (!(id in after)) { _filesDeleted.delete(id); delete _filesBaseline[id]; }
+    });
+    return;
+  }
+}
+
 async function _doFlushState() {
   if (!_firestoreDB) return true;
   try {
@@ -1994,18 +2155,7 @@ async function _doFlushState() {
     // effect) every file another session had added since — exactly the "images keep
     // disappearing" reports this was causing repeatedly.
     if (filesPart !== undefined && (_filesDirty.size || _filesDeleted.size)) {
-      // Nested per-id merge over REST: each changed file id becomes an updateMask path
-      // `files.<id>` with its value in the body; each deleted id becomes a `files.<id>`
-      // path with NO body entry (which is how REST deletes a single map key). File ids
-      // are base36 alphanumeric by construction, so they need no field-path escaping.
-      const fields = { files: { mapValue: { fields: {} } } };
-      const maskPaths = [];
-      _filesDirty.forEach(id => { if (filesPart[id] !== undefined) { fields.files.mapValue.fields[id] = _toFs(filesPart[id]); maskPaths.push('files.' + id); } });
-      _filesDeleted.forEach(id => { maskPaths.push('files.' + id); });
-      await _fsRawPatch('appdata/files_registry', fields, maskPaths);
-      _filesDirty.clear();
-      _filesDeleted.clear();
-      _filesBaseline = JSON.parse(JSON.stringify(filesPart));
+      await _flushFilesRegistry();
     }
     // Same merge principle as the files write above, generalized: send only the specific
     // top-level keys THIS session actually changed via setLS() since its last flush, via
@@ -2014,52 +2164,14 @@ async function _doFlushState() {
     // budget-import flag) can then no longer overwrite that field just by saving something
     // unrelated — it simply never includes that field in its write at all.
     if (_stateDirty.size) {
-      const statePart = {}, ledgerPart = {};
-      _stateDirty.forEach(k => {
-        if (k === 'files' || _state[k] === undefined) return;
-        (LEDGER_KEYS.includes(k) ? ledgerPart : statePart)[k] = _state[k];
-      });
-
-      // Re-read the ledgers a moment before writing them and replay only this session's
-      // own transaction changes onto whatever is there now, so a concurrent approval or
-      // payment by another role is carried forward instead of being overwritten. See the
-      // TX_KEYS comment for why the finance arrays can't be written wholesale.
-      const dirtyTxKeys = TX_KEYS.filter(k => _stateDirty.has(k) && Array.isArray(_state[k]))
-        .concat(TX_MAP_KEYS.filter(k => _stateDirty.has(k) && _state[k] && typeof _state[k] === 'object'));
-      if (dirtyTxKeys.length) {
-        const ledgerDirty = dirtyTxKeys.filter(k => LEDGER_KEYS.includes(k));
-        const stateDirtyTx = dirtyTxKeys.filter(k => !LEDGER_KEYS.includes(k));
-        const [serverLedger, serverState] = await Promise.all([
-          ledgerDirty.length ? _fsGetDoc('appdata/finance_ledger', ledgerDirty).catch(() => null) : null,
-          stateDirtyTx.length ? _fsGetDoc('appdata/state', stateDirtyTx).catch(() => null) : null,
-        ]);
-        dirtyTxKeys.forEach(k => {
-          const isLedger = LEDGER_KEYS.includes(k);
-          const serverDoc = isLedger ? serverLedger : serverState;
-          // If the re-read didn't actually produce that array (request failed, document
-          // or field missing), merging would treat the server as empty and drop every
-          // transaction this session hadn't touched. Leave the key alone instead — the
-          // plain whole-array write below is then the correct, safe behaviour.
-          const isMap = TX_MAP_KEYS.includes(k);
-          if (!serverDoc) return;
-          if (isMap ? (!serverDoc[k] || typeof serverDoc[k] !== 'object')
-                    : !Array.isArray(serverDoc[k])) return;
-          const merged = isMap
-            ? _mergeMapAgainstServer(serverDoc[k], _state[k], _txBaseline[k])
-            : _mergeTxAgainstServer(serverDoc[k], _state[k], _txBaseline[k]);
-          _state[k] = merged;
-          (isLedger ? ledgerPart : statePart)[k] = merged;
-        });
-      }
-
-      const writes = [];
-      if (Object.keys(statePart).length) writes.push(_fsMergeDoc('appdata/state', statePart));
-      if (Object.keys(ledgerPart).length) writes.push(_fsMergeDoc('appdata/finance_ledger', ledgerPart));
-      await Promise.all(writes);
-      _stateDirty.clear();
-      // The ledgers now match the server again, so the next save diffs against this.
-      _snapshotTxBaseline();
+      await Promise.all([
+        _flushStateDocument('appdata/state', false),
+        _flushStateDocument('appdata/finance_ledger', true),
+      ]);
     }
+    // Anything edited while this flush was in flight is still marked dirty (see _dirtyGen);
+    // make sure it gets a flush of its own rather than waiting for some unrelated later save.
+    if (_stateDirty.size || _filesDirty.size || _filesDeleted.size) _scheduleSave();
     _showToast('✅ Сохранено', true);
     return true;
   } catch(e) {
@@ -2246,10 +2358,20 @@ async function _pollState() {
 // action that changed the server copy, where the version stamp may not have caught up yet.
 async function _pollStateNow(force) {
   let changed = false;
+  // The poll checks for pending edits before it starts, but each download takes a moment,
+  // and an edit made during that moment used to be overwritten the instant the downloaded
+  // copy was applied — marked dirty, but with the server's value, so the edit was simply
+  // gone. So the check is repeated at the moment of applying: if anything was edited
+  // meanwhile, the download is discarded (and its version stamp rolled back, so the next
+  // poll fetches it again rather than believing it's already current).
+  const editedMeanwhile = () => _stateDirty.size || _filesDirty.size || _filesDeleted.size;
+  const STATE_KEYS_TRACKED = TX_KEYS.concat(TX_MAP_KEYS).filter(k => !LEDGER_KEYS.includes(k));
 
   const stVer = force ? null : await _fsDocVersion('appdata/state');
   if (force || (stVer && stVer !== _docVer['appdata/state'])) {
+    const prevVer = _docVer['appdata/state'];
     const st = await _fsGetDoc('appdata/state');
+    if (editedMeanwhile()) { _docVer['appdata/state'] = prevVer; return changed; }
     if (st && Object.keys(st).length) {
       // `files` and the LEDGER_KEYS live in their own documents — carry the already-loaded
       // copies forward instead of dropping them, exactly as the old onSnapshot did.
@@ -2259,14 +2381,18 @@ async function _pollStateNow(force) {
       _state = st;
       _state.files = filesBackup;
       LEDGER_KEYS.forEach(k => { if (ledgerBackup[k] !== undefined) _state[k] = ledgerBackup[k]; });
+      // Same tick, no await in between: these keys now equal the server exactly.
+      _snapshotTxBaseline(STATE_KEYS_TRACKED);
       changed = true;
     }
   }
 
   const ledVer = force ? null : await _fsDocVersion('appdata/finance_ledger');
   if (force || (ledVer && ledVer !== _docVer['appdata/finance_ledger'])) {
+    const prevVer = _docVer['appdata/finance_ledger'];
     const led = await _fsGetDoc('appdata/finance_ledger');
-    if (led) { Object.assign(_state, led); changed = true; }
+    if (editedMeanwhile()) { _docVer['appdata/finance_ledger'] = prevVer; return changed; }
+    if (led) { Object.assign(_state, led); _snapshotTxBaseline(LEDGER_KEYS); changed = true; }
   }
 
   // Photos and documents uploaded by other people live in their own document, which the
@@ -2278,20 +2404,19 @@ async function _pollStateNow(force) {
   if (force || changed || _pollTick % 6 === 0) {
     const regVer = force ? null : await _fsDocVersion('appdata/files_registry');
     if (force || (regVer && regVer !== _docVer['appdata/files_registry'])) {
+      const prevVer = _docVer['appdata/files_registry'];
       const reg = await _fsGetDoc('appdata/files_registry');
+      // A photo uploaded during the download would otherwise vanish from _state.files the
+      // moment this applies — leaving its record pointing at nothing.
+      if (editedMeanwhile()) { _docVer['appdata/files_registry'] = prevVer; return changed; }
       if (reg) {
         _state.files = reg.files || {};
-        // The baseline the files diff works against has to move with it. Polling only runs
-        // when no local file changes are pending, so this can't discard an unsaved upload.
+        // The baseline the files diff works against has to move with it.
         _filesBaseline = JSON.parse(JSON.stringify(_state.files));
         changed = true;
       }
     }
   }
-
-  // _state now mirrors the server, so the ledger baseline has to move with it — leaving
-  // it stale would make the next save replay already-saved edits over newer data.
-  if (changed) _snapshotTxBaseline();
   return changed;
 }
 
@@ -2381,7 +2506,11 @@ async function refreshTelegramDrafts() {
     if (j.skipped === 'throttled') {
       _showToast(`⏳ Уже проверяли только что — повторите через ${j.minutesUntilNextRun} мин.`, false);
     } else if (j.created > 0) {
-      // The drafts were written server-side, so pull the fresh state before re-rendering.
+      // The drafts were written server-side, so pull the fresh state before re-rendering —
+      // after saving whatever is pending here first, since a pull with unsaved local edits
+      // is discarded rather than allowed to overwrite them.
+      clearTimeout(_saveTimer);
+      await _flushState();
       await _pollStateNow(true);
       _showToast(`✅ Новых черновиков: ${j.created}`, true);
     } else {
