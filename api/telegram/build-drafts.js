@@ -23,7 +23,7 @@
 // Required Vercel environment variables: TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, CRON_SECRET.
 
 const {
-  fsString, fsStringArray, readDoc, updateDoc, registerFiles, acquireLease, releaseLease,
+  fsString, fsInt, fsStringArray, readDoc, updateDoc, registerFiles, acquireLease, releaseLease,
 } = require('../_lib/firestore');
 const { DRAFTS_LEASE_DOC, signalAfterCheck, nudgeGate } = require('../_lib/drafts-signal');
 
@@ -53,6 +53,34 @@ const LEASE_TTL_MS = 90000;
 // time, fail every time, and never let anything through. The rest go to the next run (the
 // drafts already made are passed back as context, so a thread split across runs is joined).
 const MAX_BATCH = 40;
+
+// How many of the oldest unprocessed messages this attempt takes. Pure — takes the lease
+// document's fields — so it can be tested without a database.
+//
+// Every attempt always takes the OLDEST unprocessed messages. So if an answer can't be
+// produced for one particular batch (a refusal, an answer that runs out of room or can't
+// be parsed, a run killed at the time limit), retrying the same batch fails the same way,
+// every time, and nothing behind it is ever processed until it ages out of the window.
+// Instead: when the previous attempt started at this same message and didn't finish (and
+// wasn't a failure of the service itself — out of credit, unreachable — which says nothing
+// about the messages), take half as many. The batches keep halving until the message that
+// can't be processed is alone, and then it is set aside as a draft for a person to read
+// rather than retried forever. While still inside the stretch that failed, the small size
+// is kept even after a success, so the next attempt doesn't jump straight back to the
+// whole failing batch.
+function planBatch(lf, head, maxBatch) {
+  const str = k => (lf[k] && lf[k].stringValue) || '';
+  const num = k => Number((lf[k] && (lf[k].integerValue || lf[k].stringValue)) || 0);
+  const prevSize = num('attemptSize') || maxBatch;
+  const prevUnfinished = str('lastAttemptAt') > str('lastRunAt');
+  if (prevUnfinished && str('lastFailKind') !== 'global' && str('attemptHead') === head) {
+    if (prevSize <= 1) return { size: 1, quarantine: true, suspectEnd: '' };
+    return { size: Math.max(1, Math.floor(prevSize / 2)), quarantine: false, suspectEnd: str('attemptEnd') };
+  }
+  const suspectEnd = str('suspectEnd');
+  if (suspectEnd && Number(head) <= Number(suspectEnd)) return { size: prevSize, quarantine: false, suspectEnd };
+  return { size: maxBatch, quarantine: false, suspectEnd: '' };
+}
 
 // Reads the last LOOKBACK_HOURS of captured messages. Filtering by topic is done here in
 // JS rather than in the query: combining a topicId filter with an orderBy on date needs a
@@ -160,22 +188,26 @@ async function clusterIssues(messages, openDrafts) {
     headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 16000, messages: [{ role: 'user', content: prompt }] }),
   });
+  // A failed request is the service's problem (credit, key, outage), not these messages' —
+  // it throws a plain error. Everything below is about this batch's answer, and is marked
+  // batchSpecific so planBatch() can shrink the batch around whatever message causes it.
   if (!resp.ok) throw new Error(`Anthropic ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
+  const batchErr = msg => Object.assign(new Error(msg), { batchSpecific: true });
   const data = await resp.json();
   // Anything but a clean finish is a failure, never "no issues found". The caller marks
   // every analysed message as processed, so returning [] for a truncated or refused answer
   // (as this used to) permanently discarded those workers' reports with no error anywhere.
   // Throwing leaves them unprocessed for the next run. No tools or stop sequences are sent,
   // so a successful answer can only end with end_turn.
-  if (data.stop_reason !== 'end_turn') throw new Error(`clustering did not finish: stop_reason=${data.stop_reason}`);
+  if (data.stop_reason !== 'end_turn') throw batchErr(`clustering did not finish: stop_reason=${data.stop_reason}`);
   // Sonnet 5 can put a thinking block before the text block, so pick by type.
   const textBlock = (data.content || []).find(b => b.type === 'text');
   const raw = ((textBlock && textBlock.text) || '').trim();
   const match = raw.match(/\[[\s\S]*\]/);
-  if (!match) throw new Error('clustering returned no JSON array: ' + raw.slice(0, 200));
+  if (!match) throw batchErr('clustering returned no JSON array: ' + raw.slice(0, 200));
   let parsed;
-  try { parsed = JSON.parse(match[0]); } catch (e) { throw new Error('clustering JSON unparseable: ' + e.message); }
-  if (!Array.isArray(parsed)) throw new Error('clustering result is not an array');
+  try { parsed = JSON.parse(match[0]); } catch (e) { throw batchErr('clustering JSON unparseable: ' + e.message); }
+  if (!Array.isArray(parsed)) throw batchErr('clustering result is not an array');
   return parsed; // a genuinely empty array is the only real "no issues"
 }
 
@@ -275,13 +307,19 @@ module.exports = async (req, res) => {
   const isCron = !!process.env.CRON_SECRET && (req.headers['authorization'] || '') === `Bearer ${process.env.CRON_SECRET}`;
   const dryRun = req.query && (req.query.dryRun === '1' || req.query.dryRun === 'true');
   const force = req.query && (req.query.force === '1' || req.query.force === 'true');
+  // A dry run skips the lease, the gate and the throttle, still pays for the model call,
+  // and returns what the model made of the group's internal messages. That's an operator's
+  // tool, not something the public URL should offer anyone — so it takes the cron's secret.
+  if (dryRun && !isCron) { res.status(401).json({ error: 'dryRun requires CRON_SECRET' }); return; }
   const holder = 'run-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   let leaseHeld = false;
+  let attemptRecorded = false;
 
   try {
     // Everything here is ordered cheapest-first, because this runs on every message in the
     // group. The lease document answers the common case — nothing to do — in one read.
-    const lease = await readDoc(LEASE_DOC, ['leaseUntil', 'lastRunAt', 'pendingSince', 'lastWatchedAt']);
+    const lease = await readDoc(LEASE_DOC, ['leaseUntil', 'lastRunAt', 'pendingSince', 'lastWatchedAt',
+      'lastAttemptAt', 'attemptHead', 'attemptEnd', 'attemptSize', 'suspectEnd', 'lastFailKind']);
     const leaseUntil = lease.fields.leaseUntil ? Date.parse(lease.fields.leaseUntil.stringValue) : 0;
     if (!dryRun && leaseUntil > Date.now()) {
       res.status(200).json({ ok: true, skipped: 'another run is in progress' });
@@ -296,8 +334,13 @@ module.exports = async (req, res) => {
         return;
       }
     }
-    // Throttle for the manual/nudge path only — the daily cron always runs.
-    const lastRunIso = (lease.fields.lastRunAt && lease.fields.lastRunAt.stringValue) || '';
+    // Throttle for the manual/nudge path only — the daily cron always runs. It counts from
+    // the last ATTEMPT, not just the last success: a run that failed used to leave nothing
+    // behind, so every following group message re-ran the full query and the model on the
+    // same batch — the quadratic reads, plus a paid call per message, came straight back
+    // whenever anything was wrong (out of credit, a refused answer, a run killed at 60s).
+    const lastRunIso = [lease.fields.lastRunAt, lease.fields.lastAttemptAt]
+      .map(v => (v && v.stringValue) || '').sort().pop();
     if (!isCron && !dryRun && lastRunIso) {
       const minsSince = (Date.now() - Date.parse(lastRunIso)) / 60000;
       if (minsSince < THROTTLE_MINUTES) {
@@ -364,7 +407,20 @@ module.exports = async (req, res) => {
         return;
       }
     }
-    const fresh = work.fresh.slice(0, MAX_BATCH); // oldest first — the query is date-ascending
+    // Oldest first — the query is date-ascending. See planBatch() for the size.
+    const head = work.fresh[0].messageId;
+    const batchPlan = planBatch(lease.fields, head, MAX_BATCH);
+    const fresh = work.fresh.slice(0, batchPlan.size);
+    if (!dryRun) {
+      // Recorded before the model is called, so a run that dies (or is killed at the time
+      // limit) still counts as an attempt: for the throttle, and for planBatch next time.
+      await updateDoc(LEASE_DOC, ['lastAttemptAt', 'attemptHead', 'attemptEnd', 'attemptSize', 'suspectEnd', 'lastFailKind'], () => ({
+        lastAttemptAt: fsString(new Date().toISOString()),
+        attemptHead: fsString(head), attemptEnd: fsString(fresh[fresh.length - 1].messageId),
+        attemptSize: fsInt(fresh.length), suspectEnd: fsString(batchPlan.suspectEnd), lastFailKind: fsString(''),
+      }));
+      attemptRecorded = true;
+    }
 
     // The drafts still waiting for the owner, passed to the model as context so a reply that
     // arrives after its issue was already drafted updates that draft instead of becoming a
@@ -382,7 +438,13 @@ module.exports = async (req, res) => {
     }).filter(d => d.id);
     const openIds = new Set(openDrafts.map(d => d.id));
 
-    const issues = await clusterIssues(fresh, openDrafts);
+    // A message that still couldn't be processed on its own is set aside for a person
+    // instead of being sent again: one draft carrying its text and photos, marked as such.
+    const issues = batchPlan.quarantine
+      ? [{ messageIds: [head], type: 'maintenance', priority: 'medium', category: 'other', sufficient: true,
+           title: '⚠️ Сообщение не удалось разобрать автоматически',
+           description: 'ИИ несколько раз не смог обработать это сообщение из Telegram. Текст и фото приложены — проверьте и заведите заявку вручную, если она нужна.' }]
+      : await clusterIssues(fresh, openDrafts);
     const byMsg = {};
     fresh.forEach(m => { byMsg[m.messageId] = m; });
 
@@ -460,8 +522,16 @@ module.exports = async (req, res) => {
       leaseHeld = false;
     }
 
-    res.status(200).json({ ok: true, dryRun: !!dryRun, analysed: fresh.length, created: plan.newDrafts.length, issues: summary });
+    res.status(200).json({ ok: true, dryRun: !!dryRun, analysed: fresh.length, created: plan.newDrafts.length,
+      quarantined: batchPlan.quarantine ? head : undefined, issues: summary });
   } catch (e) {
+    // A failure of the service or the database says nothing about these messages, so it
+    // mustn't make planBatch() shrink the batch around them. (A run killed outright never
+    // gets here, and is treated as being about the batch — a batch too big to finish in
+    // time is exactly what shrinking fixes.)
+    if (attemptRecorded && !(e && e.batchSpecific)) {
+      try { await updateDoc(LEASE_DOC, ['lastFailKind'], () => ({ lastFailKind: fsString('global') })); } catch (e2) { /* best-effort */ }
+    }
     res.status(500).json({ ok: false, error: String((e && e.message) || e) });
   } finally {
     // Any exit that didn't complete the run hands the lease straight back rather than making
@@ -473,3 +543,4 @@ module.exports = async (req, res) => {
 // Exposed for tests only.
 module.exports.applyDraftPlan = applyDraftPlan;
 module.exports.clusterIssues = clusterIssues;
+module.exports.planBatch = planBatch;

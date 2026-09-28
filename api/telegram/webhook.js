@@ -292,6 +292,8 @@ module.exports = async (req, res) => {
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
       body: JSON.stringify(body),
     });
+    // Taken only now that the message is in telegram_messages — see signalOnCapture.
+    const capturedMs = Date.now();
 
     // Drafting itself is NOT done here any more — one message rarely tells the whole
     // story, and doing it per-message produced thin, fragmented drafts that each quoted a
@@ -310,7 +312,7 @@ module.exports = async (req, res) => {
     // Best-effort: if this write fails, the next full check re-syncs the signal.
     if (DRAFT_TOPIC_IDS.includes(topicId)) {
       const msgMs = (msg.date || 0) * 1000;
-      try { await updateDoc(DRAFTS_LEASE_DOC, ['lastWatchedAt', 'pendingSince'], f => signalOnCapture(f, msgMs)); }
+      try { await updateDoc(DRAFTS_LEASE_DOC, ['lastWatchedAt', 'pendingSince'], f => signalOnCapture(f, msgMs, capturedMs)); }
       catch (e) { /* see above */ }
     }
 
