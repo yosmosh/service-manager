@@ -2367,7 +2367,52 @@ async function _checkForNewVersion() {
   _reloadIfSafe();
 }
 
-function _doReload() { location.reload(); } // separate so tests can observe it
+// Who is logged in lives only in memory (currentUser) — nothing stores a session — so a
+// plain reload after every deploy dropped everyone back to the login screen, at a random
+// idle moment. The session is carried across THIS one reload only: written to this tab's
+// sessionStorage right before it, consumed (and deleted) by _resumeAfterUpdate() on the
+// next load, and ignored if it's more than a couple of minutes old. A manual F5 writes
+// nothing, so it still logs out exactly as before.
+const _RESUME_KEY = '_resumeAfterUpdate';
+function _doReload() {
+  try {
+    if (currentUser) sessionStorage.setItem(_RESUME_KEY, JSON.stringify({
+      u: currentUser, v: view, p: activeProvider,
+      bl: budgetLedger, bm: budgetMonth, by: budgetYear, t: Date.now(),
+    }));
+  } catch (e) { /* storage blocked — the reload still happens, just logged out as before */ }
+  location.reload();
+}
+
+// Restores what _doReload() carried over, using the same role checks doLogin() applies,
+// and returns whether it did. Called once, at the end of init().
+function _resumeAfterUpdate() {
+  let s = null;
+  try { s = JSON.parse(sessionStorage.getItem(_RESUME_KEY) || 'null'); sessionStorage.removeItem(_RESUME_KEY); }
+  catch (e) { return false; }
+  if (!s || !s.u || !(Date.now() - s.t < 120000)) return false;
+  const releaseGated = ['alexander', 'accountant', 'management', 'admin2'];
+  const known = ['owner', 'admin', 'kitchen', 'kitchen_worker'].concat(releaseGated).includes(s.u)
+    || PROVIDERS.some(p => p.id === s.u);
+  if (!known || (releaseGated.includes(s.u) && !getBudgetReleased())) return false;
+  currentUser = s.u;
+  if (s.bl && FINANCE_LEDGERS[s.bl]) budgetLedger = s.bl;
+  if (s.bm) budgetMonth = s.bm;
+  if (s.by) budgetYear = s.by;
+  document.getElementById('login-screen').style.display = 'none';
+  applyUserLayout();
+  // quiet: an update isn't a fresh arrival at Бюджет, so no approval-queue popup.
+  showView(s.v || 'dashboard', s.p || undefined, { quiet: true });
+  return true;
+}
+
+// The banner's own button — a deliberate "update now", which can lose what's unsaved, so it
+// asks first when there's anything to lose.
+function _updateNow() {
+  const unsaved = _stateDirty.size || _filesDirty.size || _filesDeleted.size || _modalIsOpen();
+  if (unsaved && !confirm('Есть открытая форма или несохранённые изменения — они пропадут. Обновить всё равно?')) return;
+  _doReload();
+}
 
 function _reloadIfSafe() {
   const busy = !_safeToRepaint() || _budgetSaveInFlight || _filesStillProcessing()
@@ -2378,7 +2423,7 @@ function _reloadIfSafe() {
     b.id = '_new-version-banner';
     b.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:99999;background:#1e40af;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;max-width:calc(100vw - 32px)';
     b.innerHTML = '<span>🔄 Вышла новая версия — обновится автоматически, как только вы закончите.</span>'
-      + '<button onclick="location.reload()" style="background:#fff;color:#1e40af;border:none;border-radius:6px;padding:5px 10px;font-weight:600;cursor:pointer">Обновить</button>';
+      + '<button onclick="_updateNow()" style="background:#fff;color:#1e40af;border:none;border-radius:6px;padding:5px 10px;font-weight:600;cursor:pointer">Обновить</button>';
     document.body.appendChild(b);
   }
 }
@@ -2634,16 +2679,15 @@ function rejectTelegramDraft(id) {
   render();
 }
 
-// Called from the end of saveSOS/saveMaint's success path — folds the draft removal
-// into the same save/flush instead of needing a second round-trip. Returns the photos/
-// source-message-id to attach to the record being created, or null if this save didn't
-// originate from a draft.
-function _resolveDraftIfPending() {
-  if (!_resolvingDraftId) return null;
-  setLS('telegram_drafts', getTelegramDrafts().filter(d => d.id !== _resolvingDraftId));
-  const extra = _resolvingDraftExtra;
-  _resolvingDraftId = null;
-  _resolvingDraftExtra = null;
+// Called from saveSOS/saveMaint once their uploads are done — folds the draft removal
+// into the same save/flush instead of needing a second round-trip. Takes the draft id and
+// details the save captured when it STARTED (the globals may belong to another form by
+// now), and returns the photos/source-message-ids to attach to the record, or null if this
+// save didn't originate from a draft.
+function _takeDraft(draftId, extra) {
+  if (!draftId) return null;
+  setLS('telegram_drafts', getTelegramDrafts().filter(d => d.id !== draftId));
+  if (_resolvingDraftId === draftId) { _resolvingDraftId = null; _resolvingDraftExtra = null; }
   return extra;
 }
 
@@ -3191,7 +3235,7 @@ function closeMobileSidebar() {
   document.getElementById('sidebar-overlay').classList.remove('active');
 }
 
-function showView(v, pid) {
+function showView(v, pid, opts) {
   view = v; activeProvider = pid || null;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   const navEl = document.getElementById(v === 'provider' ? `nav-${pid}` : `nav-${v}`);
@@ -3208,6 +3252,7 @@ function showView(v, pid) {
   // Surface what needs attention right now instead of making the owner/accountant scan
   // three ledgers' worth of history to spot it — only on actually navigating to Бюджет
   // (not on every live-sync re-render), and only if there's something to show.
+  if (opts && opts.quiet) return;
   if (v === 'budget' && currentUser === 'owner') openOwnerApprovalQueueModal();
   if (v === 'budget' && currentUser === 'accountant') openAccountantPaymentQueueModal();
 }
@@ -3910,11 +3955,19 @@ function readFiles(files) {
     target._reading = (target._reading || 0) + 1;
     if (target === pendingFiles) renderPending();
     // A file that never finishes (an unreadable one can hang FileReader) must not block
-    // saving forever — after the timeout it is simply dropped.
+    // saving forever — after the timeout it is left out. But never silently: it used to
+    // just vanish from the list, so a three-page invoice could go out with two pages and
+    // nobody the wiser. It's named in the list (and a toast) until it's picked again.
+    const failed = () => {
+      target._failed = (target._failed || []).filter(n => n !== f.name).concat([f.name]);
+      if (target === pendingFiles) _showToast('⚠️ Не удалось обработать «' + f.name + '» — выберите файл снова', false);
+    };
     const timeout = new Promise(res => setTimeout(() => res(null), _FILE_READ_TIMEOUT_MS));
     Promise.race([_compressImage(f), timeout]).then(function(res) {
-      if (res) target.push({name: f.name, type: res.type, size: res.size, data: res.data});
-    }).catch(function() { /* unreadable file — dropped */ }).then(function() {
+      if (!res) { failed(); return; }
+      target.push({name: f.name, type: res.type, size: res.size, data: res.data});
+      if (target._failed) target._failed = target._failed.filter(n => n !== f.name);
+    }).catch(failed).then(function() {
       target._reading--;
       if (target === pendingFiles) renderPending();
     });
@@ -3929,6 +3982,7 @@ function renderPending() {
   const el = document.getElementById('pending-list');
   if (!el) return;
   const busy = pendingFiles._reading || 0;
+  const failed = pendingFiles._failed || [];
   el.innerHTML = pendingFiles.map((f,i) => `
     <div class="file-item">
       <span>${fileEmoji(f.type)}</span>
@@ -3936,7 +3990,8 @@ function renderPending() {
       <span class="fs">${fmtSize(f.size)}</span>
       <button onclick="pendingFiles.splice(${i},1);renderPending()" style="color:#dc2626">✕</button>
     </div>`).join('')
-    + (busy ? `<div style="font-size:12px;color:#6b7280;margin-top:4px">⏳ Обработка файлов… (${busy})</div>` : '');
+    + (busy ? `<div style="font-size:12px;color:#6b7280;margin-top:4px">⏳ Обработка файлов… (${busy})</div>` : '')
+    + (failed.length ? `<div style="font-size:12px;color:#dc2626;margin-top:4px">⚠️ Не удалось обработать — выберите снова: ${failed.map(_escHtml).join(', ')}</div>` : '');
 }
 
 function fmtDate(d) {
@@ -5656,6 +5711,7 @@ async function loadMaintImages() { await _loadImages('img.mthumb[data-fid]'); }
 function openMaintModal(editId) {
   const ex = editId ? getMaintWorks().find(w => w.id === editId) : null;
   pendingFiles = [];
+  _modalGen++;
   document.getElementById('modal-title').textContent = ex ? '✏️ Редактировать работу' : '➕ Добавить работу';
 
   const _exSorted = (ex?.fileIds||[])
@@ -5768,7 +5824,23 @@ function openMaintGallery(workId, startIndex) {
   _galShow(startIndex);
 }
 
+// One maintenance save at a time — the button was disabled, but an exception mid-upload
+// left it disabled for good, and nothing else stopped a second concurrent save.
+let _maintSaveInFlight = false;
 async function saveMaint(editId) {
+  if (_resendPending()) return _retryPendingSend(); // never a second copy — see _offerResend
+  if (_maintSaveInFlight) return;
+  _maintSaveInFlight = true;
+  try {
+    await _saveMaintInner(editId);
+  } finally {
+    _maintSaveInFlight = false;
+    const b = document.getElementById('maint-save-btn');
+    if (b && !_resendPending()) { b.disabled = false; b.textContent = '💾 Сохранить'; }
+  }
+}
+
+async function _saveMaintInner(editId) {
   try {
     // Same partial-upload race as the budget form — see readFiles.
     if (_filesStillProcessing()) { _showToast('⏳ Файлы ещё обрабатываются — подождите пару секунд', false); return; }
@@ -5789,16 +5861,20 @@ async function saveMaint(editId) {
     const description      = document.getElementById('maint-desc').value.trim();
     const quarterlySection = document.getElementById('maint-qsec').value || undefined;
     const linkedProviderId = document.getElementById('maint-provider').value || undefined;
+    // Taken before the first upload — see _saveSOSInner.
+    const formGen = _modalGen;
+    const picked = pendingFiles.slice();
+    const draftId = _resolvingDraftId, draftFrom = _resolvingDraftExtra;
 
     // Upload files first (synchronous, like SOS)
     const fileIds=[], fileNames=[], fileTypes=[];
-    for (let _fii = 0; _fii < pendingFiles.length; _fii++) {
-      const f = pendingFiles[_fii];
-      const fid = await dbSave({ name:f.name, type:f.type, size:f.size, data:f.data }, _fii+1, pendingFiles.length);
+    for (let _fii = 0; _fii < picked.length; _fii++) {
+      const f = picked[_fii];
+      const fid = await dbSave({ name:f.name, type:f.type, size:f.size, data:f.data }, _fii+1, picked.length);
       fileIds.push(fid); fileNames.push(f.name); fileTypes.push(f.type);
     }
 
-    const draftExtra = _resolveDraftIfPending();
+    const draftExtra = _takeDraft(draftId, draftFrom);
     if (draftExtra) {
       fileIds.unshift(...draftExtra.fileIds);
       fileNames.unshift(...draftExtra.fileNames);
@@ -5859,21 +5935,29 @@ async function saveMaint(editId) {
       // Move: remove from maint_works (it now lives in the provider journal)
       setLS('maint_works', getMaintWorks().filter(w => w.id !== workId));
     }
-    if (_useFirebase) {
-      clearTimeout(_saveTimer);
-      const ok = await _flushState();
-      if (!ok) {
-        if (btn) { btn.disabled = false; btn.textContent = '💾 Сохранить'; }
-        alert('⚠️ Не удалось сохранить на сервере — попробуйте нажать «Сохранить» ещё раз, иначе данные (включая загруженные файлы) будут потеряны.');
-        return;
+    if (_modalGen === formGen) { pendingFiles = []; renderPending(); } // they're on the record now
+    // Everything after the record is in local state — also what «Отправить ещё раз» runs.
+    // A retry must not redo the part above: with a provider picked, the work has already
+    // been MOVED into that provider's journal, and a second pass would rebuild the journal
+    // entry from a work item that no longer exists — with no photos.
+    const finish = async () => {
+      if (_useFirebase) {
+        clearTimeout(_saveTimer);
+        if (!(await _flushState())) return false;
       }
+      const _maintDetail = title + (description ? ' — ' + description.slice(0,120) : '') + ' · ' + date;
+      _notifyOwner('🏗️ Обслуживание территории', _getFromName(), _maintDetail);
+      addActivity('maint', _getFromName(), title, _maintDetail);
+      const prov = linkedProviderId ? PROVIDERS.find(p => p.id === linkedProviderId) : null;
+      if (_modalGen === formGen) closeModal(true);
+      render(); loadMaintImages();
+      _showToast(prov ? `✅ Перенесено в журнал: ${prov.emoji} ${prov.name}` : '✅ Сохранено', false);
+      return true;
+    };
+    if (!(await finish())) {
+      _offerResend(formGen, 'maint-save-btn', finish);
+      alert('⚠️ Не удалось отправить на сервер (нет связи). Запись уже сохранена — нажмите «Отправить ещё раз», второй копии не будет.');
     }
-    const _maintDetail = title + (description ? ' — ' + description.slice(0,120) : '') + ' · ' + date;
-    _notifyOwner('🏗️ Обслуживание территории', _getFromName(), _maintDetail);
-    addActivity('maint', _getFromName(), title, _maintDetail);
-    const prov = linkedProviderId ? PROVIDERS.find(p => p.id === linkedProviderId) : null;
-    closeModal(); render(); loadMaintImages();
-    _showToast(prov ? `✅ Перенесено в журнал: ${prov.emoji} ${prov.name}` : '✅ Сохранено', false);
   } catch(e) {
     alert('Ошибка сохранения:\n' + e.message);
   }
@@ -6405,6 +6489,7 @@ function renderFinanceTotals() {
 function openSosModal(editId) {
   const ex = editId ? getSOS().find(s => s.id === editId) : null;
   pendingFiles = [];
+  _modalGen++;
   document.getElementById('modal-title').textContent = ex ? 'Редактировать событие SOS' : 'Добавить событие SOS';
 
   const existFiles = (ex?.fileIds||[])
@@ -6460,32 +6545,56 @@ function openSosModal(editId) {
 
   document.getElementById('modal-footer').innerHTML = `
     <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
-    <button class="btn btn-danger" onclick="saveSOS('${editId||''}')">💾 Сохранить</button>`;
+    <button class="btn btn-danger" id="sos-save-btn" onclick="saveSOS('${editId||''}')">💾 Сохранить</button>`;
 
   setupDrop('sos-drop');
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
+// One SOS save at a time — a double tap on Save used to create the report twice, since
+// nothing but the budget form had this guard.
+let _sosSaveInFlight = false;
 async function saveSOS(editId) {
+  if (_resendPending()) return _retryPendingSend(); // never a second copy — see _offerResend
+  if (_sosSaveInFlight) return;
+  _sosSaveInFlight = true;
+  const btn = document.getElementById('sos-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Сохраняем…'; }
+  try {
+    await _saveSOSInner(editId);
+  } finally {
+    _sosSaveInFlight = false;
+    const b = document.getElementById('sos-save-btn');
+    if (b && !_resendPending()) { b.disabled = false; b.textContent = '💾 Сохранить'; }
+  }
+}
+
+async function _saveSOSInner(editId) {
   try {
     // Same partial-upload race as the budget form — see readFiles.
     if (_filesStillProcessing()) { alert('⏳ Файлы ещё обрабатываются — подождите пару секунд и сохраните снова.'); return; }
     const title = document.getElementById('sos-title').value.trim();
     if (!title) { alert('Введите заголовок'); return; }
-    const list = getSOS();
     const date = document.getElementById('sos-date').value;
     const priority = document.getElementById('sos-pri').value;
     const status = document.getElementById('sos-status').value;
     const description = document.getElementById('sos-desc').value;
+    // This form's files and draft are taken before the first upload starts — the upload
+    // loop used to read the global list on every step, so closing this form and picking
+    // photos in the next one attached THOSE photos to this report (see _saveBudgetTxInner).
+    const formGen = _modalGen;
+    const picked = pendingFiles.slice();
+    const draftId = _resolvingDraftId, draftFrom = _resolvingDraftExtra;
 
     const fileIds=[], fileNames=[], fileTypes=[];
-    for (let _fii = 0; _fii < pendingFiles.length; _fii++) {
-      const f = pendingFiles[_fii];
-      const id = await dbSave({ name:f.name, type:f.type, size:f.size, data:f.data }, _fii+1, pendingFiles.length);
+    for (let _fii = 0; _fii < picked.length; _fii++) {
+      const f = picked[_fii];
+      const id = await dbSave({ name:f.name, type:f.type, size:f.size, data:f.data }, _fii+1, picked.length);
       fileIds.push(id); fileNames.push(f.name); fileTypes.push(f.type);
     }
 
-    const draftExtra = _resolveDraftIfPending();
+    const list = getSOS();
+    const draftExtra = _takeDraft(draftId, draftFrom);
     if (draftExtra) {
       fileIds.unshift(...draftExtra.fileIds);
       fileNames.unshift(...draftExtra.fileNames);
@@ -6508,15 +6617,24 @@ async function saveSOS(editId) {
     }
 
     setLS('sos_items', list);
-    if (_useFirebase) {
-      clearTimeout(_saveTimer);
-      const ok = await _flushState();
-      if (!ok) { alert('⚠️ Не удалось сохранить на сервере — попробуйте нажать «Сохранить» ещё раз, иначе данные (включая загруженные файлы) будут потеряны.'); return; }
+    if (_modalGen === formGen) { pendingFiles = []; renderPending(); } // they're on the report now
+    // Everything after the report is in local state — also what «Отправить ещё раз» runs.
+    const finish = async () => {
+      if (_useFirebase) {
+        clearTimeout(_saveTimer);
+        if (!(await _flushState())) return false;
+      }
+      const _sosDetail = title + (description ? ' — ' + description.slice(0,120) : '');
+      if (!editId) _notifyOwner('🚨 Экстренное ТО (SOS)', _getFromName(), _sosDetail);
+      addActivity('sos', _getFromName(), title, _sosDetail);
+      if (_modalGen === formGen) closeModal(true);
+      render();
+      return true;
+    };
+    if (!(await finish())) {
+      _offerResend(formGen, 'sos-save-btn', finish);
+      alert('⚠️ Не удалось отправить на сервер (нет связи). Отчёт уже записан — нажмите «Отправить ещё раз», второй копии не будет.');
     }
-    const _sosDetail = title + (description ? ' — ' + description.slice(0,120) : '');
-    if (!editId) _notifyOwner('🚨 Экстренное ТО (SOS)', _getFromName(), _sosDetail);
-    addActivity('sos', _getFromName(), title, _sosDetail);
-    closeModal(); render();
   } catch(e) {
     console.error('saveSOS error:', e);
     _showToast('❌ Ошибка сохранения: ' + e.message, false);
@@ -6600,9 +6718,70 @@ function openProviderInfo(pid) {
 // ==============================
 // МОДАЛЬНОЕ ОКНО
 // ==============================
-function closeModal() {
+// A save has written its record into local state, and then the upload to the server failed.
+// Pressing Save again used to run the whole save a second time — adding a SECOND copy of the
+// record, with the same documents (which the duplicate-document check can't catch: by then
+// they're no longer new files, they're already attached). Instead the form is locked — what
+// it shows is already in the record — and its Save button becomes a retry of the upload
+// alone, which then finishes with the same after-save steps (notifications, closing).
+let _pendingSend = null; // { gen, btnId, send: async () => boolean, busy }
+
+function _offerResend(gen, btnId, send) {
+  if (_modalGen !== gen) return; // that form was closed meanwhile — the record goes out with the next save
+  _pendingSend = { gen, btnId, send, busy: false };
+  const body = document.getElementById('modal-body');
+  if (body) {
+    body.querySelectorAll('input, select, textarea, button').forEach(el => { el.disabled = true; });
+    body.querySelectorAll('.upload-zone').forEach(el => { el.style.pointerEvents = 'none'; el.style.opacity = '.5'; });
+    const note = document.createElement('div');
+    note.style.cssText = 'background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#92400e';
+    note.textContent = '⚠️ Запись сохранена на этом устройстве, но не отправлена на сервер (нет связи). Нажмите «Отправить ещё раз» — второй копии не будет.';
+    body.insertBefore(note, body.firstChild);
+  }
+  const btn = document.getElementById(btnId);
+  if (btn) { btn.disabled = false; btn.textContent = '🔄 Отправить ещё раз'; btn.setAttribute('onclick', '_retryPendingSend()'); }
+}
+
+async function _retryPendingSend() {
+  const p = _pendingSend;
+  if (!p || p.busy || p.gen !== _modalGen) return;
+  p.busy = true;
+  const btn = document.getElementById(p.btnId);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Отправляем…'; }
+  let ok = false;
+  try { ok = await p.send(); }
+  finally {
+    p.busy = false;
+    const b = document.getElementById(p.btnId);
+    if (!ok && b && _pendingSend === p) { b.disabled = false; b.textContent = '🔄 Отправить ещё раз'; }
+  }
+}
+
+// The form currently open is one whose record is waiting to be re-sent (see above).
+const _resendPending = () => !!(_pendingSend && _pendingSend.gen === _modalGen);
+
+// Bumped every time a form is closed or one of the record forms is opened. A save captures
+// it when it starts, and only touches the form (its file lists, closing it) if it hasn't
+// changed by the time the save finishes — see _saveBudgetTxInner / _saveSOSInner / saveMaint.
+let _modalGen = 0;
+
+function closeModal(bySave) {
+  // Closed by the person (Отмена, a tap outside) while a save is still uploading — not by
+  // that save itself finishing, which passes bySave.
+  if (!bySave && (_budgetSaveInFlight || _sosSaveInFlight || _maintSaveInFlight)) {
+    _showToast('💾 Сохранение продолжается — запись появится, когда закончится загрузка', true);
+  }
   document.getElementById('modal-overlay').classList.add('hidden');
   pendingFiles = [];
+  _modalGen++;
+  // A form opened by «Одобрить» on a Telegram draft and then closed without saving must
+  // let go of that draft — otherwise the NEXT unrelated SOS/maintenance record saved took
+  // it over: removed it from the list and inherited its photos and message ids.
+  _resolvingDraftId = null;
+  _resolvingDraftExtra = null;
+  // A save that failed after writing its record locally (see _offerResend) — the record
+  // stays in local state and goes out with the next successful save of anything.
+  _pendingSend = null;
 }
 
 function overlayClick(e) {
@@ -8008,6 +8187,9 @@ async function init() {
     <div class="nav-item" id="nav-${p.id}" onclick="showView('provider','${p.id}')">
       <span>${p.emoji}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</span>
     </div>`).join('');
+
+  // Back where they were, still logged in, if this load is the automatic post-deploy reload.
+  _resumeAfterUpdate();
 }
 
 // Auto-init flatpickr with Russian locale on every date input added to DOM
@@ -10861,6 +11043,7 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   // _renderBudgetSavedFiles() too, so the ✕/add controls disappear along with everything else.
   window._budgetTxReadOnly = !!id && _isTxMonthClosed(t);
   pendingFiles = [];
+  _modalGen++;
   const today = _todayLocal();
   const nowTime = new Date().toTimeString().slice(0,5);
   const type = t.type || defaultType || 'expense';
@@ -10972,6 +11155,7 @@ function _toggleBudgetVendorField(ledgerKey) {
 // second tap isn't even possible, but the flag is what actually guarantees it.
 let _budgetSaveInFlight = false;
 async function saveBudgetTx(ledgerKey) {
+  if (_resendPending()) return _retryPendingSend(); // never a second copy — see _offerResend
   if (_budgetSaveInFlight) return;
   _budgetSaveInFlight = true;
   const btn = document.getElementById('bt-save-btn');
@@ -10980,14 +11164,24 @@ async function saveBudgetTx(ledgerKey) {
     await _saveBudgetTxInner(ledgerKey);
   } finally {
     _budgetSaveInFlight = false;
-    // Only reached when the modal is still open (validation stopped the save, or it
-    // failed) — a successful save has already closed it.
+    // Only reached with a form still open when validation stopped the save — or when the
+    // upload failed and the button has just become «Отправить ещё раз», which stays.
     const b = document.getElementById('bt-save-btn');
-    if (b) { b.disabled = false; b.textContent = '💾 Сохранить'; }
+    if (b && !_resendPending()) { b.disabled = false; b.textContent = '💾 Сохранить'; }
   }
 }
 
 async function _saveBudgetTxInner(ledgerKey) {
+  // Everything this save needs from the form is taken now, before its first await. The
+  // form can be closed while documents upload (a tap outside it, «Отмена») and another one
+  // opened; reading _editingBudgetTx or the fields after the upload used to write this
+  // save's data into whatever record the NEXT form showed — and delete that record's
+  // documents from Storage.
+  const formGen = _modalGen;
+  const editingId = _editingBudgetTx;
+  const picked = pendingFiles.slice();
+  const time = (document.getElementById('bt-time').value || '');
+  const notes = (document.getElementById('bt-notes').value || '').trim();
   const cfg = FINANCE_LEDGERS[ledgerKey];
   const type = document.getElementById('bt-type').value;
   // Income can only be recorded by the owner — others with access to this ledger
@@ -11003,11 +11197,11 @@ async function _saveBudgetTxInner(ledgerKey) {
   // closed month can no longer be edited at all (content is final — see _isTxMonthClosed).
   // Approving/paying/rejecting a record that closed while still unresolved is a separate
   // path (approveBudgetTx etc.) and is deliberately NOT blocked by this.
-  if (!_editingBudgetTx && date.slice(0,7) < _currentMonthKey()) {
+  if (!editingId && date.slice(0,7) < _currentMonthKey()) {
     alert('⛔ Этот месяц уже закрыт — новые операции можно добавлять только в текущий месяц (или будущей датой).');
     return;
   }
-  if (_editingBudgetTx && _isTxMonthClosed(getBudgetTx(ledgerKey).find(x=>x.id===_editingBudgetTx))) {
+  if (editingId && _isTxMonthClosed(getBudgetTx(ledgerKey).find(x=>x.id===editingId))) {
     alert('🔒 Этот месяц закрыт — операция больше не редактируется (нельзя менять данные, документы или удалить). Согласование и оплата всё ещё доступны из списка.');
     return;
   }
@@ -11016,8 +11210,8 @@ async function _saveBudgetTxInner(ledgerKey) {
   // looks only at new records, the second only at where the record is now). Only a date
   // that is actually being changed is checked, so a month-end receipt still inside its
   // grace period can keep its own date while its other fields are fixed.
-  if (_editingBudgetTx) {
-    const cur = getBudgetTx(ledgerKey).find(x=>x.id===_editingBudgetTx);
+  if (editingId) {
+    const cur = getBudgetTx(ledgerKey).find(x=>x.id===editingId);
     if (cur && date !== cur.date && date.slice(0,7) < _currentMonthKey()) {
       alert('⛔ Этот месяц уже закрыт — перенести операцию на дату в закрытом месяце нельзя.');
       return;
@@ -11045,7 +11239,7 @@ async function _saveBudgetTxInner(ledgerKey) {
     return;
   }
   const savedFiles = (window._budgetTxSavedFiles || []).slice();
-  if (type === 'expense' && !savedFiles.length && !pendingFiles.length) {
+  if (type === 'expense' && !savedFiles.length && !picked.length) {
     alert('📎 Загрузите скан счёта/чека — без документа заявку на оплату отправить нельзя');
     return;
   }
@@ -11056,9 +11250,9 @@ async function _saveBudgetTxInner(ledgerKey) {
   // documents that no longer existed, and a duplicate found on the second file left the
   // first one uploaded for nothing.
   const toUpload = [];
-  if (_useFirebase && pendingFiles.length) {
+  if (_useFirebase && picked.length) {
     const seenHashes = new Set(savedFiles.map(f => f.hash).filter(Boolean));
-    for (const pf of pendingFiles) {
+    for (const pf of picked) {
       // Хэш считается ДО загрузки в Storage: если этот счёт уже проведён (в другой
       // операции, в любом из трёх бюджетов), операцию не создаём и ничего не заливаем.
       // Тот же файл, выбранный дважды или уже приложенный к этой же операции, просто
@@ -11066,7 +11260,7 @@ async function _saveBudgetTxInner(ledgerKey) {
       const hash = await _fileContentHash(pf.data);
       if (hash && seenHashes.has(hash)) continue;
       if (hash) seenHashes.add(hash);
-      const dup = _findTxByFileHash(hash, _editingBudgetTx);
+      const dup = _findTxByFileHash(hash, editingId);
       if (dup) {
         const d = dup.tx;
         const paid = d.accountantConfirm && d.accountantConfirm.paid;
@@ -11088,7 +11282,7 @@ async function _saveBudgetTxInner(ledgerKey) {
   // предупреждение: такие совпадения бывают и законными (разные обучения на одну сумму,
   // разные смены одной техники), поэтому решение остаётся за человеком.
   if (type === 'expense') {
-    const similar = _findSimilarTx(ledgerKey, vendor, Number(amount), date, _editingBudgetTx);
+    const similar = _findSimilarTx(ledgerKey, vendor, Number(amount), date, editingId);
     if (similar) {
       const paid = similar.accountantConfirm && similar.accountantConfirm.paid;
       const ok = confirm('⚠️ Похоже на дубликат.\n\n'
@@ -11111,12 +11305,12 @@ async function _saveBudgetTxInner(ledgerKey) {
   // Documents removed in this edit (the ✕ next to a saved file). Worked out from the stored
   // record before it is replaced below, but deleted from Storage only after the new version
   // of the record — the one that no longer references them — has been saved.
-  const removedSavedFiles = _txFiles(_editingBudgetTx ? (getBudgetTx(ledgerKey).find(x=>x.id===_editingBudgetTx)||{}) : {})
+  const removedSavedFiles = _txFiles(editingId ? (getBudgetTx(ledgerKey).find(x=>x.id===editingId)||{}) : {})
     .filter(orig => orig.id && !savedFiles.some(f => f.id === orig.id));
   const fileRefs = savedFiles.concat(newFileRefs);
 
   const list = getBudgetTx(ledgerKey);
-  const existing = _editingBudgetTx ? list.find(x=>x.id===_editingBudgetTx) : null;
+  const existing = editingId ? list.find(x=>x.id===editingId) : null;
   // Only notify approvers when there's actually something new for them to look at: a
   // brand-new expense, or an edit that changed one of the fields that matters for the
   // approval decision itself. Re-saving unchanged, or only touching the note/receipt,
@@ -11131,12 +11325,12 @@ async function _saveBudgetTxInner(ledgerKey) {
   // that actually changes the amount/vendor/date/fund still resets the chain.
   const keepStatus = existing && !materialChange;
   const record = {
-    id: _editingBudgetTx || _newTxId(),
+    id: editingId || _newTxId(),
     type, date,
-    time: document.getElementById('bt-time').value||'',
+    time,
     vendor, amount: Number(amount),
     fund: fund||null,
-    notes: (document.getElementById('bt-notes').value||'').trim(),
+    notes,
     fileRefs: fileRefs,
     // Tabs opened before multi-document support only read `fileRef`, and would show a
     // multi-document record as having no document at all. Mirroring the first one here
@@ -11149,26 +11343,40 @@ async function _saveBudgetTxInner(ledgerKey) {
     createdAt: existing ? existing.createdAt : new Date().toISOString(),
   };
 
-  if (_editingBudgetTx) { const idx=list.findIndex(x=>x.id===_editingBudgetTx); if(idx>=0)list[idx]=record; else list.push(record); }
+  if (editingId) { const idx=list.findIndex(x=>x.id===editingId); if(idx>=0)list[idx]=record; else list.push(record); }
   else list.push(record);
   setBudgetTx(ledgerKey, list);
-  pendingFiles = [];
-  window._budgetTxSavedFiles = fileRefs;
-  if (_useFirebase) {
-    _showToast('💾 Сохраняем...', true);
-    clearTimeout(_saveTimer);
-    const ok = await _flushState();
-    if (!ok) return; // keep modal open so the user can retry without re-entering data
-    // Only now that the saved record no longer references them. If the save above failed,
-    // they stay in Storage — an unreferenced file is recoverable, a record pointing at a
-    // deleted document is not.
-    for (const f of removedSavedFiles) { try { await dbDel(f.id); } catch(e) {} }
+  // The form's own lists now describe the record as saved — but only if it's still this
+  // save's form; if it was closed and another opened meanwhile, that one isn't touched.
+  if (_modalGen === formGen) {
+    pendingFiles = [];
+    window._budgetTxSavedFiles = fileRefs;
+    const sf = document.getElementById('bt-saved-files');
+    if (sf) sf.innerHTML = _renderBudgetSavedFiles();
+    renderPending();
   }
-  if (type === 'expense' && materialChange) {
-    const label = FINANCE_LEDGERS[ledgerKey].label;
-    _notifyBudgetApprovers(ledgerKey, `💰 Заявка на оплату — ${label}`, _getFromName(), `${vendor} · ₽${Number(amount).toLocaleString('ru-RU')}`);
-  }
-  closeModal(); _showToast('✅ Операция сохранена', true); render();
+  // Everything after the record is in local state. Run once now, and again by
+  // «Отправить ещё раз» if the upload fails (see _offerResend) — never the whole save twice.
+  const finish = async () => {
+    if (_useFirebase) {
+      clearTimeout(_saveTimer);
+      const ok = await _flushState();
+      if (!ok) return false;
+      // Only now that the saved record no longer references them. If the save above failed,
+      // they stay in Storage — an unreferenced file is recoverable, a record pointing at a
+      // deleted document is not.
+      for (const f of removedSavedFiles) { try { await dbDel(f.id); } catch(e) {} }
+    }
+    if (type === 'expense' && materialChange) {
+      const label = FINANCE_LEDGERS[ledgerKey].label;
+      _notifyBudgetApprovers(ledgerKey, `💰 Заявка на оплату — ${label}`, _getFromName(), `${vendor} · ₽${Number(amount).toLocaleString('ru-RU')}`);
+    }
+    if (_modalGen === formGen) closeModal(true);
+    _showToast('✅ Операция сохранена', true); render();
+    return true;
+  };
+  if (_useFirebase) _showToast('💾 Сохраняем...', true);
+  if (!(await finish())) _offerResend(formGen, 'bt-save-btn', finish);
 }
 
 async function approveBudgetTx(ledgerKey, id, asRole) {
