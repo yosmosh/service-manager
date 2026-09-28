@@ -9898,6 +9898,19 @@ function _currentMonthKey() {
   return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 }
 
+// A closed month's books are final: a record dated into one can no longer be edited,
+// deleted or have its documents changed by anyone, owner included — the same rule new
+// entries already follow (see the closed-month check in saveBudgetTx). What it must NOT
+// block is the approval chain itself: an expense that is still genuinely unresolved when
+// its month closes (unapproved, unpaid) has to remain approvable/payable/rejectable, or it
+// is stuck "pending" forever with no way to ever finish it — exactly the case
+// _budgetTxMonthKey's own last-days rollover exists to keep visible instead of forgotten.
+// So this locks CONTENT (amount/vendor/date/fund/notes/documents) and existence
+// (delete), never the workflow actions that move a record toward being resolved.
+function _isTxMonthClosed(t) {
+  return !!(t && t.date && t.date.slice(0,7) < _currentMonthKey());
+}
+
 // True only for the last 2 calendar days of the month a date falls in — e.g. 29-30 for a
 // 30-day month, 30-31 for a 31-day month. Used below to decide which unpaid expenses were
 // merely too late to process in time, versus ones that sat unapproved for most of a month
@@ -10594,9 +10607,15 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
   const creatorCanEdit = t.type === 'expense' && t.status !== 'rejected' && currentUser !== 'owner' &&
     t.createdBy === currentUser && cfg.canCreate.includes(currentUser) &&
     !(t.accountantConfirm && t.accountantConfirm.paid);
+  // The pencil still opens the record even for a closed month — openBudgetTxModal shows
+  // it read-only there (see _isTxMonthClosed) rather than hiding it outright, so its full
+  // details/documents stay reachable from the same familiar place. Delete is different:
+  // it would erase closed-month history outright, so the button itself is withheld rather
+  // than shown and then refused.
+  const monthClosed = _isTxMonthClosed(t);
   const editActions = (currentUser==='owner' || creatorCanEdit) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
     <button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="openBudgetTxModal('${ledgerKey}','${t.id}')">✏️</button>
-    <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="delBudgetTx('${ledgerKey}','${t.id}')">🗑</button>
+    ${monthClosed ? '' : `<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="delBudgetTx('${ledgerKey}','${t.id}')">🗑</button>`}
   </div>` : '';
 
   let cardBorderColor = isIncome ? '#16a34a' : '#e2e8f0';
@@ -10636,6 +10655,9 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   // former shown with their own delete button (removes on save), the latter in the shared
   // `pendingFiles` staging list (same one those other modals use) shown via renderPending().
   window._budgetTxSavedFiles = _txFiles(t).slice();
+  // A closed month's record is shown read-only — see _isTxMonthClosed. Read by
+  // _renderBudgetSavedFiles() too, so the ✕/add controls disappear along with everything else.
+  window._budgetTxReadOnly = !!id && _isTxMonthClosed(t);
   pendingFiles = [];
   const today = _todayLocal();
   const nowTime = new Date().toTimeString().slice(0,5);
@@ -10657,7 +10679,9 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   // record's own submitter (the only two who ever reach this modal for it) — so the
   // messaging matches for both instead of alarming the submitter needlessly.
   const editorKeepsStatus = currentUser === 'owner' || currentUser === t.createdBy;
-  const editWarning = !id ? '' : (type === 'expense'
+  const editWarning = window._budgetTxReadOnly
+    ? '<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#475569">🔒 Месяц этой операции закрыт — данные, документы и удаление больше не редактируются. Согласование и оплата (если ещё не завершены) остаются доступны из списка операций.</div>'
+    : !id ? '' : (type === 'expense'
     ? (isPaid
         ? (editorKeepsStatus
             ? '<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#1e40af">ℹ️ Эта операция уже ОПЛАЧЕНА. Если вы поменяете сумму/поставщика/дату/фонд — статус оплаты сбросится. Правка примечания или чека статус не тронет.</div>'
@@ -10672,7 +10696,7 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   document.getElementById('modal-body').innerHTML = `
     ${editWarning}
     <div class="form-group"><label>Тип</label>
-      <select class="form-control" id="bt-type" onchange="_toggleBudgetVendorField('${ledgerKey}')" ${currentUser==='owner'?'':'disabled'}>
+      <select class="form-control" id="bt-type" onchange="_toggleBudgetVendorField('${ledgerKey}')" ${currentUser==='owner' && !window._budgetTxReadOnly?'':'disabled'}>
         <option value="expense" ${type==='expense'?'selected':''}>Расход</option>
         ${currentUser==='owner' ? `
         <option value="income" ${type==='income'?'selected':''}>Приход</option>
@@ -10680,25 +10704,27 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
       </select>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="bt-date" value="${t.date||today}"></div>
-      <div class="form-group"><label>Время</label><input type="time" class="form-control" id="bt-time" value="${t.time||nowTime}"></div>
+      <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="bt-date" value="${t.date||today}" ${window._budgetTxReadOnly?'disabled':''}></div>
+      <div class="form-group"><label>Время</label><input type="time" class="form-control" id="bt-time" value="${t.time||nowTime}" ${window._budgetTxReadOnly?'disabled':''}></div>
     </div>
-    <div class="form-group" id="bt-vendor-group" ${vendorNeeded?'':'hidden'}><label id="bt-vendor-label">Наименование / поставщик *</label><input class="form-control" id="bt-vendor" list="bt-vendor-list-${ledgerKey}" name="bt-vendor-${ledgerKey}" autocomplete="off-${ledgerKey}" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="Поставщик, сотрудник, назначение...">
+    <div class="form-group" id="bt-vendor-group" ${vendorNeeded?'':'hidden'}><label id="bt-vendor-label">Наименование / поставщик *</label><input class="form-control" id="bt-vendor" list="bt-vendor-list-${ledgerKey}" name="bt-vendor-${ledgerKey}" autocomplete="off-${ledgerKey}" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="Поставщик, сотрудник, назначение..." ${window._budgetTxReadOnly?'disabled':''}>
       <datalist id="bt-vendor-list-${ledgerKey}">${_budgetVendorSuggestions(ledgerKey).map(v=>`<option value="${v.replace(/"/g,'&quot;')}">`).join('')}</datalist>
     </div>
-    <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="bt-amount" value="${t.amount||''}" min="0" step="0.01"></div>
-    ${cfg.useFunds ? `<div class="form-group"><label>Фонд *</label><select class="form-control" id="bt-fund"><option value="">— Выберите —</option>${fundOpts}</select></div>` : ''}
+    <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="bt-amount" value="${t.amount||''}" min="0" step="0.01" ${window._budgetTxReadOnly?'disabled':''}></div>
+    ${cfg.useFunds ? `<div class="form-group"><label>Фонд *</label><select class="form-control" id="bt-fund" ${window._budgetTxReadOnly?'disabled':''}><option value="">— Выберите —</option>${fundOpts}</select></div>` : ''}
     <div class="form-group">
       <label>📎 Документы (чек/счёт)</label>
-      <div style="font-size:11px;color:#6b7280;margin:-2px 0 6px">Если чек на нескольких листах или фото — выберите их все сразу, либо нажмите «Добавить» несколько раз.</div>
+      ${window._budgetTxReadOnly ? '' : '<div style="font-size:11px;color:#6b7280;margin:-2px 0 6px">Если чек на нескольких листах или фото — выберите их все сразу, либо нажмите «Добавить» несколько раз.</div>'}
       <div id="bt-saved-files">${_renderBudgetSavedFiles()}</div>
+      ${window._budgetTxReadOnly ? '' : `
       <input type="file" id="bt-file" accept="image/*,application/pdf" multiple style="display:none" onchange="onFilePick(event)">
       <button type="button" class="btn btn-outline" style="width:100%;justify-content:center" onclick="document.getElementById('bt-file').click()">📂 ${(window._budgetTxSavedFiles||[]).length?'Добавить ещё':'Загрузить'}</button>
-      <div id="pending-list"></div>
+      <div id="pending-list"></div>`}
     </div>
-    <div class="form-group"><label>Примечание</label><textarea class="form-control" id="bt-notes">${t.notes||''}</textarea></div>`;
-  document.getElementById('modal-footer').innerHTML = `
-    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <div class="form-group"><label>Примечание</label><textarea class="form-control" id="bt-notes" ${window._budgetTxReadOnly?'disabled':''}>${t.notes||''}</textarea></div>`;
+  document.getElementById('modal-footer').innerHTML = window._budgetTxReadOnly
+    ? `<button class="btn btn-outline" onclick="closeModal()">Закрыть</button>`
+    : `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
     <button class="btn btn-primary" onclick="saveBudgetTx('${ledgerKey}')">💾 Сохранить</button>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
@@ -10717,7 +10743,7 @@ function _renderBudgetSavedFiles() {
       <span>${fileEmoji(f.type||'')}</span>
       <span class="fn">${(f.name||'Документ').replace(/</g,'&lt;')}</span>
       ${f.id ? `<button onclick="openGallery(['${f.id}'],['${f.type||''}'],['${(f.name||'').replace(/'/g,"\\'")}'],0)" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button>` : ''}
-      <button onclick="_removeBudgetSavedFile(${i})" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Убрать">✕</button>
+      ${window._budgetTxReadOnly ? '' : `<button onclick="_removeBudgetSavedFile(${i})" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Убрать">✕</button>`}
     </div>`).join('')}</div>`;
 }
 
@@ -10748,10 +10774,16 @@ async function saveBudgetTx(ledgerKey) {
   const date = document.getElementById('bt-date').value;
   if (!date) { alert('Укажите дату'); return; }
   // A month closes the moment the next one begins — new operations can only be logged
-  // into the current (or a future) month. Editing an existing record is still allowed
-  // regardless of its date, since that's exactly how an old unpaid item gets resolved.
+  // into the current (or a future) month, and an existing record already dated into a
+  // closed month can no longer be edited at all (content is final — see _isTxMonthClosed).
+  // Approving/paying/rejecting a record that closed while still unresolved is a separate
+  // path (approveBudgetTx etc.) and is deliberately NOT blocked by this.
   if (!_editingBudgetTx && date.slice(0,7) < _currentMonthKey()) {
     alert('⛔ Этот месяц уже закрыт — новые операции можно добавлять только в текущий месяц (или будущей датой).');
+    return;
+  }
+  if (_editingBudgetTx && _isTxMonthClosed(getBudgetTx(ledgerKey).find(x=>x.id===_editingBudgetTx))) {
+    alert('🔒 Этот месяц закрыт — операция больше не редактируется (нельзя менять данные, документы или удалить). Согласование и оплата всё ещё доступны из списка.');
     return;
   }
   const vendorNeeded = type !== 'income';
@@ -11147,6 +11179,9 @@ async function delBudgetTx(ledgerKey, id) {
   const cfg = FINANCE_LEDGERS[ledgerKey];
   const t = getBudgetTx(ledgerKey).find(x=>x.id===id);
   if (!t) return;
+  // Deleting is content-level too (it erases a closed month's history outright) — locked
+  // the same as editing, for the owner as well. See _isTxMonthClosed.
+  if (_isTxMonthClosed(t)) { alert('🔒 Этот месяц закрыт — операцию нельзя удалить.'); return; }
   const isOwnUnpaidSubmission = t.type === 'expense' && t.status !== 'rejected' &&
     t.createdBy === currentUser && cfg.canCreate.includes(currentUser) &&
     !(t.accountantConfirm && t.accountantConfirm.paid);
