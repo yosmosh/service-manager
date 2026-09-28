@@ -9777,13 +9777,55 @@ async function _fileContentHash(b64) {
   } catch (e) { return ''; } // старый браузер / небезопасный контекст — просто без проверки
 }
 
+// Одна операция может нести несколько прикреплённых документов (чек, разбитый на
+// несколько фото) — это приводит оба варианта хранения к простому массиву, чтобы
+// остальной код не разбирал форму данных. В старых записях — одиночный `fileRef`,
+// в новых — массив `fileRefs`.
+function _txFiles(t) {
+  if (!t) return [];
+  if (Array.isArray(t.fileRefs)) return t.fileRefs.filter(Boolean);
+  return t.fileRef ? [t.fileRef] : [];
+}
+
+// Единая кнопка «посмотреть документы» для карточек операций (список ведомости, очереди
+// согласования владельца/бухгалтера/Александра) — открывает готовую листалку-галерею
+// (openGallery, та же самая, что уже используется для фото SOS/ТО) сразу со ВСЕМИ
+// документами этой операции: стрелки для перехода между ними, счётчик «2 из 3», кнопка
+// скачивания — не нужно открывать каждый файл отдельной вкладкой, чтобы посмотреть все.
+// Только файлы, зарегистрированные в реестре (есть .id), можно листать в галерее —
+// исторические записи с прямой ссылкой на Google Drive (только .url, без .id) показаны
+// простой ссылкой рядом, как и раньше.
+function _txAttachmentsHtml(t) {
+  const files = _txFiles(t);
+  if (!files.length) return '';
+  const galFiles = files.filter(f => f.id);
+  const linkFiles = files.filter(f => !f.id && f.url);
+
+  let html = '';
+  if (galFiles.length) {
+    const ids = JSON.stringify(galFiles.map(f => f.id)).replace(/'/g, '&#39;');
+    const types = JSON.stringify(galFiles.map(f => f.type || '')).replace(/'/g, '&#39;');
+    const names = JSON.stringify(galFiles.map(f => f.name || 'Документ')).replace(/'/g, '&#39;');
+    const label = galFiles.length === 1 ? (galFiles[0].name || 'Документ')
+      : `Документы (${galFiles.length})`;
+    html += `<div data-gids='${ids}' data-gtypes='${types}' data-gnames='${names}' style="margin-top:4px;display:inline-block">
+      <a href="#" onclick="event.preventDefault();openGalleryEl(this,0)" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${label}</a>
+    </div>`;
+  }
+  linkFiles.forEach(f => {
+    html += `<div style="margin-top:4px"><a href="${f.url}" target="_blank" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${f.name || 'Документ'}</a></div>`;
+  });
+  return html;
+}
+
 // Ищет по ВСЕМ журналам сразу: один и тот же счёт, проведённый через разные бюджеты,
 // — это ровно тот случай двойной оплаты, который сложнее всего заметить глазами.
+// Каждая операция теперь может нести несколько документов — сверяем хэш со всеми ними.
 function _findTxByFileHash(hash, exceptId) {
   if (!hash) return null;
   for (const lk of Object.keys(FINANCE_LEDGERS)) {
     const hit = (getLS('finance_tx_' + lk) || []).find(t =>
-      t && t.fileRef && t.fileRef.hash === hash && t.id !== exceptId);
+      t && t.id !== exceptId && _txFiles(t).some(f => f.hash === hash));
     if (hit) return { ledgerKey: lk, tx: hit };
   }
   return null;
@@ -10576,7 +10618,7 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
         </div>
         <div style="font-weight:600;font-size:14px">${t.vendor||''}</div>
         ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
-        ${t.fileRef?`<div style="margin-top:4px"><a href="${_kFileUrl(t.fileRef)}" target="_blank" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${t.fileRef.name||'Документ'}</a></div>`:''}
+        ${_txAttachmentsHtml(t)}
         <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${statusBadge}${approvalBadges}</div>
       </div>
       <div style="font-weight:700;font-size:16px;color:${amtColor};flex-shrink:0">${amtSign}₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
@@ -10589,7 +10631,12 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   const cfg = FINANCE_LEDGERS[ledgerKey];
   const t = id ? (getBudgetTx(ledgerKey).find(x=>x.id===id)||{}) : {};
   _editingBudgetTx = id || null;
-  window._budgetTxFile = t.fileRef || null;
+  // Already-saved documents (editing an existing operation) and newly-picked-but-not-yet-
+  // uploaded files are tracked separately, exactly like the SOS/maintenance modals: the
+  // former shown with their own delete button (removes on save), the latter in the shared
+  // `pendingFiles` staging list (same one those other modals use) shown via renderPending().
+  window._budgetTxSavedFiles = _txFiles(t).slice();
+  pendingFiles = [];
   const today = _todayLocal();
   const nowTime = new Date().toTimeString().slice(0,5);
   const type = t.type || defaultType || 'expense';
@@ -10642,16 +10689,42 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
     <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="bt-amount" value="${t.amount||''}" min="0" step="0.01"></div>
     ${cfg.useFunds ? `<div class="form-group"><label>Фонд *</label><select class="form-control" id="bt-fund"><option value="">— Выберите —</option>${fundOpts}</select></div>` : ''}
     <div class="form-group">
-      <label>📎 Документ (чек/счёт)</label>
-      <input type="file" id="bt-file" accept="image/*,application/pdf" style="display:none" onchange="onBudgetFileSelect(this)">
-      <button type="button" class="btn btn-outline" style="width:100%;justify-content:center" onclick="document.getElementById('bt-file').click()">📂 Загрузить</button>
-      <div id="bt-file-preview">${window._budgetTxFile?`<div style="margin-top:6px;font-size:12px;color:#2563eb">📎 ${window._budgetTxFile.name}</div>`:''}</div>
+      <label>📎 Документы (чек/счёт)</label>
+      <div style="font-size:11px;color:#6b7280;margin:-2px 0 6px">Если чек на нескольких листах или фото — выберите их все сразу, либо нажмите «Добавить» несколько раз.</div>
+      <div id="bt-saved-files">${_renderBudgetSavedFiles()}</div>
+      <input type="file" id="bt-file" accept="image/*,application/pdf" multiple style="display:none" onchange="onFilePick(event)">
+      <button type="button" class="btn btn-outline" style="width:100%;justify-content:center" onclick="document.getElementById('bt-file').click()">📂 ${(window._budgetTxSavedFiles||[]).length?'Добавить ещё':'Загрузить'}</button>
+      <div id="pending-list"></div>
     </div>
     <div class="form-group"><label>Примечание</label><textarea class="form-control" id="bt-notes">${t.notes||''}</textarea></div>`;
   document.getElementById('modal-footer').innerHTML = `
     <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
     <button class="btn btn-primary" onclick="saveBudgetTx('${ledgerKey}')">💾 Сохранить</button>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+// Already-saved documents of the operation being edited — shown separately from the
+// `pendingFiles` staging list (new picks not yet uploaded), each with a 👁 preview (via
+// the same gallery) and a ✕ to drop it. Dropping here only updates this in-memory list;
+// the actual storage delete happens on Save, together with everything else, so closing
+// the modal without saving leaves the record untouched — same as a fresh upload isn't
+// sent to Storage until Save either.
+function _renderBudgetSavedFiles() {
+  const files = window._budgetTxSavedFiles || [];
+  if (!files.length) return '';
+  return `<div style="margin-bottom:8px">${files.map((f, i) => `
+    <div class="file-item">
+      <span>${fileEmoji(f.type||'')}</span>
+      <span class="fn">${(f.name||'Документ').replace(/</g,'&lt;')}</span>
+      ${f.id ? `<button onclick="openGallery(['${f.id}'],['${f.type||''}'],['${(f.name||'').replace(/'/g,"\\'")}'],0)" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button>` : ''}
+      <button onclick="_removeBudgetSavedFile(${i})" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Убрать">✕</button>
+    </div>`).join('')}</div>`;
+}
+
+function _removeBudgetSavedFile(i) {
+  (window._budgetTxSavedFiles||[]).splice(i,1);
+  const el = document.getElementById('bt-saved-files');
+  if (el) el.innerHTML = _renderBudgetSavedFiles();
 }
 
 function _toggleBudgetVendorField(ledgerKey) {
@@ -10661,15 +10734,6 @@ function _toggleBudgetVendorField(ledgerKey) {
   group.hidden = type === 'income';
   const label = document.getElementById('bt-vendor-label');
   if (label) label.textContent = 'Наименование / поставщик *';
-}
-
-function onBudgetFileSelect(input) {
-  const file = input.files && input.files[0];
-  if (!file) return;
-  _compressImage(file).then(res => {
-    window._budgetTxFile = {data:res.data, name:file.name, type:res.type, size:res.size};
-    document.getElementById('bt-file-preview').innerHTML = `<div style="margin-top:6px;font-size:12px;color:#2563eb">📎 ${file.name} (${fmtSize(res.size)})</div>`;
-  });
 }
 
 async function saveBudgetTx(ledgerKey) {
@@ -10701,33 +10765,51 @@ async function saveBudgetTx(ledgerKey) {
     if (!fund) { alert('Укажите фонд'); return; }
   }
   // No scanned invoice/receipt, no payment request — approvers and the accountant need
-  // something to actually check before signing off, not just a typed-in amount.
-  if (type === 'expense' && !window._budgetTxFile) {
+  // something to actually check before signing off, not just a typed-in amount. A receipt
+  // can now be several files (several pages/photos of the same document); what matters is
+  // that at least one is attached, kept or new.
+  const savedFiles = (window._budgetTxSavedFiles || []).slice();
+  if (type === 'expense' && !savedFiles.length && !pendingFiles.length) {
     alert('📎 Загрузите скан счёта/чека — без документа заявку на оплату отправить нельзя');
     return;
   }
 
-  let fileRef = window._budgetTxFile;
-  if (_useFirebase && fileRef && fileRef.data) {
-    // Хэш считается ДО загрузки в Storage: если этот счёт уже проведён, незачем ни
-    // заливать файл повторно, ни создавать операцию.
-    const hash = await _fileContentHash(fileRef.data);
-    const dup = _findTxByFileHash(hash, _editingBudgetTx);
-    if (dup) {
-      const d = dup.tx;
-      const paid = d.accountantConfirm && d.accountantConfirm.paid;
-      alert('⛔ Этот счёт уже проведён — повторная оплата невозможна.\n\n'
-        + 'Бюджет: ' + (FINANCE_LEDGERS[dup.ledgerKey] ? FINANCE_LEDGERS[dup.ledgerKey].label : dup.ledgerKey) + '\n'
-        + 'Поставщик: ' + (d.vendor || '—') + '\n'
-        + 'Сумма: ₽' + (Number(d.amount) || 0).toLocaleString('ru-RU') + '\n'
-        + 'Дата: ' + (d.date || '—') + '\n'
-        + 'Статус: ' + (paid ? 'ОПЛАЧЕНО' : 'ожидает оплаты') + '\n\n'
-        + 'Это тот же самый файл документа. Если счёт действительно другой — приложите его скан.');
-      return;
+  const newFileRefs = [];
+  if (_useFirebase && pendingFiles.length) {
+    const seenHashesThisBatch = new Set();
+    for (let i = 0; i < pendingFiles.length; i++) {
+      const pf = pendingFiles[i];
+      // Хэш считается ДО загрузки в Storage: если этот счёт уже проведён (в другой
+      // операции, в любом из трёх бюджетов, или повторно выбран в этом же выборе файлов),
+      // незачем ни заливать файл повторно, ни создавать операцию.
+      const hash = await _fileContentHash(pf.data);
+      if (hash && seenHashesThisBatch.has(hash)) continue; // тот же файл выбран дважды подряд
+      if (hash) seenHashesThisBatch.add(hash);
+      const dup = _findTxByFileHash(hash, _editingBudgetTx);
+      if (dup) {
+        const d = dup.tx;
+        const paid = d.accountantConfirm && d.accountantConfirm.paid;
+        alert('⛔ Документ «' + pf.name + '» уже проведён — повторная оплата невозможна.\n\n'
+          + 'Бюджет: ' + (FINANCE_LEDGERS[dup.ledgerKey] ? FINANCE_LEDGERS[dup.ledgerKey].label : dup.ledgerKey) + '\n'
+          + 'Поставщик: ' + (d.vendor || '—') + '\n'
+          + 'Сумма: ₽' + (Number(d.amount) || 0).toLocaleString('ru-RU') + '\n'
+          + 'Дата: ' + (d.date || '—') + '\n'
+          + 'Статус: ' + (paid ? 'ОПЛАЧЕНО' : 'ожидает оплаты') + '\n\n'
+          + 'Это тот же самый файл документа. Если счёт действительно другой — приложите его скан.');
+        return;
+      }
+      const fid = await dbSave({name:pf.name||'doc', type:pf.type||'image/jpeg', size:pf.size||Math.round(pf.data.length*0.75), data:pf.data}, i+1, pendingFiles.length);
+      newFileRefs.push({id:fid, name:pf.name||'doc', type:pf.type||'image/jpeg', hash});
     }
-    const fid = await dbSave({name:fileRef.name||'doc', type:fileRef.type||'image/jpeg', size:fileRef.size||Math.round(fileRef.data.length*0.75), data:fileRef.data});
-    fileRef = {id:fid, name:fileRef.name||'doc', type:fileRef.type||'image/jpeg', hash};
   }
+  // Anything that WAS attached but was removed in this edit (the ✕ next to a saved file)
+  // is actually deleted from Storage only now, alongside everything else — matching how a
+  // freshly-picked file isn't uploaded until Save either, so closing without saving leaves
+  // the record's real attachments untouched.
+  const removedSavedFiles = _txFiles(_editingBudgetTx ? (getBudgetTx(ledgerKey).find(x=>x.id===_editingBudgetTx)||{}) : {})
+    .filter(orig => orig.id && !savedFiles.some(f => f.id === orig.id));
+  if (_useFirebase) { for (const f of removedSavedFiles) { try { await dbDel(f.id); } catch(e) {} } }
+  const fileRefs = savedFiles.concat(newFileRefs);
 
   // Счета, загруженные до появления хэшей, так распознать нельзя — по ним остаётся
   // только предупредить о полном совпадении поставщика, суммы и даты. Это именно
@@ -10769,7 +10851,7 @@ async function saveBudgetTx(ledgerKey) {
     vendor, amount: Number(amount),
     fund: fund||null,
     notes: (document.getElementById('bt-notes').value||'').trim(),
-    fileRef: fileRef||null,
+    fileRefs: fileRefs,
     status: keepStatus ? existing.status : 'pending',
     approvals: keepStatus ? existing.approvals : {},
     accountantConfirm: keepStatus ? existing.accountantConfirm : {paid:false},
@@ -10780,6 +10862,8 @@ async function saveBudgetTx(ledgerKey) {
   if (_editingBudgetTx) { const idx=list.findIndex(x=>x.id===_editingBudgetTx); if(idx>=0)list[idx]=record; else list.push(record); }
   else list.push(record);
   setBudgetTx(ledgerKey, list);
+  pendingFiles = [];
+  window._budgetTxSavedFiles = fileRefs;
   if (_useFirebase) {
     _showToast('💾 Сохраняем...', true);
     clearTimeout(_saveTimer);
@@ -10908,7 +10992,7 @@ function _renderOwnerQueueList(items) {
         </div>
         <div style="font-weight:600;font-size:14px">${t.vendor||''}</div>
         ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
-        ${t.fileRef?`<div style="margin-top:4px"><a href="${_kFileUrl(t.fileRef)}" target="_blank" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${t.fileRef.name||'Документ'}</a></div>`:''}
+        ${_txAttachmentsHtml(t)}
       </div>
       <div style="font-weight:700;font-size:16px;color:#dc2626;flex-shrink:0">−₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
     </div>
@@ -10978,7 +11062,7 @@ function _renderAccountantQueueList(items) {
         </div>
         <div style="font-weight:600;font-size:14px">${t.vendor||''}</div>
         ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
-        ${t.fileRef?`<div style="margin-top:4px"><a href="${_kFileUrl(t.fileRef)}" target="_blank" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${t.fileRef.name||'Документ'}</a></div>`:''}
+        ${_txAttachmentsHtml(t)}
       </div>
       <div style="font-weight:700;font-size:16px;color:#dc2626;flex-shrink:0">−₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
     </div>
@@ -11111,7 +11195,7 @@ function _renderBudgetApproverQueue(role) {
         <div>
           <div style="font-weight:700">${fmtDate(t.date)} · ${t.vendor||''}</div>
           ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
-          ${t.fileRef?`<div style="margin-top:4px"><a href="${_kFileUrl(t.fileRef)}" target="_blank" style="font-size:12px;color:#2563eb">📎 ${t.fileRef.name||'Документ'}</a></div>`:''}
+          ${_txAttachmentsHtml(t)}
           <div style="margin-top:6px">${myBadge} ${otherStatus}</div>
         </div>
         <div style="font-weight:700;font-size:16px;color:#dc2626;flex-shrink:0">−₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
