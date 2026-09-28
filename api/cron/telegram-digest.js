@@ -123,17 +123,25 @@ ${transcript}`;
     },
     body: JSON.stringify({
       model: 'claude-sonnet-5',
-      max_tokens: 1024,
+      // Sonnet 5 thinks before answering by default, and thinking counts against max_tokens —
+      // at 1024 a busy day's thinking could use it all, leaving a digest cut off mid-sentence
+      // or with no text at all. 16000 is the documented non-streaming default (as in build-drafts).
+      max_tokens: 16000,
       messages: [{ role: 'user', content: prompt }],
     }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error('Anthropic API error: ' + JSON.stringify(data));
+  // Anything but a clean finish is a failure — never sent. A cut-off or empty summary used
+  // to go out to every subscriber (and into the log) looking like the whole day's digest.
+  if (data.stop_reason !== 'end_turn') throw new Error(`digest did not finish: stop_reason=${data.stop_reason}`);
   // Sonnet 5 sometimes puts an extended-thinking block before the actual text block, so
   // content[0] isn't reliably the text — find the text block by type instead. (This is
   // exactly what made today's digest arrive empty: content[0] was the thinking block.)
   const textBlock = (data.content || []).find(b => b.type === 'text');
-  return (textBlock && textBlock.text) || '';
+  const text = ((textBlock && textBlock.text) || '').trim();
+  if (!text) throw new Error('digest came back empty');
+  return text;
 }
 
 async function sendTelegramDM(token, chatId, text) {

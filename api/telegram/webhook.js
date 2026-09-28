@@ -287,11 +287,33 @@ module.exports = async (req, res) => {
         replyToMessageId: fsString(msg.reply_to_message ? msg.reply_to_message.message_id : ''),
       },
     };
-    await fetch(FIRESTORE_MESSAGES_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      body: JSON.stringify(body),
-    });
+    // Stored under the message's own id: if Telegram delivers the same update again (see
+    // below), it lands on the same document instead of becoming a second copy.
+    let saved;
+    try {
+      saved = await fetch(`${FIRESTORE_MESSAGES_URL}/${msg.message_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: 'message not stored (unreachable), retry: ' + String(e && e.message || e) });
+      return;
+    }
+    if (!saved.ok) {
+      // A message that couldn't be stored used to be answered 200 like any other — so
+      // Telegram never sent it again, and a worker's report was simply gone from the drafts
+      // and the digest. A temporary failure (quota, outage) now answers 500, which makes
+      // Telegram re-deliver the update later. A permanent one (4xx: this data can't be
+      // written) still answers 200, or Telegram would retry it forever.
+      const detail = (await saved.text()).slice(0, 200);
+      if (saved.status === 429 || saved.status >= 500) {
+        res.status(500).json({ ok: false, error: 'message not stored, retry: ' + saved.status + ' ' + detail });
+      } else {
+        res.status(200).json({ ok: false, error: 'message not stored: ' + saved.status + ' ' + detail });
+      }
+      return;
+    }
     // Taken only now that the message is in telegram_messages — see signalOnCapture.
     const capturedMs = Date.now();
 
