@@ -1964,7 +1964,9 @@ function _showToast(msg, ok) {
   if (!t) {
     t = document.createElement('div');
     t.id = '_fb-toast';
-    t.style.cssText = 'position:fixed;top:18px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:10px;font-size:14px;font-weight:700;z-index:999999;transition:opacity .4s;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,.18)';
+    // One line when it fits, wrapped to the screen when it doesn't: nowrap here used to push
+    // a longer message past both edges of a phone screen, leaving it unreadable.
+    t.style.cssText = 'position:fixed;top:18px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:10px;font-size:14px;font-weight:700;z-index:999999;transition:opacity .4s;width:max-content;max-width:calc(100vw - 32px);text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.18)';
     document.body.appendChild(t);
   }
   t.textContent = msg;
@@ -2406,16 +2408,25 @@ function _resumeAfterUpdate() {
   return true;
 }
 
+// A budget/SOS/maintenance save still uploading its files. Its form may already be closed
+// (closeModal tells the person the save carries on), and until the upload finishes nothing
+// is marked unsaved yet — so this is the only sign that a reload now would kill that save
+// and lose the record, with its photos left orphaned in Storage.
+const _anySaveInFlight = () => _budgetSaveInFlight || _sosSaveInFlight || _maintSaveInFlight;
+
 // The banner's own button — a deliberate "update now", which can lose what's unsaved, so it
 // asks first when there's anything to lose.
 function _updateNow() {
-  const unsaved = _stateDirty.size || _filesDirty.size || _filesDeleted.size || _modalIsOpen();
-  if (unsaved && !confirm('Есть открытая форма или несохранённые изменения — они пропадут. Обновить всё равно?')) return;
+  const saving = _anySaveInFlight();
+  const unsaved = saving || _stateDirty.size || _filesDirty.size || _filesDeleted.size || _modalIsOpen();
+  if (unsaved && !confirm(saving
+    ? 'Запись ещё сохраняется (загружаются файлы) — если обновить сейчас, она пропадёт. Обновить всё равно?'
+    : 'Есть открытая форма или несохранённые изменения — они пропадут. Обновить всё равно?')) return;
   _doReload();
 }
 
 function _reloadIfSafe() {
-  const busy = !_safeToRepaint() || _budgetSaveInFlight || _filesStillProcessing()
+  const busy = !_safeToRepaint() || _anySaveInFlight() || _filesStillProcessing()
     || document.getElementById('file-preview-overlay');
   if (!busy) { _doReload(); return; }
   if (!document.getElementById('_new-version-banner')) {
@@ -5829,7 +5840,7 @@ function openMaintGallery(workId, startIndex) {
 let _maintSaveInFlight = false;
 async function saveMaint(editId) {
   if (_resendPending()) return _retryPendingSend(); // never a second copy — see _offerResend
-  if (_maintSaveInFlight) return;
+  if (_maintSaveInFlight) return _saveStillRunning();
   _maintSaveInFlight = true;
   try {
     await _saveMaintInner(editId);
@@ -6556,7 +6567,7 @@ function openSosModal(editId) {
 let _sosSaveInFlight = false;
 async function saveSOS(editId) {
   if (_resendPending()) return _retryPendingSend(); // never a second copy — see _offerResend
-  if (_sosSaveInFlight) return;
+  if (_sosSaveInFlight) return _saveStillRunning();
   _sosSaveInFlight = true;
   const btn = document.getElementById('sos-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Сохраняем…'; }
@@ -6718,6 +6729,14 @@ function openProviderInfo(pid) {
 // ==============================
 // МОДАЛЬНОЕ ОКНО
 // ==============================
+// Save pressed while an earlier save of the same kind is still uploading — typically a form
+// that was closed mid-upload, and this is the next one. Only one runs at a time, so this
+// press does nothing; it used to do nothing silently, and a person who didn't notice the form
+// staying open could close it thinking it was saved, losing that record.
+function _saveStillRunning() {
+  _showToast('⏳ Предыдущая запись ещё сохраняется — подождите и нажмите «Сохранить» снова', false);
+}
+
 // A save has written its record into local state, and then the upload to the server failed.
 // Pressing Save again used to run the whole save a second time — adding a SECOND copy of the
 // record, with the same documents (which the duplicate-document check can't catch: by then
@@ -10715,7 +10734,10 @@ function _exportRegisterRows(ledgerKey, cfg, tx, rangeLabel, picked) {
   // whatever ended up in the export: everything, or just the type/fund it was narrowed to.
   const amountIdx = cols.findIndex(c => c.id === 'amount');
   if (amountIdx !== -1) {
-    const total = tx.reduce((s, t) => s + (_isIncomeType(t) ? 1 : -1) * (Number(t.amount) || 0), 0);
+    // Rounded to the kopeck: summing amounts that carry kopecks in floating point leaves a
+    // tail (the full Личный бюджет history came out as 12713293.609999998), and this number
+    // goes to the accountant as-is.
+    const total = Math.round(tx.reduce((s, t) => s + (_isIncomeType(t) ? 1 : -1) * (Number(t.amount) || 0), 0) * 100) / 100;
     const totalsRow = cols.map(() => '');
     // ИТОГО normally goes in the first column (Дата, in every default selection) — unless
     // Сумма itself was left as the only/first picked column, in which case the label and
@@ -11156,7 +11178,7 @@ function _toggleBudgetVendorField(ledgerKey) {
 let _budgetSaveInFlight = false;
 async function saveBudgetTx(ledgerKey) {
   if (_resendPending()) return _retryPendingSend(); // never a second copy — see _offerResend
-  if (_budgetSaveInFlight) return;
+  if (_budgetSaveInFlight) return _saveStillRunning();
   _budgetSaveInFlight = true;
   const btn = document.getElementById('bt-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Сохраняем…'; }
