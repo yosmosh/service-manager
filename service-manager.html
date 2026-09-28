@@ -2334,6 +2334,60 @@ function _setupSync() {
   // and it costs one probe — so refresh immediately rather than waiting for the next tick.
   document.addEventListener('visibilitychange', () => { if (!document.hidden) _pollState(); });
   window.addEventListener('focus', () => _pollState());
+
+  _setupVersionCheck();
+}
+
+// ---------- Picking up a new deploy ----------
+// Nothing used to make an open tab load new code, and people keep this app open for days.
+// A tab still running an older version is not just behind — it can damage data written by
+// the new one (an old tab editing a multi-document invoice rebuilt it with one document and
+// dropped the rest; old tabs don't know about the closed-month lock). The page's ETag is a
+// hash of its content, served from the CDN, so a HEAD request is enough to notice a deploy;
+// the tab then reloads itself at the first moment it can do so without interrupting anyone.
+let _bootEtag = null;
+let _newVersionSeen = false;
+
+async function _pageEtag() {
+  try {
+    const r = await fetch('/service-manager.html', { method: 'HEAD', cache: 'no-store' });
+    return r.ok ? (r.headers.get('etag') || null) : null;
+  } catch (e) { return null; }
+}
+
+async function _checkForNewVersion() {
+  if (!_newVersionSeen) {
+    const tag = await _pageEtag();
+    if (!tag) return;
+    if (!_bootEtag) { _bootEtag = tag; return; }
+    if (tag === _bootEtag) return;
+    _newVersionSeen = true;
+  }
+  _reloadIfSafe();
+}
+
+function _doReload() { location.reload(); } // separate so tests can observe it
+
+function _reloadIfSafe() {
+  const busy = !_safeToRepaint() || _budgetSaveInFlight || _filesStillProcessing()
+    || document.getElementById('file-preview-overlay');
+  if (!busy) { _doReload(); return; }
+  if (!document.getElementById('_new-version-banner')) {
+    const b = document.createElement('div');
+    b.id = '_new-version-banner';
+    b.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:99999;background:#1e40af;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;max-width:calc(100vw - 32px)';
+    b.innerHTML = '<span>🔄 Вышла новая версия — обновится автоматически, как только вы закончите.</span>'
+      + '<button onclick="location.reload()" style="background:#fff;color:#1e40af;border:none;border-radius:6px;padding:5px 10px;font-weight:600;cursor:pointer">Обновить</button>';
+    document.body.appendChild(b);
+  }
+}
+
+function _setupVersionCheck() {
+  _checkForNewVersion(); // records the version this tab started with
+  setInterval(_checkForNewVersion, 3 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) _checkForNewVersion(); });
+  // Once a new version is known, reload as soon as the screen is free — no network needed.
+  setInterval(() => { if (_newVersionSeen) _reloadIfSafe(); }, 2000);
 }
 
 async function _pollState() {
@@ -3841,25 +3895,46 @@ function _compressForAI(file) {
 
 function onFilePick(e) { readFiles(e.target.files); }
 
+// Processing a picked file (HEIC→JPEG on iPhones, resizing) is asynchronous and can take
+// seconds. Two things follow from that. Each result goes to the list that asked for it —
+// captured here — rather than to whatever `pendingFiles` is when processing finishes;
+// every form resets it to a fresh array on open, so a slow photo from a form that has since
+// been closed used to land in the NEXT form that opened. And each list counts the files it
+// is still waiting on, so a save can refuse to go ahead with only part of them.
+const _FILE_READ_TIMEOUT_MS = 45000;
 function readFiles(files) {
+  const target = pendingFiles;
   Array.from(files).forEach(f => {
-    _compressImage(f).then(function(res) {
-      pendingFiles.push({name: f.name, type: res.type, size: res.size, data: res.data});
-      renderPending();
+    target._reading = (target._reading || 0) + 1;
+    if (target === pendingFiles) renderPending();
+    // A file that never finishes (an unreadable one can hang FileReader) must not block
+    // saving forever — after the timeout it is simply dropped.
+    const timeout = new Promise(res => setTimeout(() => res(null), _FILE_READ_TIMEOUT_MS));
+    Promise.race([_compressImage(f), timeout]).then(function(res) {
+      if (res) target.push({name: f.name, type: res.type, size: res.size, data: res.data});
+    }).catch(function() { /* unreadable file — dropped */ }).then(function() {
+      target._reading--;
+      if (target === pendingFiles) renderPending();
     });
   });
+}
+
+function _filesStillProcessing() {
+  return (pendingFiles._reading || 0) > 0;
 }
 
 function renderPending() {
   const el = document.getElementById('pending-list');
   if (!el) return;
+  const busy = pendingFiles._reading || 0;
   el.innerHTML = pendingFiles.map((f,i) => `
     <div class="file-item">
       <span>${fileEmoji(f.type)}</span>
-      <span class="fn">${f.name}</span>
+      <span class="fn">${_escHtml(f.name)}</span>
       <span class="fs">${fmtSize(f.size)}</span>
       <button onclick="pendingFiles.splice(${i},1);renderPending()" style="color:#dc2626">✕</button>
-    </div>`).join('');
+    </div>`).join('')
+    + (busy ? `<div style="font-size:12px;color:#6b7280;margin-top:4px">⏳ Обработка файлов… (${busy})</div>` : '');
 }
 
 function fmtDate(d) {
@@ -5684,6 +5759,8 @@ function openMaintGallery(workId, startIndex) {
 
 async function saveMaint(editId) {
   try {
+    // Same partial-upload race as the budget form — see readFiles.
+    if (_filesStillProcessing()) { _showToast('⏳ Файлы ещё обрабатываются — подождите пару секунд', false); return; }
     const title = document.getElementById('maint-title').value.trim();
     if (!title) {
       document.getElementById('maint-title').style.borderColor = '#dc2626';
@@ -6380,6 +6457,8 @@ function openSosModal(editId) {
 
 async function saveSOS(editId) {
   try {
+    // Same partial-upload race as the budget form — see readFiles.
+    if (_filesStillProcessing()) { alert('⏳ Файлы ещё обрабатываются — подождите пару секунд и сохраните снова.'); return; }
     const title = document.getElementById('sos-title').value.trim();
     if (!title) { alert('Введите заголовок'); return; }
     const list = getSOS();
@@ -9795,6 +9874,24 @@ function _txFiles(t) {
 // Только файлы, зарегистрированные в реестре (есть .id), можно листать в галерее —
 // исторические записи с прямой ссылкой на Google Drive (только .url, без .id) показаны
 // простой ссылкой рядом, как и раньше.
+// Text for HTML content and quoted attributes. File names come from whoever uploaded the
+// file — and with the database writable by anyone today, from anyone at all — so they are
+// never inserted as raw markup.
+function _escHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// Only real web links become an href; anything else (javascript:, data:, …) would run
+// code on click.
+function _safeHref(u) {
+  return /^https?:\/\//i.test(String(u || '')) ? _escHtml(u) : '#';
+}
+// JSON for a single-quoted data-* attribute: & first, so the browser's entity decoding
+// hands JSON.parse back exactly the original text.
+function _jsonAttr(v) {
+  return JSON.stringify(v).replace(/&/g, '&amp;').replace(/'/g, '&#39;');
+}
+
 function _txAttachmentsHtml(t) {
   const files = _txFiles(t);
   if (!files.length) return '';
@@ -9803,17 +9900,17 @@ function _txAttachmentsHtml(t) {
 
   let html = '';
   if (galFiles.length) {
-    const ids = JSON.stringify(galFiles.map(f => f.id)).replace(/'/g, '&#39;');
-    const types = JSON.stringify(galFiles.map(f => f.type || '')).replace(/'/g, '&#39;');
-    const names = JSON.stringify(galFiles.map(f => f.name || 'Документ')).replace(/'/g, '&#39;');
+    const ids = _jsonAttr(galFiles.map(f => f.id));
+    const types = _jsonAttr(galFiles.map(f => f.type || ''));
+    const names = _jsonAttr(galFiles.map(f => f.name || 'Документ'));
     const label = galFiles.length === 1 ? (galFiles[0].name || 'Документ')
       : `Документы (${galFiles.length})`;
     html += `<div data-gids='${ids}' data-gtypes='${types}' data-gnames='${names}' style="margin-top:4px;display:inline-block">
-      <a href="#" onclick="event.preventDefault();openGalleryEl(this,0)" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${label}</a>
+      <a href="#" onclick="event.preventDefault();openGalleryEl(this,0)" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${_escHtml(label)}</a>
     </div>`;
   }
   linkFiles.forEach(f => {
-    html += `<div style="margin-top:4px"><a href="${f.url}" target="_blank" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${f.name || 'Документ'}</a></div>`;
+    html += `<div style="margin-top:4px"><a href="${_safeHref(f.url)}" target="_blank" rel="noopener" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${_escHtml(f.name || 'Документ')}</a></div>`;
   });
   return html;
 }
@@ -10740,7 +10837,7 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   document.getElementById('modal-footer').innerHTML = window._budgetTxReadOnly
     ? `<button class="btn btn-outline" onclick="closeModal()">Закрыть</button>`
     : `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
-    <button class="btn btn-primary" onclick="saveBudgetTx('${ledgerKey}')">💾 Сохранить</button>`;
+    <button class="btn btn-primary" id="bt-save-btn" onclick="saveBudgetTx('${ledgerKey}')">💾 Сохранить</button>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
@@ -10756,8 +10853,8 @@ function _renderBudgetSavedFiles() {
   return `<div style="margin-bottom:8px">${files.map((f, i) => `
     <div class="file-item">
       <span>${fileEmoji(f.type||'')}</span>
-      <span class="fn">${(f.name||'Документ').replace(/</g,'&lt;')}</span>
-      ${f.id ? `<button onclick="openGallery(['${f.id}'],['${f.type||''}'],['${(f.name||'').replace(/'/g,"\\'")}'],0)" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button>` : ''}
+      <span class="fn">${_escHtml(f.name||'Документ')}</span>
+      ${f.id ? `<span data-gids='${_jsonAttr([f.id])}' data-gtypes='${_jsonAttr([f.type||''])}' data-gnames='${_jsonAttr([f.name||'Документ'])}' style="display:inline"><button onclick="openGalleryEl(this,0)" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button></span>` : ''}
       ${window._budgetTxReadOnly ? '' : `<button onclick="_removeBudgetSavedFile(${i})" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Убрать">✕</button>`}
     </div>`).join('')}</div>`;
 }
@@ -10777,7 +10874,30 @@ function _toggleBudgetVendorField(ledgerKey) {
   if (label) label.textContent = 'Наименование / поставщик *';
 }
 
+// One budget save at a time. A second tap on Save during a slow multi-file upload used
+// to start a second, independent save — each generating its own record id — and neither
+// could see the other's record yet (it only enters the ledger once every upload finishes),
+// so the duplicate-document and similar-invoice checks both passed: two identical
+// invoices, both sent for approval. The button is also disabled for the duration so the
+// second tap isn't even possible, but the flag is what actually guarantees it.
+let _budgetSaveInFlight = false;
 async function saveBudgetTx(ledgerKey) {
+  if (_budgetSaveInFlight) return;
+  _budgetSaveInFlight = true;
+  const btn = document.getElementById('bt-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Сохраняем…'; }
+  try {
+    await _saveBudgetTxInner(ledgerKey);
+  } finally {
+    _budgetSaveInFlight = false;
+    // Only reached when the modal is still open (validation stopped the save, or it
+    // failed) — a successful save has already closed it.
+    const b = document.getElementById('bt-save-btn');
+    if (b) { b.disabled = false; b.textContent = '💾 Сохранить'; }
+  }
+}
+
+async function _saveBudgetTxInner(ledgerKey) {
   const cfg = FINANCE_LEDGERS[ledgerKey];
   const type = document.getElementById('bt-type').value;
   // Income can only be recorded by the owner — others with access to this ledger
@@ -10801,6 +10921,18 @@ async function saveBudgetTx(ledgerKey) {
     alert('🔒 Этот месяц закрыт — операция больше не редактируется (нельзя менять данные, документы или удалить). Согласование и оплата всё ещё доступны из списка.');
     return;
   }
+  // Editing an open record must not become a way to move it INTO a closed month — that is
+  // adding to a closed month by another door, which the two checks above miss (the first
+  // looks only at new records, the second only at where the record is now). Only a date
+  // that is actually being changed is checked, so a month-end receipt still inside its
+  // grace period can keep its own date while its other fields are fixed.
+  if (_editingBudgetTx) {
+    const cur = getBudgetTx(ledgerKey).find(x=>x.id===_editingBudgetTx);
+    if (cur && date !== cur.date && date.slice(0,7) < _currentMonthKey()) {
+      alert('⛔ Этот месяц уже закрыт — перенести операцию на дату в закрытом месяце нельзя.');
+      return;
+    }
+  }
   const vendorNeeded = type !== 'income';
   const vendor = vendorNeeded ? (document.getElementById('bt-vendor').value||'').trim() : 'Приход';
   if (vendorNeeded && !vendor) { alert('Укажите наименование/поставщика'); return; }
@@ -10815,23 +10947,35 @@ async function saveBudgetTx(ledgerKey) {
   // something to actually check before signing off, not just a typed-in amount. A receipt
   // can now be several files (several pages/photos of the same document); what matters is
   // that at least one is attached, kept or new.
+  // A picked photo only joins pendingFiles once it has finished processing (HEIC→JPEG on
+  // iPhones, resizing), which can take seconds. Saving before then used to upload only the
+  // pages that happened to be ready and silently drop the rest.
+  if (_filesStillProcessing()) {
+    alert('⏳ Файлы ещё обрабатываются — подождите пару секунд и нажмите «Сохранить» снова.');
+    return;
+  }
   const savedFiles = (window._budgetTxSavedFiles || []).slice();
   if (type === 'expense' && !savedFiles.length && !pendingFiles.length) {
     alert('📎 Загрузите скан счёта/чека — без документа заявку на оплату отправить нельзя');
     return;
   }
 
-  const newFileRefs = [];
+  // Every check that can still say "no" runs BEFORE anything is uploaded or deleted. The
+  // previous order uploaded files and even deleted the removed ones from Storage before the
+  // "looks like a duplicate" confirm below — so cancelling there left the record pointing at
+  // documents that no longer existed, and a duplicate found on the second file left the
+  // first one uploaded for nothing.
+  const toUpload = [];
   if (_useFirebase && pendingFiles.length) {
-    const seenHashesThisBatch = new Set();
-    for (let i = 0; i < pendingFiles.length; i++) {
-      const pf = pendingFiles[i];
+    const seenHashes = new Set(savedFiles.map(f => f.hash).filter(Boolean));
+    for (const pf of pendingFiles) {
       // Хэш считается ДО загрузки в Storage: если этот счёт уже проведён (в другой
-      // операции, в любом из трёх бюджетов, или повторно выбран в этом же выборе файлов),
-      // незачем ни заливать файл повторно, ни создавать операцию.
+      // операции, в любом из трёх бюджетов), операцию не создаём и ничего не заливаем.
+      // Тот же файл, выбранный дважды или уже приложенный к этой же операции, просто
+      // не добавляется второй раз.
       const hash = await _fileContentHash(pf.data);
-      if (hash && seenHashesThisBatch.has(hash)) continue; // тот же файл выбран дважды подряд
-      if (hash) seenHashesThisBatch.add(hash);
+      if (hash && seenHashes.has(hash)) continue;
+      if (hash) seenHashes.add(hash);
       const dup = _findTxByFileHash(hash, _editingBudgetTx);
       if (dup) {
         const d = dup.tx;
@@ -10845,18 +10989,9 @@ async function saveBudgetTx(ledgerKey) {
           + 'Это тот же самый файл документа. Если счёт действительно другой — приложите его скан.');
         return;
       }
-      const fid = await dbSave({name:pf.name||'doc', type:pf.type||'image/jpeg', size:pf.size||Math.round(pf.data.length*0.75), data:pf.data}, i+1, pendingFiles.length);
-      newFileRefs.push({id:fid, name:pf.name||'doc', type:pf.type||'image/jpeg', hash});
+      toUpload.push({ pf, hash });
     }
   }
-  // Anything that WAS attached but was removed in this edit (the ✕ next to a saved file)
-  // is actually deleted from Storage only now, alongside everything else — matching how a
-  // freshly-picked file isn't uploaded until Save either, so closing without saving leaves
-  // the record's real attachments untouched.
-  const removedSavedFiles = _txFiles(_editingBudgetTx ? (getBudgetTx(ledgerKey).find(x=>x.id===_editingBudgetTx)||{}) : {})
-    .filter(orig => orig.id && !savedFiles.some(f => f.id === orig.id));
-  if (_useFirebase) { for (const f of removedSavedFiles) { try { await dbDel(f.id); } catch(e) {} } }
-  const fileRefs = savedFiles.concat(newFileRefs);
 
   // Счета, загруженные до появления хэшей, так распознать нельзя — по ним остаётся
   // только предупредить о полном совпадении поставщика, суммы и даты. Это именно
@@ -10875,6 +11010,20 @@ async function saveBudgetTx(ledgerKey) {
       if (!ok) return;
     }
   }
+
+  // Past every check — now the uploads.
+  const newFileRefs = [];
+  for (let i = 0; i < toUpload.length; i++) {
+    const { pf, hash } = toUpload[i];
+    const fid = await dbSave({name:pf.name||'doc', type:pf.type||'image/jpeg', size:pf.size||Math.round(pf.data.length*0.75), data:pf.data}, i+1, toUpload.length);
+    newFileRefs.push({id:fid, name:pf.name||'doc', type:pf.type||'image/jpeg', hash});
+  }
+  // Documents removed in this edit (the ✕ next to a saved file). Worked out from the stored
+  // record before it is replaced below, but deleted from Storage only after the new version
+  // of the record — the one that no longer references them — has been saved.
+  const removedSavedFiles = _txFiles(_editingBudgetTx ? (getBudgetTx(ledgerKey).find(x=>x.id===_editingBudgetTx)||{}) : {})
+    .filter(orig => orig.id && !savedFiles.some(f => f.id === orig.id));
+  const fileRefs = savedFiles.concat(newFileRefs);
 
   const list = getBudgetTx(ledgerKey);
   const existing = _editingBudgetTx ? list.find(x=>x.id===_editingBudgetTx) : null;
@@ -10899,6 +11048,10 @@ async function saveBudgetTx(ledgerKey) {
     fund: fund||null,
     notes: (document.getElementById('bt-notes').value||'').trim(),
     fileRefs: fileRefs,
+    // Tabs opened before multi-document support only read `fileRef`, and would show a
+    // multi-document record as having no document at all. Mirroring the first one here
+    // keeps them showing something until they reload; current code reads fileRefs only.
+    fileRef: fileRefs[0] || null,
     status: keepStatus ? existing.status : 'pending',
     approvals: keepStatus ? existing.approvals : {},
     accountantConfirm: keepStatus ? existing.accountantConfirm : {paid:false},
@@ -10916,6 +11069,10 @@ async function saveBudgetTx(ledgerKey) {
     clearTimeout(_saveTimer);
     const ok = await _flushState();
     if (!ok) return; // keep modal open so the user can retry without re-entering data
+    // Only now that the saved record no longer references them. If the save above failed,
+    // they stay in Storage — an unreferenced file is recoverable, a record pointing at a
+    // deleted document is not.
+    for (const f of removedSavedFiles) { try { await dbDel(f.id); } catch(e) {} }
   }
   if (type === 'expense' && materialChange) {
     const label = FINANCE_LEDGERS[ledgerKey].label;
