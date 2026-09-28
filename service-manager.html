@@ -9944,6 +9944,11 @@ const getBudgetTx = (ledgerKey) => getLS('finance_tx_'+ledgerKey) || [];
 const setBudgetTx = (ledgerKey, list) => setLS('finance_tx_'+ledgerKey, list);
 const getBudgetFunds = () => getLS('finance_funds') || [];
 
+// Приход и Возврат средств are both income-side entries, everywhere the app tells expense
+// and income-side apart (sorting, hiding income from admin/admin2, the register's type
+// filter below).
+const _isIncomeType = t => t.type === 'income' || t.type === 'refund';
+
 // Matches each fund's own color banner in the source Личный бюджет spreadsheet, so a
 // fund reads the same way in the app as it always has in the sheet. A fund added later
 // through ⚙️ Фонды that isn't in this map just falls back to a neutral gray — nothing
@@ -9956,6 +9961,19 @@ const _FUND_COLORS = {
   'путевки в лагерь 2026': '#E91E63',
 };
 const _fundColor = name => _FUND_COLORS[name] || '#64748b';
+// Same fund display order everywhere a fund list is shown — the breakdown table below,
+// and the register export's fund filter: _FUND_COLORS' own key order, anything outside
+// that list sorts after (alphabetically, so it's at least stable).
+function _sortFundNames(names) {
+  const order = Object.keys(_FUND_COLORS);
+  return names.slice().sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+}
 
 // Recurring suppliers for this specific ledger, most-used first — lets whoever's
 // entering an expense just click the right name instead of retyping it every time,
@@ -10345,10 +10363,22 @@ function _setRegisterCols(kind, ledgerKey) {
   });
 }
 
+// Fund names actually used in this ledger's OWN data (not just the ⚙️ Фонды config list) —
+// a fund renamed or retired there should still be offered here as long as past operations
+// still carry its old name, or that history would become impossible to export on its own.
+function _regFundNames(ledgerKey) {
+  return _sortFundNames([...new Set(getBudgetTx(ledgerKey).map(t => t.fund).filter(Boolean))]);
+}
+
+function _setRegisterFunds(checked, ledgerKey) {
+  document.querySelectorAll('.reg-fund').forEach(cb => { cb.checked = checked; });
+  _updateRegisterCount(ledgerKey);
+}
+
 function exportBudgetRegisterCsv(ledgerKey) {
   const cfg = FINANCE_LEDGERS[ledgerKey];
   if (!cfg) return;
-  document.getElementById('modal-title').textContent = '📊 Реестр — период и колонки';
+  document.getElementById('modal-title').textContent = '📊 Реестр — период, тип и колонки';
   document.getElementById('modal-body').innerHTML = `
     <div style="font-size:12px;color:#6b7280;margin-bottom:12px">Выгрузка по дате операции (столбец «Дата»).</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
@@ -10367,6 +10397,34 @@ function exportBudgetRegisterCsv(ledgerKey) {
       <input type="date" id="reg-to" class="form-control" value="${_lastDayOfMonth(budgetYear, budgetMonth)}" oninput="_updateRegisterCount('${ledgerKey}')">
     </div>
     <div id="reg-count" style="font-size:13px;font-weight:600;color:#2563eb;margin:4px 0 16px"></div>
+
+    <div style="border-top:1px solid #e2e8f0;padding-top:12px;margin-bottom:12px">
+      <div style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:8px">Тип операций</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="radio" name="reg-type" class="reg-type" value="all" checked onchange="_updateRegisterCount('${ledgerKey}')"> Все
+        </label>
+        <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="radio" name="reg-type" class="reg-type" value="expense" onchange="_updateRegisterCount('${ledgerKey}')"> Только расходы
+        </label>
+        <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="radio" name="reg-type" class="reg-type" value="income" onchange="_updateRegisterCount('${ledgerKey}')"> Только приход
+        </label>
+      </div>
+    </div>
+
+    ${cfg.useFunds ? `<div style="border-top:1px solid #e2e8f0;padding-top:12px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <span style="font-size:13px;font-weight:700;color:#1e293b">Фонды</span>
+        <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="_setRegisterFunds(true,'${ledgerKey}')">Все</button>
+        <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="_setRegisterFunds(false,'${ledgerKey}')">Снять все</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px 16px">
+        ${_regFundNames(ledgerKey).map(f => `<label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap">
+          <input type="checkbox" class="reg-fund" value="${_escHtml(f)}" checked onchange="_updateRegisterCount('${ledgerKey}')">
+          <span style="color:${_fundColor(f)};font-weight:600">${_escHtml(f)}</span></label>`).join('')}
+      </div>
+    </div>` : ''}
 
     <div style="border-top:1px solid #e2e8f0;padding-top:12px">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
@@ -10408,12 +10466,22 @@ function _setRegisterRange(kind, ledgerKey) {
 }
 
 // Shows what's actually about to be downloaded, so nobody exports an empty file and has
-// to guess why.
+// to guess why. Reads its filters straight from the modal's own controls, so this one
+// function is the single source of truth for both the live "N операций" preview and the
+// actual export — they can never disagree about what "matches the filters" means.
 function _registerRows(ledgerKey) {
   const from = (document.getElementById('reg-from') || {}).value || '';
   const to = (document.getElementById('reg-to') || {}).value || '';
+  const typeEl = document.querySelector('.reg-type:checked');
+  const type = typeEl ? typeEl.value : 'all';
+  // No .reg-fund boxes exist at all for a ledger that doesn't use funds (the section isn't
+  // rendered there) — that must mean "no fund filter", not "everything unchecked".
+  const fundBoxes = Array.from(document.querySelectorAll('.reg-fund'));
+  const funds = fundBoxes.length ? fundBoxes.filter(cb => cb.checked).map(cb => cb.value) : null;
   return getBudgetTx(ledgerKey)
     .filter(t => { const d = t.date || ''; return (!from || d >= from) && (!to || d <= to); })
+    .filter(t => type === 'all' || (type === 'income' ? _isIncomeType(t) : !_isIncomeType(t)))
+    .filter(t => !funds || funds.includes(t.fund || ''))
     .sort((a,b) => (a.date||'').localeCompare(b.date||'') || (a.time||'').localeCompare(b.time||''));
 }
 
@@ -10423,7 +10491,7 @@ function _updateRegisterCount(ledgerKey) {
   const n = _registerRows(ledgerKey).length;
   const word = n % 10 === 1 && n % 100 !== 11 ? 'операция'
     : [2,3,4].includes(n % 10) && ![12,13,14].includes(n % 100) ? 'операции' : 'операций';
-  el.textContent = n ? `Будет выгружено: ${n} ${word}` : 'За этот период операций нет';
+  el.textContent = n ? `Будет выгружено: ${n} ${word}` : 'По выбранным условиям операций нет';
   el.style.color = n ? '#2563eb' : '#dc2626';
 }
 
@@ -10434,7 +10502,7 @@ function _runBudgetRegisterExport(ledgerKey) {
   const to = (document.getElementById('reg-to') || {}).value || '';
   if (from && to && from > to) { alert('Дата «С» позже даты «По»'); return; }
   const tx = _registerRows(ledgerKey);
-  if (!tx.length) { alert('За выбранный период операций нет'); return; }
+  if (!tx.length) { alert('По выбранным условиям операций нет'); return; }
 
   const picked = Array.from(document.querySelectorAll('.reg-col')).filter(cb => cb.checked).map(cb => cb.value);
   if (!picked.length) { alert('Выберите хотя бы одну колонку'); return; }
@@ -10450,6 +10518,21 @@ function _exportRegisterRows(ledgerKey, cfg, tx, rangeLabel, picked) {
   const cols = _registerColumns(cfg).filter(c => picked.includes(c.id));
   const headers = cols.map(c => c.label);
   const rows = tx.map(t => cols.map(c => _registerCellValue(c, t)));
+
+  // A totals row at the end, under the Сумма column if it's included — its value is
+  // already signed (income +, expense −, see _registerCellValue), so this is the net of
+  // whatever ended up in the export: everything, or just the type/fund it was narrowed to.
+  const amountIdx = cols.findIndex(c => c.id === 'amount');
+  if (amountIdx !== -1) {
+    const total = tx.reduce((s, t) => s + (_isIncomeType(t) ? 1 : -1) * (Number(t.amount) || 0), 0);
+    const totalsRow = cols.map(() => '');
+    // ИТОГО normally goes in the first column (Дата, in every default selection) — unless
+    // Сумма itself was left as the only/first picked column, in which case the label and
+    // the number share that one cell rather than the label being silently overwritten.
+    if (amountIdx === 0) totalsRow[0] = 'ИТОГО: ' + total;
+    else { totalsRow[0] = 'ИТОГО'; totalsRow[amountIdx] = total; }
+    rows.push(totalsRow);
+  }
 
   const fname = {kitchen:'Кухня', maintenance:'ТО_и_зарплаты', personal:'Личный_бюджет'}[ledgerKey] || ledgerKey;
   // The period goes into the filename too, so several exports don't end up in Downloads
@@ -10547,8 +10630,8 @@ function _renderBudgetLedger(ledgerKey) {
   const cfg = FINANCE_LEDGERS[ledgerKey];
   const mk = `${budgetYear}-${String(budgetMonth).padStart(2,'0')}`;
   // Income/refund entries sort first, regardless of date — they're rare and important,
-  // and were getting lost scrolling past a long list of same-day expenses otherwise.
-  const _isIncomeType = t => t.type==='income' || t.type==='refund';
+  // and were getting lost scrolling past a long list of same-day expenses otherwise
+  // (_isIncomeType is the shared expense/income-side predicate, defined near getBudgetTx).
   // Ready-for-payment = fully approved by everyone required, not rejected, not yet paid —
   // exactly what the accountant needs to act on. Sorting these first (when her toggle is
   // on) turns "scan the whole month for what needs me" into "start at the top."
@@ -10587,16 +10670,7 @@ function _renderBudgetLedger(ledgerKey) {
     <div class="stat-card"><div class="stat-value" style="color:#16a34a;font-size:20px">₽${fmt(bal.actualBalance)}</div><div class="stat-label">Фактический остаток — на конец ${MONTHS[budgetMonth-1]}</div></div>
   </div>`;
 
-  // Same fund display order as the fund-management screen and the source sheet's own
-  // color legend (_FUND_COLORS' own key order); anything outside that list sorts after.
-  const _fundOrder = Object.keys(_FUND_COLORS);
-  const _sortedFundNames = Object.keys(bal.byFund).filter(f => f && f !== '—').sort((a,b) => {
-    const ia = _fundOrder.indexOf(a), ib = _fundOrder.indexOf(b);
-    if (ia === -1 && ib === -1) return a.localeCompare(b);
-    if (ia === -1) return 1;
-    if (ib === -1) return -1;
-    return ia - ib;
-  });
+  const _sortedFundNames = _sortFundNames(Object.keys(bal.byFund).filter(f => f && f !== '—'));
   // A single grid-aligned table (fixed column template shared by the header and every
   // fund row) so all the numbers line up vertically and can be scanned column-by-column,
   // instead of each card wrapping its own labels independently.
