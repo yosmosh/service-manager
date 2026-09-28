@@ -27,6 +27,7 @@
 // silently skipped if it's not set).
 
 const { readDoc, updateDoc, registerFiles } = require('../_lib/firestore');
+const { DRAFTS_LEASE_DOC, signalOnCapture } = require('../_lib/drafts-signal');
 
 const FIRESTORE_MESSAGES_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/telegram_messages';
 const STORAGE_BUCKET = 'sad-budushego.firebasestorage.app';
@@ -304,12 +305,22 @@ module.exports = async (req, res) => {
       catch (e) { draftDebug = { error: String(e && e.stack || e) }; }
     }
 
+    // Record that a watched-topic message is waiting, so the nudges below can tell in one
+    // read whether the drafts pass has anything to do (see api/_lib/drafts-signal.js).
+    // Best-effort: if this write fails, the next full check re-syncs the signal.
+    if (DRAFT_TOPIC_IDS.includes(topicId)) {
+      const msgMs = (msg.date || 0) * 1000;
+      try { await updateDoc(DRAFTS_LEASE_DOC, ['lastWatchedAt', 'pendingSince'], f => signalOnCapture(f, msgMs)); }
+      catch (e) { /* see above */ }
+    }
+
     // Nudge the drafts pass so a worker's report gets its follow-up question within
     // minutes instead of at the evening cron. A frequent cron would be the obvious way to
     // do this, but the hosting plan only permits daily schedules, so group activity itself
-    // is the clock: every captured message pokes the endpoint. That is deliberately cheap
-    // — build-drafts returns before touching the model unless there are messages that
-    // have already gone quiet, and its own throttle caps real runs at one per 10 minutes.
+    // is the clock: every captured message pokes the endpoint. A nudge with nothing waiting
+    // costs build-drafts a single document read (the pending signal set just above); the
+    // full message query and the model are reached only when a watched-topic message has
+    // settled, and its throttle caps real runs at one per 10 minutes.
     // The request is abandoned after a moment on purpose: it runs as its own serverless
     // invocation, so dropping this side does not stop it, and Telegram still gets a fast
     // 200 rather than waiting out a model call. The daily cron remains the backstop for a
@@ -318,8 +329,7 @@ module.exports = async (req, res) => {
     // Any message in the group ticks this clock, not just ones in the watched topic: a
     // report in "Хозчасть и Ремонт" that nobody follows up on there still gets picked up
     // by the next message in Покупки or anywhere else, which makes the wait markedly
-    // shorter in a group this active. It costs nothing extra, since a nudge with nothing
-    // settled to process never reaches the model.
+    // shorter in a group this active, at one document read per message.
     if (!(msg.from && msg.from.is_bot)) {
       try {
         const ctrl = new AbortController();

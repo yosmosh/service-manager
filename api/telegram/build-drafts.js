@@ -25,6 +25,7 @@
 const {
   fsString, fsStringArray, readDoc, updateDoc, registerFiles, acquireLease, releaseLease,
 } = require('../_lib/firestore');
+const { DRAFTS_LEASE_DOC, signalAfterCheck, nudgeGate } = require('../_lib/drafts-signal');
 
 const FIRESTORE_QUERY_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents:runQuery';
 const STORAGE_BUCKET = 'sad-budushego.firebasestorage.app';
@@ -45,8 +46,13 @@ const SETTLE_MINUTES = 8;
 // several overlapping runs that each drafted the same messages and each asked the worker the
 // same question. The lease outlives the function's 60s maxDuration, so a live run can't lose
 // it, and it expires on its own so a run that dies can't block the next one for long.
-const LEASE_DOC = 'appdata/_drafts_lease';
+const LEASE_DOC = DRAFTS_LEASE_DOC; // shared with the webhook, which writes the pending signal
 const LEASE_TTL_MS = 90000;
+// At most this many messages per run. A single answer has to fit in the model's output and
+// in the function's 60s — an unbounded day could produce an answer that is truncated every
+// time, fail every time, and never let anything through. The rest go to the next run (the
+// drafts already made are passed back as context, so a thread split across runs is joined).
+const MAX_BATCH = 40;
 
 // Reads the last LOOKBACK_HOURS of captured messages. Filtering by topic is done here in
 // JS rather than in the query: combining a topicId filter with an orderBy on date needs a
@@ -146,19 +152,31 @@ async function clusterIssues(messages, openDrafts) {
     + '- sufficient: false если для заведения заявки не хватает важной информации (что именно, где, какой объект).\n'
     + '- clarifyingQuestion: если sufficient=false — короткий вопрос по-русски, который стоит задать сотруднику. Иначе пустая строка.';
 
+  // Sonnet 5 runs adaptive thinking by default, and thinking tokens count against
+  // max_tokens — the old cap of 2048 could be mostly spent thinking before the JSON was
+  // written, truncating it. 16000 is the documented default for a non-streaming request.
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 2048, messages: [{ role: 'user', content: prompt }] }),
+    body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 16000, messages: [{ role: 'user', content: prompt }] }),
   });
   if (!resp.ok) throw new Error(`Anthropic ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
   const data = await resp.json();
-  // Sonnet 5 can put an extended-thinking block before the text block, so pick by type.
+  // Anything but a clean finish is a failure, never "no issues found". The caller marks
+  // every analysed message as processed, so returning [] for a truncated or refused answer
+  // (as this used to) permanently discarded those workers' reports with no error anywhere.
+  // Throwing leaves them unprocessed for the next run. No tools or stop sequences are sent,
+  // so a successful answer can only end with end_turn.
+  if (data.stop_reason !== 'end_turn') throw new Error(`clustering did not finish: stop_reason=${data.stop_reason}`);
+  // Sonnet 5 can put a thinking block before the text block, so pick by type.
   const textBlock = (data.content || []).find(b => b.type === 'text');
   const raw = ((textBlock && textBlock.text) || '').trim();
   const match = raw.match(/\[[\s\S]*\]/);
-  if (!match) return [];
-  try { return JSON.parse(match[0]); } catch (e) { return []; }
+  if (!match) throw new Error('clustering returned no JSON array: ' + raw.slice(0, 200));
+  let parsed;
+  try { parsed = JSON.parse(match[0]); } catch (e) { throw new Error('clustering JSON unparseable: ' + e.message); }
+  if (!Array.isArray(parsed)) throw new Error('clustering result is not an array');
+  return parsed; // a genuinely empty array is the only real "no issues"
 }
 
 async function sendTelegramReply(topicId, replyToMessageId, text) {
@@ -261,22 +279,24 @@ module.exports = async (req, res) => {
   let leaseHeld = false;
 
   try {
-    const cfg = await readDoc('appdata/state', ['telegram_config']);
-    const cfgFields = (cfg.fields.telegram_config && cfg.fields.telegram_config.mapValue.fields) || {};
-    const draftsCfg = (cfgFields.drafts && cfgFields.drafts.mapValue && cfgFields.drafts.mapValue.fields) || {};
-    if (!draftsCfg.enabled || !draftsCfg.enabled.booleanValue) {
-      res.status(200).json({ ok: true, skipped: 'drafts disabled in telegram_config' });
-      return;
-    }
-
-    // Cheap early exits before touching the lease: a run already in progress, or (for the
-    // manual/nudge path only — the daily cron always runs) one that finished moments ago.
-    const lease = await readDoc(LEASE_DOC, ['leaseUntil', 'lastRunAt']);
+    // Everything here is ordered cheapest-first, because this runs on every message in the
+    // group. The lease document answers the common case — nothing to do — in one read.
+    const lease = await readDoc(LEASE_DOC, ['leaseUntil', 'lastRunAt', 'pendingSince', 'lastWatchedAt']);
     const leaseUntil = lease.fields.leaseUntil ? Date.parse(lease.fields.leaseUntil.stringValue) : 0;
     if (!dryRun && leaseUntil > Date.now()) {
       res.status(200).json({ ok: true, skipped: 'another run is in progress' });
       return;
     }
+    // A plain nudge only goes on if a watched-topic message is waiting and has settled. The
+    // daily cron and the app's button always do the full check (they also re-sync the signal).
+    if (!isCron && !force && !dryRun) {
+      const gate = nudgeGate(lease.fields, Date.now(), SETTLE_MINUTES * 60000);
+      if (!gate.go) {
+        res.status(200).json({ ok: true, skipped: gate.reason });
+        return;
+      }
+    }
+    // Throttle for the manual/nudge path only — the daily cron always runs.
     const lastRunIso = (lease.fields.lastRunAt && lease.fields.lastRunAt.stringValue) || '';
     if (!isCron && !dryRun && lastRunIso) {
       const minsSince = (Date.now() - Date.parse(lastRunIso)) / 60000;
@@ -286,7 +306,18 @@ module.exports = async (req, res) => {
       }
     }
 
-    const all = await fetchRecentMessages(new Date(Date.now() - LOOKBACK_HOURS * 3600000).toISOString());
+    const cfg = await readDoc('appdata/state', ['telegram_config']);
+    const cfgFields = (cfg.fields.telegram_config && cfg.fields.telegram_config.mapValue.fields) || {};
+    const draftsCfg = (cfgFields.drafts && cfgFields.drafts.mapValue && cfgFields.drafts.mapValue.fields) || {};
+    if (!draftsCfg.enabled || !draftsCfg.enabled.booleanValue) {
+      res.status(200).json({ ok: true, skipped: 'drafts disabled in telegram_config' });
+      return;
+    }
+
+    // Taken before the query starts: a message captured while it runs must count as
+    // "after the fetch", or the signal could be cleared without that message being seen.
+    const fetchMs = Date.now();
+    const all = await fetchRecentMessages(new Date(fetchMs - LOOKBACK_HOURS * 3600000).toISOString());
     const windowIds = new Set(all.map(m => m.messageId).filter(Boolean));
     const settleBefore = Date.now() - SETTLE_MINUTES * 60000;
     const readWork = async () => {
@@ -295,11 +326,26 @@ module.exports = async (req, res) => {
         && d.fields.telegram_processed_ids.arrayValue.values) || []).map(v => v.stringValue));
       const fresh = all.filter(m => DRAFT_TOPIC_IDS.includes(m.topicId) && m.messageId && !done.has(m.messageId)
         && (force || !m.date || new Date(m.date).getTime() <= settleBefore));
-      return { fields: d.fields, fresh };
+      return { fields: d.fields, fresh, done };
+    };
+    // Re-point the pending signal at whatever this check leaves unprocessed (still settling,
+    // or beyond this run's batch). Best-effort: a stale signal only costs one extra check,
+    // after which it corrects itself.
+    const updateSignal = async doneSet => {
+      if (dryRun) return;
+      let oldest = null;
+      all.forEach(m => {
+        if (!DRAFT_TOPIC_IDS.includes(m.topicId) || !m.messageId || doneSet.has(m.messageId)) return;
+        const t = m.date ? Date.parse(m.date) : NaN;
+        if (!isNaN(t) && (oldest == null || t < oldest)) oldest = t;
+      });
+      try { await updateDoc(LEASE_DOC, ['lastWatchedAt', 'pendingSince'], f => signalAfterCheck(f, oldest, fetchMs)); }
+      catch (e) { /* see above */ }
     };
 
     let work = await readWork();
     if (!work.fresh.length) {
+      await updateSignal(work.done);
       res.status(200).json({ ok: true, created: 0, note: 'no new messages in the watched topic' });
       return;
     }
@@ -313,11 +359,12 @@ module.exports = async (req, res) => {
       // already have processed exactly these messages.
       work = await readWork();
       if (!work.fresh.length) {
+        await updateSignal(work.done);
         res.status(200).json({ ok: true, created: 0, note: 'no new messages in the watched topic' });
         return;
       }
     }
-    const fresh = work.fresh;
+    const fresh = work.fresh.slice(0, MAX_BATCH); // oldest first — the query is date-ascending
 
     // The drafts still waiting for the owner, passed to the model as context so a reply that
     // arrives after its issue was already drafted updates that draft instead of becoming a
@@ -406,6 +453,9 @@ module.exports = async (req, res) => {
       for (const q of toAsk) {
         try { await sendTelegramReply(q.topicId, q.replyTo, q.text); } catch (e) { /* draft already records it */ }
       }
+      // Anything still unprocessed — messages still settling, or beyond this batch — keeps
+      // the signal pointing at it so the next nudge picks it up.
+      await updateSignal(new Set([...work.done, ...plan.processedAdd]));
       await releaseLease(LEASE_DOC, holder, { lastRunAt: fsString(new Date().toISOString()) });
       leaseHeld = false;
     }
@@ -422,3 +472,4 @@ module.exports = async (req, res) => {
 
 // Exposed for tests only.
 module.exports.applyDraftPlan = applyDraftPlan;
+module.exports.clusterIssues = clusterIssues;
