@@ -9907,8 +9907,23 @@ function _currentMonthKey() {
 // _budgetTxMonthKey's own last-days rollover exists to keep visible instead of forgotten.
 // So this locks CONTENT (amount/vendor/date/fund/notes/documents) and existence
 // (delete), never the workflow actions that move a record toward being resolved.
+// Mirrors _budgetTxMonthKey's own carve-out exactly, so the two agree on which records
+// still count as "this month's business": an expense dated in the LAST 2 DAYS of a month
+// that has since closed, still unpaid and not rejected, keeps floating as editable for as
+// long as it stays unpaid — that's the entire point of that rollover (a receipt filed
+// right at month-end that genuinely hasn't had time to go through approval/payment yet),
+// and freezing its content the moment the calendar flips would undercut exactly the case
+// it exists for. Paid or rejected settles it either way, same as _budgetTxMonthKey keys it
+// to the paid date once paid. An imported historical record never gets this grace,
+// matching _importedTabMonth's own precedence over the rollover.
 function _isTxMonthClosed(t) {
-  return !!(t && t.date && t.date.slice(0,7) < _currentMonthKey());
+  if (!t || !t.date) return false;
+  if (t.date.slice(0,7) >= _currentMonthKey()) return false;
+  if (t.type !== 'expense') return true; // income/refund: no grace period
+  if (_importedTabMonth(t)) return true;
+  if (t.status === 'rejected') return true;
+  if (t.accountantConfirm && t.accountantConfirm.paid) return true;
+  return !_isLastDaysOfMonth(t.date); // last 2 days + still unpaid → not closed yet
 }
 
 // True only for the last 2 calendar days of the month a date falls in — e.g. 29-30 for a
