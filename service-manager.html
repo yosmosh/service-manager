@@ -858,8 +858,9 @@ function doLogin() {
     return;
   }
 
-  // Check admin2 (personal-budget data entry only — enters expenses/invoices into
-  // Личный бюджет, nothing else in the app) — same release gate as the other budget roles.
+  // Check admin2 (budget data-entry only — enters expenses/invoices into ТО и зарплаты
+  // and Личный бюджет, the same two ledgers admin has, nothing else in the app) — same
+  // release gate as the other budget roles.
   if (getBudgetReleased() && username === getAdmin2User().toLowerCase() && pwd === getAdmin2Pwd()) {
     currentUser = 'admin2';
     document.getElementById('login-screen').style.display = 'none';
@@ -990,9 +991,9 @@ function applyUserLayout() {
     if (navBudgetMgmt && !getBudgetReleased()) navBudgetMgmt.style.display = 'none';
   } else if (currentUser === 'admin2') {
     // Data-entry-only account: nothing but Бюджет, and _budgetVisibleLedgers restricts
-    // that to the Личный бюджет ledger alone.
+    // that to ТО и зарплаты + Личный бюджет — the same two ledgers admin has.
     sidebar.style.display = '';
-    document.getElementById('user-label').textContent = '👤 Личный бюджет (ввод)';
+    document.getElementById('user-label').textContent = '👤 Администратор 2 (ввод)';
     document.querySelectorAll('.nav-item').forEach(el => el.style.display = 'none');
     document.querySelectorAll('.sidebar-section-title').forEach(el => el.style.display = 'none');
     const mainSectionTitleAdmin2 = sidebar.querySelector('.sidebar-section-title');
@@ -1156,8 +1157,8 @@ function openSettingsModal() {
       <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveManagementCreds()">💾 Сохранить данные руководства</button>
     </div>
     <div style="margin-bottom:16px;padding:12px 14px;background:#fff7ed;border:1px solid #fdba74;border-radius:10px">
-      <div style="font-size:12px;font-weight:700;color:#9a3412;margin-bottom:4px">👤 Учётная запись admin2 (только Личный бюджет)</div>
-      <div style="font-size:11px;color:#9a3412;margin-bottom:8px">Вводит расходы/счета только в Личный бюджет — больше ничего в системе не видит</div>
+      <div style="font-size:12px;font-weight:700;color:#9a3412;margin-bottom:4px">👤 Учётная запись admin2 (ТО и зарплаты + Личный бюджет)</div>
+      <div style="font-size:11px;color:#9a3412;margin-bottom:8px">Вводит расходы/счета в ТО и зарплаты и в Личный бюджет — больше ничего в системе не видит. Каждая операция помечается, кто её внёс — Администратор или Администратор 2</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
@@ -2767,6 +2768,7 @@ async function _notifyBudgetApprovers(ledgerKey, eventType, fromName, details) {
 
 function _getFromName() {
   if (currentUser === 'admin') return 'Администратор';
+  if (currentUser === 'admin2') return 'Администратор 2';
   if (currentUser === 'kitchen') return 'Кухня';
   if (currentUser === 'alexander') return 'Александр';
   if (currentUser === 'accountant') return 'Бухгалтер';
@@ -9799,18 +9801,18 @@ function renderKitchenAnalytics() {
 // ==============================
 const FINANCE_LEDGERS = {
   kitchen:     { label:'🍽️ Кухня',        approvers:['alexander','owner'], useFunds:false, canCreate:['owner','kitchen'] },
-  maintenance: { label:'🔧 ТО и зарплаты', approvers:['alexander','owner'], useFunds:false, canCreate:['owner','admin'] },
+  maintenance: { label:'🔧 ТО и зарплаты', approvers:['alexander','owner'], useFunds:false, canCreate:['owner','admin','admin2'] },
   personal:    { label:'👤 Личный бюджет', approvers:['owner'],             useFunds:true,  canCreate:['owner','admin','admin2'] },
 };
 
 // Who can see which ledger tabs at all (separate from canCreate above, which is about
 // who can log a new expense within a ledger they can already see): each data-entry role
 // only needs the budget(s) it actually feeds data into — Kitchen's login only ever
-// touches Кухня, admin only ever touches ТО и зарплаты/Личный бюджет — everyone else
+// touches Кухня, admin and admin2 both touch ТО и зарплаты/Личный бюджет — everyone else
 // (owner, accountant) sees all three.
 function _budgetVisibleLedgers(role) {
   if (role === 'admin') return ['maintenance', 'personal'];
-  if (role === 'admin2') return ['personal'];
+  if (role === 'admin2') return ['maintenance', 'personal'];
   if (role === 'kitchen') return ['kitchen'];
   if (role === 'management') return ['kitchen', 'maintenance'];
   return ['kitchen', 'maintenance', 'personal'];
@@ -10736,6 +10738,11 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
   else if (paidState === 'paid') { cardBorderColor = '#16a34a'; cardBg = 'background:#f0fdf4;'; }
   else if (paidState === 'awaiting_payment') { cardBorderColor = '#d97706'; cardBg = 'background:#fffbeb;'; }
 
+  // The ✍️ "who submitted it" badge below used to only show on fund-tracked ledgers —
+  // Личный бюджет was the only one with more than one non-owner submitter (admin/admin2)
+  // back when this was written. ТО и зарплаты now has the same two, so the badge is no
+  // longer tied to useFunds — it shows wherever createdBy is set, same as the register
+  // export's own "Кто добавил" column already does regardless of ledger.
   return `<div class="kitch-card" style="border-left:4px solid ${cardBorderColor};${cardBg}">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
       <div style="flex:1;min-width:200px">
@@ -10744,7 +10751,7 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
           ${t.time?`<span style="font-size:11px;color:#94a3b8">${t.time}</span>`:''}
           <span class="badge badge-gray" style="font-size:10px">${typeLabel}</span>
           ${t.fund?`<span class="badge" style="font-size:10px;background:${_fundColor(t.fund)};color:#fff">${t.fund}</span>`:''}
-          ${cfg.useFunds && t.createdBy ? `<span class="badge badge-gray" style="font-size:10px">✍️ ${_roleDisplayName(t.createdBy)}</span>` : ''}
+          ${t.createdBy ? `<span class="badge badge-gray" style="font-size:10px">✍️ ${_roleDisplayName(t.createdBy)}</span>` : ''}
           ${prominentStatus}
         </div>
         <div style="font-weight:600;font-size:14px">${t.vendor||''}</div>
