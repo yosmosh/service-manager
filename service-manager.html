@@ -2467,7 +2467,7 @@ function _resumeAfterUpdate() {
 // (closeModal tells the person the save carries on), and until the upload finishes nothing
 // is marked unsaved yet — so this is the only sign that a reload now would kill that save
 // and lose the record, with its photos left orphaned in Storage.
-const _anySaveInFlight = () => _budgetSaveInFlight || _sosSaveInFlight || _maintSaveInFlight;
+const _anySaveInFlight = () => _budgetSaveInFlight || _sosSaveInFlight || _maintSaveInFlight || _savesInFlight.size > 0;
 
 // The banner's own button — a deliberate "update now", which can lose what's unsaved, so it
 // asks first when there's anything to lose.
@@ -4432,6 +4432,9 @@ async function delReqFile(reqId, fi) {
 }
 
 async function saveRecord2(pid, yr, mo, visitCount) {
+  return _onceAtATime("record", () => _saveRecord2Inner(pid, yr, mo, visitCount));
+}
+async function _saveRecord2Inner(pid, yr, mo, visitCount) {
   console.log('[SAVE] saveRecord2 called', pid, yr, mo);
   _showToast('💾 Сохраняем...', true);
   try {
@@ -6816,6 +6819,19 @@ function _saveStillRunning() {
   _showToast('⏳ Предыдущая запись ещё сохраняется — подождите и нажмите «Сохранить» снова', false);
 }
 
+// Every form in the app saves the same way: read the fields, upload whatever is attached,
+// write the record. None of that is safe to run twice at once — the Save button stays live
+// through an upload that takes seconds on a phone, and a second tap made a second copy of
+// the record. The budget/SOS/maintenance forms each grew their own flag for this as the
+// duplicates were noticed one at a time; this is the same guard for all the others, in one
+// place, so a form added later only has to name itself here.
+const _savesInFlight = new Set();
+async function _onceAtATime(key, run) {
+  if (_savesInFlight.has(key)) return _saveStillRunning();
+  _savesInFlight.add(key);
+  try { return await run(); } finally { _savesInFlight.delete(key); }
+}
+
 // A save has written its record into local state, and then the upload to the server failed.
 // Pressing Save again used to run the whole save a second time — adding a SECOND copy of the
 // record, with the same documents (which the duplicate-document check can't catch: by then
@@ -7714,6 +7730,9 @@ function qeAddVisitFromSystem(pid, yr, mo, vi) {
 }
 
 async function qeSaveAndShare() {
+  return _onceAtATime('quarterlyShare', _qeSaveAndShareInner);
+}
+async function _qeSaveAndShareInner() {
   const list = getMaintWorks();
   _qeWorks.forEach(edWork => {
     const idx = list.findIndex(w => w.id === edWork.id);
@@ -8974,6 +8993,9 @@ function openKitchenSupplierModal(id) {
 }
 
 async function saveKitchenSupplier() {
+  return _onceAtATime("kitchenSupplier", _saveKitchenSupplierInner);
+}
+async function _saveKitchenSupplierInner() {
   const name = (document.getElementById('ks-name').value||'').trim();
   if (!name) { alert('Введите название'); return; }
   const delivery_days = Array.from(document.querySelectorAll('input[name="kday"]:checked')).map(el=>Number(el.value));
@@ -9169,6 +9191,9 @@ function onTruckPhotoSelect(input) {
 }
 
 async function saveKitchenDelivery() {
+  return _onceAtATime("kitchenDelivery", _saveKitchenDeliveryInner);
+}
+async function _saveKitchenDeliveryInner() {
   const date = document.getElementById('kd-date').value;
   if (!date) { alert('Укажите дату'); return; }
   if (!_kitchenTruckPhoto) { alert('📸 Необходимо сфотографировать грузовик доставки!\n\nФото обязательно для сохранения доставки.'); return; }
@@ -9372,6 +9397,9 @@ function openKitchenInventoryModal(id) {
 }
 
 async function saveKitchenInventoryItem() {
+  return _onceAtATime("kitchenInventory", _saveKitchenInventoryItemInner);
+}
+async function _saveKitchenInventoryItemInner() {
   const name = (document.getElementById('ki-name').value||'').trim();
   if (!name) { alert('Введите наименование'); return; }
   const item = {
@@ -9591,6 +9619,9 @@ function onKitchenInvoiceFileSelect(input) {
 }
 
 async function saveKitchenInvoice() {
+  return _onceAtATime("kitchenInvoice", _saveKitchenInvoiceInner);
+}
+async function _saveKitchenInvoiceInner() {
   const date = document.getElementById('kinv-date').value;
   if (!date) { alert('Укажите дату'); return; }
   const total = document.getElementById('kinv-total').value;
@@ -11919,6 +11950,9 @@ function _renderBudgetFundsList(funds) {
 }
 
 async function addBudgetFund() {
+  return _onceAtATime("budgetFund", _addBudgetFundInner);
+}
+async function _addBudgetFundInner() {
   const name = (document.getElementById('bf-new-name').value||'').trim();
   if (!name) return;
   const funds = getBudgetFunds();
