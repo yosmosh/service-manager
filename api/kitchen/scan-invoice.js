@@ -7,7 +7,7 @@
 //
 // Required Vercel environment variable: ANTHROPIC_API_KEY (shared with api/cron/telegram-digest.js)
 
-const { readDoc, updateDoc, fsString, fsInt } = require('../_lib/firestore');
+const { updateDoc, fsString, fsInt } = require('../_lib/firestore');
 
 // This URL is public (the app has no server-side login), and every call is a paid vision
 // request on the same Anthropic key the Telegram drafts and the digest use — anyone who found
@@ -19,24 +19,39 @@ const QUOTA_DOC = 'appdata/_scan_quota';
 const moscowDay = () => new Date(Date.now() + 3 * 3600000).toISOString().slice(0, 10);
 const usedToday = (f, day) => (f.day && f.day.stringValue === day) ? (Number(f.count && f.count.integerValue) || 0) : 0;
 
-// How much of today's allowance is gone, or null when that can't be read. The cap exists to
-// bound what a stranger can spend, not to stop the kitchen working: a Firestore blip must not
-// make invoice scanning refuse real invoices, so a failure here reads as "no limit known".
-async function scanQuotaUsed() {
-  try {
-    const d = await readDoc(QUOTA_DOC, ['day', 'count']);
-    return usedToday(d.fields || {}, moscowDay());
-  } catch (e) { return null; }
-}
-
-// Counted only once a scan has actually produced an answer — a request the model refused or
-// cut off costs nothing and used to eat the day's allowance anyway, so a spell of Anthropic
-// being overloaded could lock the kitchen out for the rest of the day. Best-effort: a count
-// that fails to write only makes today's cap slightly generous.
-async function countScan() {
+// Takes one slot out of today's allowance BEFORE the model is called, in a single
+// read-modify-write guarded by the document's version — so requests arriving together can't
+// each read the same count and all decide there is room. (Reading the count first and adding
+// to it afterwards, as this did briefly, left seconds between the two: a burst of a hundred
+// requests all passed the check and the cap bounded nothing at all.)
+//
+// Returns false only when the day really is used up. When the quota can't be read or written
+// the scan is let through: the cap is there to bound what a stranger can spend, not to stop
+// the kitchen entering invoices, so a Firestore blip must not refuse real work.
+async function reserveScan() {
   const day = moscowDay();
   try {
-    await updateDoc(QUOTA_DOC, ['day', 'count'], f => ({ day: fsString(day), count: fsInt(usedToday(f, day) + 1) }));
+    let room = false;
+    await updateDoc(QUOTA_DOC, ['day', 'count'], f => {
+      const used = usedToday(f, day);
+      room = used < DAILY_SCAN_LIMIT;
+      return room ? { day: fsString(day), count: fsInt(used + 1) } : null;
+    });
+    return room;
+  } catch (e) { return true; }
+}
+
+// Gives the slot back when nothing usable came of it. A request the model refused or cut off
+// costs nothing, and without this a spell of Anthropic being overloaded would eat the day's
+// allowance and lock the kitchen out. Best-effort: a refund that fails to write only leaves
+// today's cap a little tighter.
+async function releaseScan() {
+  const day = moscowDay();
+  try {
+    await updateDoc(QUOTA_DOC, ['day', 'count'], f => {
+      const used = usedToday(f, day);
+      return used > 0 ? { day: fsString(day), count: fsInt(used - 1) } : null;
+    });
   } catch (e) { /* see above */ }
 }
 
@@ -50,43 +65,47 @@ module.exports = async (req, res) => {
   try {
     const { imageBase64, mediaType } = req.body || {};
     if (!imageBase64) { res.status(400).json({ error: 'imageBase64 required' }); return; }
-    const used = await scanQuotaUsed();
-    if (used !== null && used >= DAILY_SCAN_LIMIT) {
+    if (!(await reserveScan())) {
       res.status(429).json({ error: `Дневной лимит распознавания счетов исчерпан (${DAILY_SCAN_LIMIT}) — заполните позиции вручную или попробуйте завтра` });
       return;
     }
-
-    // Sonnet 5 thinks before answering by default, and thinking counts against max_tokens —
-    // the old cap of 4096 could run out on a long invoice before the JSON was complete.
-    // 16000 is the documented default for a non-streaming request (as in build-drafts).
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-5',
-        max_tokens: 16000,
-        messages: [{ role: 'user', content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType || 'image/jpeg', data: imageBase64 } },
-          { type: 'text', text: PROMPT },
-        ] }],
-      }),
-    });
-    const data = await resp.json();
-    if (!resp.ok) { res.status(502).json({ error: (data.error && data.error.message) || 'Anthropic API error' }); return; }
-    // A cut-off answer is a failure with a message a person can act on, not a JSON error.
-    if (data.stop_reason !== 'end_turn') {
-      res.status(502).json({ error: 'Ответ ИИ оборвался (' + data.stop_reason + ') — попробуйте ещё раз или сфотографируйте счёт частями' });
-      return;
+    // The slot is taken from here on, and goes back unless this produces a usable answer.
+    let usable = false;
+    try {
+      // Sonnet 5 thinks before answering by default, and thinking counts against max_tokens —
+      // the old cap of 4096 could run out on a long invoice before the JSON was complete.
+      // 16000 is the documented default for a non-streaming request (as in build-drafts).
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-5',
+          max_tokens: 16000,
+          messages: [{ role: 'user', content: [
+            { type: 'image', source: { type: 'base64', media_type: mediaType || 'image/jpeg', data: imageBase64 } },
+            { type: 'text', text: PROMPT },
+          ] }],
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { res.status(502).json({ error: (data.error && data.error.message) || 'Anthropic API error' }); return; }
+      // A cut-off answer is a failure with a message a person can act on, not a JSON error.
+      if (data.stop_reason !== 'end_turn') {
+        res.status(502).json({ error: 'Ответ ИИ оборвался (' + data.stop_reason + ') — попробуйте ещё раз или сфотографируйте счёт частями' });
+        return;
+      }
+      // Sonnet 5 sometimes puts an extended-thinking block before the actual text block, so
+      // content[0] isn't reliably the text — find the text block by type instead.
+      const textBlock = (data.content || []).find(b => b.type === 'text');
+      const text = ((textBlock && textBlock.text) || '').trim();
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) { res.status(502).json({ error: 'no JSON in AI response' }); return; }
+      const parsed = JSON.parse(match[0]);
+      usable = true;
+      res.status(200).json({ ok: true, result: parsed });
+    } finally {
+      if (!usable) await releaseScan();
     }
-    // Sonnet 5 sometimes puts an extended-thinking block before the actual text block, so
-    // content[0] isn't reliably the text — find the text block by type instead.
-    const textBlock = (data.content || []).find(b => b.type === 'text');
-    const text = ((textBlock && textBlock.text) || '').trim();
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) { res.status(502).json({ error: 'no JSON in AI response' }); return; }
-    const parsed = JSON.parse(match[0]);
-    await countScan(); // a scan that produced a usable answer — see countScan
-    res.status(200).json({ ok: true, result: parsed });
   } catch (e) {
     res.status(500).json({ error: String(e && e.message || e) });
   }
