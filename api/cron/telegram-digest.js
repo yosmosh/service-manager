@@ -167,6 +167,7 @@ module.exports = async (req, res) => {
   if (!claudeKey) { res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' }); return; }
 
   const dryRun = req.query && (req.query.dryRun === '1' || req.query.dryRun === 'true');
+  let recipients = [];
 
   try {
     const stateDoc = await fsGet(['telegram_config', 'telegram_log']);
@@ -180,6 +181,7 @@ module.exports = async (req, res) => {
       return;
     }
 
+    recipients = cfg.digest.ownerChatIds;
     const sinceIso = new Date(Date.now() - 24 * 3600000).toISOString();
     const messages = await fetchRecentMessages(sinceIso);
     if (!messages.length) {
@@ -208,6 +210,17 @@ module.exports = async (req, res) => {
 
     res.status(200).json({ ok: true, dryRun: !!dryRun, messageCount: messages.length, topics: Object.keys(byTopic), digestText });
   } catch (e) {
+    // The digest runs once a day, and nothing is sent when the group was quiet — so a failure
+    // that stayed silent was indistinguishable from a quiet day, and a day of reports could
+    // pass unread with nobody aware there was anything to read. Say so instead.
+    if (!dryRun) {
+      for (const chatId of recipients) {
+        try {
+          await sendTelegramDM(token, chatId, '⚠️ Дайджест за сегодня не удалось составить (сбой ИИ или связи). '
+            + 'Сообщения в группе на месте — посмотрите их в Telegram, сводка придёт завтра.');
+        } catch (e2) { /* the run already reports the failure below */ }
+      }
+    }
     res.status(500).json({ ok: false, error: String(e && e.message || e) });
   }
 };
