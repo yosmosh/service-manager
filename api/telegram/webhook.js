@@ -291,7 +291,10 @@ module.exports = async (req, res) => {
     // below), it lands on the same document instead of becoming a second copy.
     let saved;
     try {
-      saved = await fetch(`${FIRESTORE_MESSAGES_URL}/${msg.message_id}`, {
+      // Numeric, always: this id goes into the document path, and Telegram is the only caller
+      // (the secret header sees to that), but a path built from someone else's field is not
+      // something to leave to trust.
+      saved = await fetch(`${FIRESTORE_MESSAGES_URL}/${Math.trunc(Number(msg.message_id)) || 0}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
         body: JSON.stringify(body),

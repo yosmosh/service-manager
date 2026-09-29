@@ -7192,6 +7192,15 @@ async function loadSharePage(token) {
     document.body.innerHTML = '<div style="font-family:sans-serif;text-align:center;padding:80px 24px;color:#dc2626"><h2>Firebase недоступен</h2></div>';
     return;
   }
+  // The token comes straight off the URL and is pasted into a Firestore document path, so it
+  // has to look like a token and nothing else. A "/" and a "..\" in it walk back out of the
+  // share_ prefix — the browser tidies those away before the request goes out — and the page
+  // would then fetch and display whichever document the visitor aimed it at, appdata/state
+  // among them. Every token this app issues is base36 from Math.random (see qeSaveAndShare).
+  if (!/^[a-z0-9]{6,64}$/i.test(token || '')) {
+    document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 24px"><h2 style="color:#1e293b">Ссылка не найдена</h2><p style="color:#6b7280">Эта ссылка недействительна или устарела.</p></div>';
+    return;
+  }
   try {
     const d = await _fsGetDoc('appdata/share_' + token);
     if (!d) {
