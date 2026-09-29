@@ -1862,6 +1862,7 @@ function _mergeChangedEntry(baseJson, server, local) {
 }
 function _merge3(base, server, local) {
   const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (Array.isArray(base) && Array.isArray(server) && Array.isArray(local)) return _mergeArr3(base, server, local);
   if (!isObj(base) || !isObj(server) || !isObj(local)) return local;
   const out = {};
   new Set(Object.keys(base).concat(Object.keys(server), Object.keys(local))).forEach(k => {
@@ -1870,6 +1871,32 @@ function _merge3(base, server, local) {
       : s === b ? local[k]                          // untouched there — keep ours
       : _merge3(base[k], server[k], local[k]);      // both — go deeper (ours for a plain value)
     if (v !== undefined) out[k] = v;
+  });
+  return out;
+}
+
+// A list inside an entry, changed on both sides — most of all fileRefs, the documents of one
+// invoice. Taking this session's list whole dropped a page a colleague attached to the same
+// invoice in the same moment (the file stayed in Storage, but nothing pointed at it any more).
+// Entries carrying an id are matched up by it, so both sides' additions survive and a removal
+// on either side is honoured. A list of plain values (the parallel fileIds/fileNames/fileTypes
+// of an SOS report, where position ties the three together) can't be reconciled that way
+// without risking a mismatch between them, so there this session's list still wins whole.
+function _mergeArr3(base, server, local) {
+  const idOf = v => (v && typeof v === 'object' && !Array.isArray(v) && v.id != null) ? String(v.id) : null;
+  const every = base.concat(server, local);
+  if (!every.length || !every.every(v => idOf(v) !== null)) return local;
+  const byId = arr => new Map(arr.map(v => [idOf(v), v]));
+  const b = byId(base), s = byId(server), l = byId(local);
+  const out = [], seen = new Set();
+  // Server order first (a colleague's own ordering), then whatever this session added.
+  server.concat(local).forEach(v => {
+    const id = idOf(v);
+    if (seen.has(id)) return;
+    seen.add(id);
+    // Present before and dropped on one side since — that's a removal, not an absence.
+    if (b.has(id) && !(s.has(id) && l.has(id))) return;
+    out.push(s.has(id) && l.has(id) ? _merge3(b.get(id), s.get(id), l.get(id)) : (l.has(id) ? l.get(id) : s.get(id)));
   });
   return out;
 }
@@ -11440,6 +11467,18 @@ async function _saveBudgetTxInner(ledgerKey) {
   if (!(await finish())) _offerResend(formGen, 'bt-save-btn', finish);
 }
 
+// One approve/reject/pay decision at a time. Each now reads fresh data before its confirm
+// dialog appears, and during that read the button looks untouched — so a second tap started a
+// second run, which saw the approval its own first run had just made and offered to REVOKE
+// it. Someone tapping quickly answered that dialog too, leaving the invoice unapproved,
+// invisible to the accountant, and the person sure they had approved it.
+let _budgetDecisionInFlight = false;
+async function _oneBudgetDecision(run) {
+  if (_budgetDecisionInFlight) return;
+  _budgetDecisionInFlight = true;
+  try { return await run(); } finally { _budgetDecisionInFlight = false; }
+}
+
 // What a decision on a record someone has meanwhile rejected is told — who, and why.
 function _rejectedNote(t) {
   return '⛔ Эту операцию уже отклонил(а) ' + (t.rejectedBy ? _roleDisplayName(t.rejectedBy) : 'другой пользователь')
@@ -11447,6 +11486,9 @@ function _rejectedNote(t) {
 }
 
 async function approveBudgetTx(ledgerKey, id, asRole) {
+  return _oneBudgetDecision(() => _approveBudgetTxInner(ledgerKey, id, asRole));
+}
+async function _approveBudgetTxInner(ledgerKey, id, asRole) {
   // The owner can stand in for Alexander (e.g. while he's unavailable) and approve
   // on his behalf — but only the owner gets that override, and only for his slot.
   let myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : null;
@@ -11492,19 +11534,30 @@ async function approveBudgetTx(ledgerKey, id, asRole) {
   // transfers, institutional funds) still goes through the accountant exactly like
   // Kitchen/Maintenance.
   if (!alreadyApproved) {
-    const nowAllApproved = FINANCE_LEDGERS[ledgerKey].approvers.every(role => t.approvals[role] && t.approvals[role].approved);
-    if (nowAllApproved && ledgerKey === 'personal' && t.fund === 'Наличные') {
-      t.accountantConfirm = {paid:true, date:new Date().toISOString()};
-      setBudgetTx(ledgerKey, list);
+    // Read again from state rather than reusing `t`/`list` from before the save: saving
+    // MERGES with the server, so what state holds now is a different list, carrying whatever
+    // other people wrote in those seconds. Writing the pre-save list back over it (which the
+    // cash branch below did) dropped their work — and the save after that, seeing entries in
+    // the baseline that the list no longer had, deleted a colleague's invoice outright.
+    const after = getBudgetTx(ledgerKey);
+    const t2 = after.find(x => x.id === id);
+    if (!t2) { _showToast('✅ Согласовано', true); render(); return; }
+    const nowAllApproved = FINANCE_LEDGERS[ledgerKey].approvers.every(role => (t2.approvals||{})[role] && t2.approvals[role].approved);
+    if (nowAllApproved && ledgerKey === 'personal' && t2.fund === 'Наличные' && !(t2.accountantConfirm && t2.accountantConfirm.paid)) {
+      t2.accountantConfirm = {paid:true, date:new Date().toISOString()};
+      setBudgetTx(ledgerKey, after);
       if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
     } else if (nowAllApproved) {
-      _notifyAccountant(`🧾 Готово к оплате — ${FINANCE_LEDGERS[ledgerKey].label}`, _getFromName(), `${t.vendor||''} · ₽${(Number(t.amount)||0).toLocaleString('ru-RU')}`);
+      _notifyAccountant(`🧾 Готово к оплате — ${FINANCE_LEDGERS[ledgerKey].label}`, _getFromName(), `${t2.vendor||''} · ₽${(Number(t2.amount)||0).toLocaleString('ru-RU')}`);
     }
   }
   _showToast(alreadyApproved ? '↩️ Согласование отменено' : '✅ Согласовано', true); render();
 }
 
 async function rejectBudgetTx(ledgerKey, id) {
+  return _oneBudgetDecision(() => _rejectBudgetTxInner(ledgerKey, id));
+}
+async function _rejectBudgetTxInner(ledgerKey, id) {
   // Every other budget action (approve, confirm-paid, delete) checks the caller's
   // role before doing anything — this one didn't, and also didn't block rejecting
   // something that's already been paid (money already moved by then).
@@ -11674,6 +11727,9 @@ async function _acctQueueDeclinePaid(ledgerKey, id) {
 }
 
 async function confirmBudgetPaid(ledgerKey, id) {
+  return _oneBudgetDecision(() => _confirmBudgetPaidInner(ledgerKey, id));
+}
+async function _confirmBudgetPaidInner(ledgerKey, id) {
   if (currentUser !== 'accountant' && currentUser !== 'owner') return;
   // Checked on the record as it is NOW, not as the payment queue showed it when opened: the
   // same conditions that put the pay button there (see _renderBudgetTxCard).
@@ -11704,6 +11760,9 @@ async function confirmBudgetPaid(ledgerKey, id) {
 // already keeps out of every future month's forecast, instead of just sitting unconfirmed
 // forever and quietly dragging every later month down.
 async function declineBudgetPaid(ledgerKey, id) {
+  return _oneBudgetDecision(() => _declineBudgetPaidInner(ledgerKey, id));
+}
+async function _declineBudgetPaidInner(ledgerKey, id) {
   if (currentUser !== 'accountant' && currentUser !== 'owner') return;
   await _syncBeforeDecision();
   const list = getBudgetTx(ledgerKey);
