@@ -4853,7 +4853,16 @@ function removeReqItem(idx) {
     </div>`).join('');
 }
 
+// One submission at a time. The form's own modal closes before the files finish uploading, so
+// a second tap that landed while it was still open ran the whole thing again — a duplicate
+// request, and (see the id below) one the owner could not tell apart from the first.
+let _requestSaveInFlight = false;
 async function saveRequest(editId) {
+  if (_requestSaveInFlight) return _saveStillRunning();
+  _requestSaveInFlight = true;
+  try { await _saveRequestInner(editId); } finally { _requestSaveInFlight = false; }
+}
+async function _saveRequestInner(editId) {
   const titleEl = document.getElementById('req-title');
   const title = (titleEl?.value||'').trim();
   if (!title) {
@@ -4879,7 +4888,11 @@ async function saveRequest(editId) {
 
     const prov = PROVIDERS.find(x => x.id === currentUser);
     const list = getRequests();
-    const reqId = editId || Date.now().toString();
+    // _newTxId, not Date.now() alone: two requests created in the same millisecond — a double
+    // tap, or two providers submitting at once — shared an id, and then editing, deleting or
+    // approving one of them hit whichever the lookup reached first, leaving the other stuck
+    // with no way to act on it. Every other record in the app already uses this.
+    const reqId = editId || _newTxId();
 
     if (editId) {
       const idx = list.findIndex(r => r.id === editId);
@@ -9812,7 +9825,15 @@ function openDailyUsageModal() {
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
+// One at a time: saving subtracts the day's usage from the shelf, and with nothing in the way
+// a second tap during the save took the same quantities off again and logged the day twice.
+let _dailyUsageSaveInFlight = false;
 async function saveDailyUsage(count) {
+  if (_dailyUsageSaveInFlight) return _saveStillRunning();
+  _dailyUsageSaveInFlight = true;
+  try { await _saveDailyUsageInner(count); } finally { _dailyUsageSaveInFlight = false; }
+}
+async function _saveDailyUsageInner(count) {
   const date = document.getElementById('du-date').value;
   const items = [];
   const overLimit = [];
@@ -9954,11 +9975,22 @@ async function saveWriteoffRequest() {
   closeModal(); _showToast('📤 Запрос отправлен владельцу', true); render();
 }
 
+// One writeoff decision at a time, and only on a request still waiting. Approving subtracts
+// the quantities from the shelf, and nothing stopped that happening twice: the button stayed
+// on screen while the save ran, and a second tap — the dialog obligingly answered again —
+// took the same kilos off a second time, leaving the stock figures quietly wrong.
+let _writeoffActionInFlight = false;
 async function approveWriteoff(id) {
-  if (!confirm('Одобрить списание и вычесть из склада?')) return;
+  if (_writeoffActionInFlight) return;
+  _writeoffActionInFlight = true;
+  try { await _approveWriteoffInner(id); } finally { _writeoffActionInFlight = false; }
+}
+async function _approveWriteoffInner(id) {
   const list = getKitchenWriteoffs();
   const wo = list.find(w=>w.id===id);
   if (!wo) return;
+  if (wo.status !== 'pending') { _showToast('Это списание уже обработано', false); render(); return; }
+  if (!confirm('Одобрить списание и вычесть из склада?')) return;
   wo.status = 'approved';
   wo.approvedAt = new Date().toISOString();
   setLS('kitchen_writeoffs', list);
@@ -9979,11 +10011,17 @@ async function approveWriteoff(id) {
 }
 
 async function rejectWriteoff(id) {
-  const reason = prompt('Причина отклонения (необязательно):');
-  if (reason === null) return;
+  if (_writeoffActionInFlight) return;
+  _writeoffActionInFlight = true;
+  try { await _rejectWriteoffInner(id); } finally { _writeoffActionInFlight = false; }
+}
+async function _rejectWriteoffInner(id) {
   const list = getKitchenWriteoffs();
   const wo = list.find(w=>w.id===id);
   if (!wo) return;
+  if (wo.status !== 'pending') { _showToast('Это списание уже обработано', false); render(); return; }
+  const reason = prompt('Причина отклонения (необязательно):');
+  if (reason === null) return;
   wo.status = 'rejected';
   wo.rejectReason = reason;
   wo.rejectedAt = new Date().toISOString();
