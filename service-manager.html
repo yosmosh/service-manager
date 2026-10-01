@@ -1843,7 +1843,7 @@ const TX_KEYS = [
 // two people updating different providers no longer overwrite each other. Configuration
 // objects (notify_config, telegram_config) are deliberately left out — they are edited
 // rarely, from one screen, and the server writes telegram_config too.
-const TX_MAP_KEYS = ['payment_records', 'svc_records', 'provider_contacts', 'provider_prices',
+const TX_MAP_KEYS = ['payment_records', 'svc_records', 'provider_contacts', 'provider_prices', 'finance_month_locks',
   'provider_pins', 'provider_usernames'];
 let _txBaseline = {}; // key -> { id/key: JSON of that entry as the server last had it }
 
@@ -10369,6 +10369,58 @@ function _currentMonthKey() {
   return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 }
 
+// ---------- The owner's month locks ----------
+// A month still closes for everyone the moment the next one begins — except the owner, who
+// keeps adding the late receipts and corrections a month always turns up, until he closes
+// that ledger's month himself. Closing it makes it final for him too; he alone can open it
+// again (a mistake found later), and every close/open is kept with its time.
+//
+// Per ledger, not per month: ТО и зарплаты, Личный бюджет and Кухня are settled at their own
+// pace. Stored as finance_month_locks: { "<ledger>_<YYYY-MM>": { locked, at, history[] } }.
+//
+// Months before this existed carry no entry. Until it existed every ended month was final,
+// so those stay closed unless the owner opens one — only months from _MONTH_LOCK_DEFAULT_BEFORE
+// on start out open to him.
+const _MONTH_LOCK_DEFAULT_BEFORE = '2026-09';
+const getMonthLocks = () => getLS('finance_month_locks') || {};
+const _monthLockKey = (ledgerKey, mk) => ledgerKey + '_' + mk;
+function _monthLockEntry(ledgerKey, mk) { return getMonthLocks()[_monthLockKey(ledgerKey, mk)] || null; }
+// Whether that ledger's month is closed by the owner — explicitly, or by default for old months.
+function _isMonthLockedByOwner(ledgerKey, mk) {
+  const e = _monthLockEntry(ledgerKey, mk);
+  if (e && typeof e.locked === 'boolean') return e.locked;
+  return mk < _MONTH_LOCK_DEFAULT_BEFORE;
+}
+// An ended month the owner can still write into. Only ever true for the owner.
+function _ownerMayWriteMonth(ledgerKey, mk) {
+  return currentUser === 'owner' && !!ledgerKey && mk < _currentMonthKey() && !_isMonthLockedByOwner(ledgerKey, mk);
+}
+
+async function toggleMonthLock(ledgerKey, mk) {
+  return _onceAtATime('monthLock', () => _toggleMonthLockInner(ledgerKey, mk));
+}
+async function _toggleMonthLockInner(ledgerKey, mk) {
+  if (currentUser !== 'owner' || !FINANCE_LEDGERS[ledgerKey] || !(mk < _currentMonthKey())) return;
+  const locked = _isMonthLockedByOwner(ledgerKey, mk);
+  const [y, m] = mk.split('-').map(Number);
+  const what = `«${FINANCE_LEDGERS[ledgerKey].label}» — ${MONTHS[m-1]} ${y}`;
+  if (!confirm(locked
+    ? `Открыть заново ${what}?\n\nВы снова сможете добавлять, менять и удалять операции этого месяца. Остальные — по-прежнему нет.`
+    : `Закрыть ${what}?\n\nПосле этого ни одну операцию этого месяца нельзя будет добавить, изменить или удалить — и вам тоже, пока вы не откроете его заново. Согласование и оплата уже внесённых операций продолжают работать.`)) return;
+  const locks = getMonthLocks();
+  const key = _monthLockKey(ledgerKey, mk);
+  const prev = locks[key] || {};
+  const at = new Date().toISOString();
+  locks[key] = { locked: !locked, at, history: (prev.history || []).concat([{ action: locked ? 'unlock' : 'lock', at }]) };
+  setLS('finance_month_locks', locks);
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    if (!(await _flushState())) { render(); return; }
+  }
+  _showToast(locked ? '🔓 Месяц открыт заново' : '🔒 Месяц закрыт', true);
+  render();
+}
+
 // A closed month's books are final: a record dated into one can no longer be edited,
 // deleted or have its documents changed by anyone, owner included — the same rule new
 // entries already follow (see the closed-month check in saveBudgetTx). What it must NOT
@@ -10387,9 +10439,19 @@ function _currentMonthKey() {
 // it exists for. Paid or rejected settles it either way, same as _budgetTxMonthKey keys it
 // to the paid date once paid. An imported historical record never gets this grace,
 // matching _importedTabMonth's own precedence over the rollover.
-function _isTxMonthClosed(t) {
+//
+// ledgerKey brings in the owner's month locks (see _isMonthLockedByOwner): an ended month he
+// hasn't closed yet is still open to him, and one he HAS closed is closed outright — to him
+// and to the last-days grace below alike, since closing it was exactly that decision.
+function _isTxMonthClosed(t, ledgerKey) {
   if (!t || !t.date) return false;
-  if (t.date.slice(0,7) >= _currentMonthKey()) return false;
+  const mk = t.date.slice(0,7);
+  if (mk >= _currentMonthKey()) return false;
+  if (ledgerKey) {
+    if (_ownerMayWriteMonth(ledgerKey, mk)) return false;
+    const e = _monthLockEntry(ledgerKey, mk);
+    if (e && e.locked === true) return true;
+  }
   if (t.type !== 'expense') return true; // income/refund: no grace period
   if (_importedTabMonth(t)) return true;
   if (t.status === 'rejected') return true;
@@ -10578,13 +10640,15 @@ function renderBudget() {
   const realNow = new Date();
   const isCurrent = budgetMonth===(realNow.getMonth()+1) && budgetYear===realNow.getFullYear();
   const navMk = `${budgetYear}-${String(budgetMonth).padStart(2,'0')}`;
-  const navMonthClosed = navMk < _currentMonthKey();
+  const navOwnerOpen = _ownerMayWriteMonth(budgetLedger, navMk);
+  const navMonthClosed = navMk < _currentMonthKey() && !navOwnerOpen;
   const monthNav = `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:white;border-radius:12px;border:1px solid #e2e8f0;margin-bottom:10px">
     <button class="year-btn" onclick="budgetMonth--;if(budgetMonth<1){budgetMonth=12;budgetYear--}render()">◄</button>
     <div style="font-size:16px;font-weight:700;color:#1e293b;min-width:160px;text-align:center">${MONTHS[budgetMonth-1]} ${budgetYear}</div>
     <button class="year-btn" onclick="budgetMonth++;if(budgetMonth>12){budgetMonth=1;budgetYear++}render()">►</button>
     ${isCurrent?'<span class="badge badge-blue">Текущий месяц</span>':''}
     ${navMonthClosed?'<span class="badge" style="background:#f1f5f9;color:#64748b">🔒 Закрыт</span>':''}
+    ${navOwnerOpen?'<span class="badge" style="background:#fef3c7;color:#92400e">🔓 Открыт для вас</span>':''}
   </div>`;
   // The owner and accountant are the two people who actually need to scan every
   // expense at once, outside the month-by-month cards — a CSV they can open in Excel
@@ -11049,21 +11113,42 @@ function _renderBudgetLedger(ledgerKey) {
   </div>` : '<div class="card" style="margin-bottom:12px"><div style="padding:16px;color:#94a3b8;font-size:13px;text-align:center">Нет данных</div></div>') : '';
 
   // A month closes the instant the next one starts — no new operations can be logged
-  // into it any more (existing ones can still be approved/paid, just not created).
-  const monthClosed = mk < _currentMonthKey();
+  // into it any more (existing ones can still be approved/paid, just not created). Except
+  // for the owner, until he closes that ledger's month himself (see _ownerMayWriteMonth).
+  const monthEnded = mk < _currentMonthKey();
+  const ownerOpen = _ownerMayWriteMonth(ledgerKey, mk);
+  const monthClosed = monthEnded && !ownerOpen;
+
+  // The owner's own close/open control for an ended month, in that month's view.
+  const ownerLockBar = (monthEnded && currentUser === 'owner') ? (ownerOpen
+    ? `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:8px 14px;margin-bottom:10px;font-size:12px;color:#92400e;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>🔓 Месяц закончился, но открыт для вас — остальные уже не могут его менять. Когда всё внесено, закройте его.</span>
+        <button class="btn btn-outline" style="font-size:12px;padding:4px 10px;margin-left:auto" onclick="toggleMonthLock('${ledgerKey}','${mk}')">🔒 Закрыть месяц</button>
+      </div>`
+    : `<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:8px 14px;margin-bottom:10px;font-size:12px;color:#64748b;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>🔒 Месяц закрыт${(_monthLockEntry(ledgerKey, mk) || {}).at ? ' вами ' + fmtDate(_monthLockEntry(ledgerKey, mk).at.slice(0,10)) : ''} — изменить его не может никто, и вы тоже.</span>
+        <button class="btn btn-outline" style="font-size:12px;padding:4px 10px;margin-left:auto" onclick="toggleMonthLock('${ledgerKey}','${mk}')">🔓 Открыть заново</button>
+      </div>`) : '';
 
   // Income can only be entered by the owner — everyone else with access to this ledger
   // (e.g. admin) can view income but not record it themselves.
-  const addBtn = monthClosed
-    ? `<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:8px 14px;margin-bottom:10px;font-size:12px;color:#64748b;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+  const fundsBtn = (cfg.useFunds && currentUser === 'owner')
+    ? `<button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="openBudgetFundsModal()">⚙️ Фонды</button>` : '';
+  let addBtn;
+  if (currentUser === 'owner' && monthClosed) {
+    // The owner's own bar above already says it's closed and offers to open it again.
+    addBtn = ownerLockBar + (fundsBtn ? `<div style="margin-bottom:10px">${fundsBtn}</div>` : '');
+  } else if (monthClosed) {
+    addBtn = `<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:8px 14px;margin-bottom:10px;font-size:12px;color:#64748b;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span>🔒 Месяц закрыт — новые операции можно добавлять только в текущем месяце</span>
-        ${cfg.useFunds && currentUser==='owner'?`<button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="openBudgetFundsModal()">⚙️ Фонды</button>`:''}
-      </div>`
-    : ((canCreate || currentUser==='owner') ? `<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      </div>`;
+  } else {
+    addBtn = ownerLockBar + ((canCreate || currentUser==='owner') ? `<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
     ${canCreate?`<button class="btn btn-primary" onclick="openBudgetTxModal('${ledgerKey}',null,'expense')">+ Расход</button>`:''}
     ${currentUser==='owner'?`<button class="btn btn-outline" onclick="openBudgetTxModal('${ledgerKey}',null,'income')">+ Приход</button>`:''}
-    ${cfg.useFunds && currentUser==='owner'?`<button class="btn btn-outline" onclick="openBudgetFundsModal()">⚙️ Фонды</button>`:''}
+    ${fundsBtn}
   </div>` : '');
+  }
 
   const kitchenPresepBar = (ledgerKey==='kitchen' && currentUser==='owner' && !getLS('kitchen_presep_imported')) ? `<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
     <span style="font-size:12px;color:#1e40af">📥 История Кухни за март–август 2026 ещё не импортирована</span>
@@ -11157,7 +11242,7 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
   // details/documents stay reachable from the same familiar place. Delete is different:
   // it would erase closed-month history outright, so the button itself is withheld rather
   // than shown and then refused.
-  const monthClosed = _isTxMonthClosed(t);
+  const monthClosed = _isTxMonthClosed(t, ledgerKey);
   const editActions = (currentUser==='owner' || creatorCanEdit) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
     <button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="openBudgetTxModal('${ledgerKey}','${t.id}')">✏️</button>
     ${monthClosed ? '' : `<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="delBudgetTx('${ledgerKey}','${t.id}')">🗑</button>`}
@@ -11207,10 +11292,13 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   window._budgetTxSavedFiles = _txFiles(t).slice();
   // A closed month's record is shown read-only — see _isTxMonthClosed. Read by
   // _renderBudgetSavedFiles() too, so the ✕/add controls disappear along with everything else.
-  window._budgetTxReadOnly = !!id && _isTxMonthClosed(t);
+  window._budgetTxReadOnly = !!id && _isTxMonthClosed(t, ledgerKey);
   pendingFiles = [];
   _modalGen++;
-  const today = _todayLocal();
+  // A new entry made while the owner is looking at an ended month he still has open goes into
+  // THAT month by default (its last day) — that is the only reason he'd be adding it there.
+  const viewedMk = `${budgetYear}-${String(budgetMonth).padStart(2,'0')}`;
+  const today = (!id && _ownerMayWriteMonth(ledgerKey, viewedMk)) ? _lastDayOfMonth(budgetYear, budgetMonth) : _todayLocal();
   const nowTime = new Date().toTimeString().slice(0,5);
   const type = t.type || defaultType || 'expense';
   const fundOpts = cfg.useFunds ? getBudgetFunds().map(f=>`<option value="${f.name}" ${t.fund===f.name?'selected':''} style="color:${_fundColor(f.name)};font-weight:600">${f.name}</option>`).join('') : '';
@@ -11363,11 +11451,14 @@ async function _saveBudgetTxInner(ledgerKey) {
   // closed month can no longer be edited at all (content is final — see _isTxMonthClosed).
   // Approving/paying/rejecting a record that closed while still unresolved is a separate
   // path (approveBudgetTx etc.) and is deliberately NOT blocked by this.
-  if (!editingId && date.slice(0,7) < _currentMonthKey()) {
-    alert('⛔ Этот месяц уже закрыт — новые операции можно добавлять только в текущий месяц (или будущей датой).');
+  // (The owner's exception: an ended month he hasn't closed yet — see _ownerMayWriteMonth.)
+  if (!editingId && date.slice(0,7) < _currentMonthKey() && !_ownerMayWriteMonth(ledgerKey, date.slice(0,7))) {
+    alert(currentUser === 'owner'
+      ? '🔒 Этот месяц вы уже закрыли. Чтобы добавить в него операцию, сначала откройте его заново (кнопка в этом месяце).'
+      : '⛔ Этот месяц уже закрыт — новые операции можно добавлять только в текущий месяц (или будущей датой).');
     return;
   }
-  if (editingId && _isTxMonthClosed(getBudgetTx(ledgerKey).find(x=>x.id===editingId))) {
+  if (editingId && _isTxMonthClosed(getBudgetTx(ledgerKey).find(x=>x.id===editingId), ledgerKey)) {
     alert('🔒 Этот месяц закрыт — операция больше не редактируется (нельзя менять данные, документы или удалить). Согласование и оплата всё ещё доступны из списка.');
     return;
   }
@@ -11378,7 +11469,7 @@ async function _saveBudgetTxInner(ledgerKey) {
   // grace period can keep its own date while its other fields are fixed.
   if (editingId) {
     const cur = getBudgetTx(ledgerKey).find(x=>x.id===editingId);
-    if (cur && date !== cur.date && date.slice(0,7) < _currentMonthKey()) {
+    if (cur && date !== cur.date && date.slice(0,7) < _currentMonthKey() && !_ownerMayWriteMonth(ledgerKey, date.slice(0,7))) {
       alert('⛔ Этот месяц уже закрыт — перенести операцию на дату в закрытом месяце нельзя.');
       return;
     }
@@ -11869,7 +11960,7 @@ async function delBudgetTx(ledgerKey, id) {
   if (!t) return;
   // Deleting is content-level too (it erases a closed month's history outright) — locked
   // the same as editing, for the owner as well. See _isTxMonthClosed.
-  if (_isTxMonthClosed(t)) { alert('🔒 Этот месяц закрыт — операцию нельзя удалить.'); return; }
+  if (_isTxMonthClosed(t, ledgerKey)) { alert('🔒 Этот месяц закрыт — операцию нельзя удалить.'); return; }
   const isOwnUnpaidSubmission = t.type === 'expense' && t.status !== 'rejected' &&
     t.createdBy === currentUser && cfg.canCreate.includes(currentUser) &&
     !(t.accountantConfirm && t.accountantConfirm.paid);
