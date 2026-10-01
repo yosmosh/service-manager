@@ -313,6 +313,7 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
   .months-check-grid{grid-template-columns:repeat(3,1fr)}
   /* Buttons in topbar */
   .topbar .btn{padding:7px 10px;font-size:12px}
+  .wh-tb-txt{display:none}
   /* Journal thumbnails bigger for touch */
   .jthumb-wrap img,.jthumb-wrap>div{width:72px !important;height:72px !important}
 }
@@ -321,6 +322,8 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 <style>
 /* flatpickr Russian overrides */
 .flatpickr-calendar { font-family: 'Segoe UI', Arial, sans-serif; direction: ltr; }
+/* Warehouse cards carry more buttons than fit in one row on a phone */
+.wh-foot{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;width:100%}
 /* Mobile thumbnail wrapper (maintenance) */
 [data-gids]{display:flex;flex-wrap:wrap;gap:8px}
 /* Ensure images never overflow on mobile */
@@ -429,6 +432,10 @@ img{max-width:100%;height:auto}
     <div class="nav-item" id="nav-journal" onclick="showView('journal')">📋 Журнал визитов</div>
     <div class="nav-item" id="nav-sos" onclick="showView('sos')">🚨 Экстренное ТО (SOS)</div>
     <div class="nav-item admin-or-owner" id="nav-maint" onclick="showView('maint')">🏗️ Обслуживание территории</div>
+    <div class="nav-item admin-or-owner" id="nav-warehouse" onclick="showView('warehouse')" style="justify-content:space-between">
+      <span>🧰 Склад</span>
+      <span id="wh-badge" style="display:none;background:#ef4444;color:white;border-radius:10px;font-size:10px;font-weight:700;padding:2px 8px;min-width:20px;text-align:center;flex-shrink:0"></span>
+    </div>
     <div class="nav-item" id="nav-finance" onclick="showView('finance')">💰 Финансовая сводка</div>
     <div class="nav-item admin-or-owner" id="nav-budget" onclick="showView('budget')">🏦 Бюджет</div>
     <div class="nav-item admin-or-owner" id="nav-requests" onclick="showView('requests')" style="justify-content:space-between">
@@ -1012,6 +1019,8 @@ function applyUserLayout() {
     lbl.onclick = () => showView('provider', currentUser);
   }
   updateRequestBadge();
+  // Arrived by scanning a warehouse label: go to that item once signed in.
+  _whOpenFromLink();
 }
 
 function updateRequestBadge() {
@@ -3381,6 +3390,7 @@ function showView(v, pid, opts) {
 
 function render() {
   updateRequestBadge();
+  _whUpdateBadge();
   const content = document.getElementById('content');
   const title = document.getElementById('page-title');
   const actions = document.getElementById('topbar-actions');
@@ -3415,6 +3425,16 @@ function render() {
     actions.innerHTML = `<button class="btn btn-danger" onclick="openSosModal()">+ Добавить событие</button>`;
     content.innerHTML = renderSOS();
     loadSosImages();
+  } else if (view === 'warehouse') {
+    title.textContent = '🧰 Склад';
+    if (_WAREHOUSE_ROLES.includes(currentUser)) {
+      actions.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn btn-outline" onclick="openWhMove('receipt')" title="Приход">📥<span class="wh-tb-txt"> Приход</span></button>
+        <button class="btn btn-outline" onclick="openWhMove('issue')" title="Выдать">📤<span class="wh-tb-txt"> Выдать</span></button>
+        <button class="btn btn-primary" onclick="openWhItemForm()" title="Новая позиция">+<span class="wh-tb-txt"> Позиция</span></button></div>`;
+    }
+    content.innerHTML = renderWarehouse();
+    loadWhImages();
   } else if (view === 'maint') {
     title.textContent = '🏗️ Обслуживание территории';
     if (currentUser === 'admin' || currentUser === 'owner') {
@@ -6881,6 +6901,879 @@ function openProviderInfo(pid) {
 }
 
 // ==============================
+// СКЛАД — инструменты, оборудование, материалы
+// ==============================
+// Everything the maintenance side owns, in one place: what there is, how much, where, and
+// above all who has it. A tool or piece of equipment is issued to a person under an act and
+// comes back; a material (pool chemicals, lamps, fixings) is issued and used up. Every
+// movement is a numbered document — receipt, issue, return, write-off — and every quantity
+// on screen is worked out from those documents rather than kept as a number each movement
+// edits: two people issuing from the same shelf at the same moment then simply add two
+// documents, where two edits of one stored count would have lost one of them.
+//
+// Stored in appdata/warehouse (items, people, settings) and appdata/warehouse_docs (the
+// documents) — see SIDE_DOCS. Run by admin and owner (_WAREHOUSE_ROLES).
+
+const WH_CATS = [
+  { id: 'tools',       label: '🔨 Ручной инструмент' },
+  { id: 'power',       label: '🔌 Электроинструмент' },
+  { id: 'garden',      label: '🌿 Садовая техника и инвентарь' },
+  { id: 'equipment',   label: '⚙️ Оборудование' },
+  { id: 'electronics', label: '💻 Электроника' },
+  { id: 'lighting',    label: '💡 Освещение и электрика' },
+  { id: 'plumbing',    label: '🚿 Сантехника' },
+  { id: 'chemicals',   label: '🧪 Химия (бассейн, уборка)' },
+  { id: 'building',    label: '🧱 Стройматериалы' },
+  { id: 'fasteners',   label: '🔩 Крепёж и расходники' },
+  { id: 'safety',      label: '🦺 Спецодежда и СИЗ' },
+  { id: 'other',       label: '📦 Прочее' },
+];
+const WH_UNITS = ['шт', 'компл', 'пар', 'м', 'м²', 'кг', 'л', 'уп', 'рул', 'мешок'];
+const WH_COND = { new: 'Новое', good: 'Хорошее', used: 'Б/у, исправно', repair: 'Требует ремонта', broken: 'Неисправно' };
+const WH_DOC_TYPES = {
+  receipt:  { prefix: 'ПР',  label: 'Поступление', icon: '📥' },
+  issue:    { prefix: 'АПП', label: 'Выдача',      icon: '📤' },
+  return:   { prefix: 'АВ',  label: 'Возврат',     icon: '↩️' },
+  writeoff: { prefix: 'СП',  label: 'Списание',    icon: '🗑' },
+};
+const WH_WRITEOFF_REASONS = ['Сломано, ремонт невозможен', 'Утеряно', 'Израсходовано', 'Истёк срок годности', 'Прочее'];
+const WH_DEFAULT_RESPONSIBILITY = 'Принимающая сторона приняла указанные материальные ценности на ответственное хранение, обязуется использовать их по назначению, обеспечить их сохранность и вернуть по первому требованию или в указанный срок. В случае утраты или повреждения по вине принимающей стороны она возмещает причинённый ущерб в порядке, установленном законодательством Российской Федерации.';
+// The Telegram topic the daily reminder can go to (api/cron/warehouse-reminder.js).
+const WH_TG_TOPIC_LABEL = '«Хозчасть и Ремонт»';
+
+const getWhItems     = () => getLS('wh_items') || [];
+const getWhEmployees = () => getLS('wh_employees') || [];
+const getWhDocs      = () => getLS('wh_docs') || [];
+const getWhSettings  = () => Object.assign({
+  orgName: 'Сад Будущего', legalName: '', inn: '', kpp: '', address: '', city: '',
+  directorName: '', directorPosition: 'Директор', issuerName: '', issuerPosition: 'Администратор',
+  responsibilityText: WH_DEFAULT_RESPONSIBILITY, tgReminders: false, tgTarget: 'topic',
+}, getLS('wh_settings') || {});
+
+const _whItem = id => getWhItems().find(i => i.id === id);
+const _whEmp = id => getWhEmployees().find(e => e.id === id);
+const _whCat = id => WH_CATS.find(c => c.id === id) || WH_CATS[WH_CATS.length - 1];
+const _whIcon = id => _whCat(id).label.split(' ')[0];
+const _whIsAsset = it => !!it && it.kind !== 'consumable';
+// Quantities may be fractional (kg, l, m) — kept to 3 decimals so sums don't drift.
+const _whQ = v => Math.round((Number(v) || 0) * 1000) / 1000;
+const _whFmtQ = v => _whQ(v).toLocaleString('ru-RU', { maximumFractionDigits: 3 });
+const _whRub = n => (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+const _whLink = (label, onclick, color) => `<button onclick="${onclick}" style="background:none;border:none;color:${color || '#2563eb'};cursor:pointer;padding:0;font:inherit;text-decoration:underline">${label}</button>`;
+
+// A save whose upload failed (no signal) keeps its record on this device — and the form
+// must not stay open, or a second tap on Save would record the same item or act twice. So
+// the form closes, the person is told, and the upload is retried until it goes through.
+const _WH_NOT_SENT = '⚠️ Нет связи с сервером. Запись сохранена на этом устройстве и будет отправлена автоматически, как только связь появится. Не вводите её повторно.';
+function _whRetryFlushSoon() {
+  setTimeout(async () => { if (_stateDirty.size && !(await _flushState())) _whRetryFlushSoon(); }, 20000);
+}
+async function _whCommit() {
+  if (!_useFirebase) return true;
+  clearTimeout(_saveTimer);
+  if (await _flushState()) return true;
+  _whRetryFlushSoon();
+  return false;
+}
+
+// ---------- numbering ----------
+// Inventory numbers: ИНВ-0001 for tools and equipment, МАТ-0001 for materials.
+function _whNextInvNo(kind) {
+  const prefix = kind === 'consumable' ? 'МАТ' : 'ИНВ';
+  const re = new RegExp('^' + prefix + '-(\\d+)$');
+  const max = getWhItems().reduce((m, i) => { const mm = String(i.invNo || '').match(re); return mm ? Math.max(m, Number(mm[1])) : m; }, 0);
+  return prefix + '-' + String(max + 1).padStart(4, '0');
+}
+// Document numbers restart each year: АПП-2026-001, АВ-2026-001, …
+function _whNextDocNo(type, date) {
+  const p = WH_DOC_TYPES[type].prefix, y = String(date || _todayLocal()).slice(0, 4);
+  const re = new RegExp('^' + p + '-' + y + '-(\\d+)$');
+  const max = getWhDocs().reduce((m, d) => { const mm = String(d.no || '').match(re); return mm ? Math.max(m, Number(mm[1])) : m; }, 0);
+  return `${p}-${y}-${String(max + 1).padStart(3, '0')}`;
+}
+
+// ---------- what there is, and who has it ----------
+// On the shelf, per item: received and returned, less issued and written off.
+function _whStockMap(docs) {
+  const m = {};
+  (docs || getWhDocs()).forEach(d => {
+    const sign = (d.type === 'receipt' || d.type === 'return') ? 1 : (d.type === 'issue' || d.type === 'writeoff') ? -1 : 0;
+    (d.lines || []).forEach(l => { m[l.itemId] = _whQ((m[l.itemId] || 0) + sign * (Number(l.qty) || 0)); });
+  });
+  return m;
+}
+
+// Tools and equipment out with people right now: one entry per open issue, with its due
+// date. A return isn't tied to the act it settles, so it closes that person's OLDEST open
+// issue of that item first. Materials aren't here — issued, they are used up.
+function _whHoldings(docs) {
+  const items = getWhItems();
+  const asset = id => _whIsAsset(items.find(i => i.id === id));
+  const moves = (docs || getWhDocs()).filter(d => (d.type === 'issue' || d.type === 'return') && d.employeeId)
+    .slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.createdAt || '').localeCompare(b.createdAt || ''));
+  const open = {};
+  moves.forEach(d => (d.lines || []).forEach(l => {
+    if (!asset(l.itemId)) return;
+    const k = d.employeeId + '|' + l.itemId;
+    const q = _whQ(l.qty);
+    if (d.type === 'issue') { (open[k] = open[k] || []).push({ docId: d.id, no: d.no, date: d.date, dueDate: d.dueDate || '', qty: q }); return; }
+    let left = q; const arr = open[k] || [];
+    while (left > 0 && arr.length) {
+      const take = Math.min(left, arr[0].qty);
+      arr[0].qty = _whQ(arr[0].qty - take); left = _whQ(left - take);
+      if (arr[0].qty <= 0) arr.shift();
+    }
+  }));
+  const out = [];
+  Object.keys(open).forEach(k => {
+    const [employeeId, itemId] = k.split('|');
+    open[k].forEach(p => { if (p.qty > 0) out.push(Object.assign({ employeeId, itemId }, p)); });
+  });
+  return out;
+}
+const _whIsOverdue = h => !!h.dueDate && h.dueDate < _todayLocal();
+const _whOverdueList = () => _whHoldings().filter(_whIsOverdue);
+// Materials at or below the minimum the owner set for them.
+function _whLowStock() {
+  const stock = _whStockMap();
+  return getWhItems().filter(i => i.kind === 'consumable' && Number(i.minQty) > 0 && (stock[i.id] || 0) <= Number(i.minQty))
+    .map(i => ({ item: i, stock: stock[i.id] || 0 }));
+}
+// An item gone for good: written off, none left anywhere.
+function _whIsGone(it, stock, holdings) {
+  const out = holdings.filter(h => h.itemId === it.id).reduce((s, h) => s + h.qty, 0);
+  return (stock[it.id] || 0) <= 0 && out <= 0 && getWhDocs().some(d => d.type === 'writeoff' && (d.lines || []).some(l => l.itemId === it.id));
+}
+
+// ---------- the page ----------
+let whTab = 'catalog', whSearch = '', whCat = '', whKind = '', whShowGone = false;
+function setWhTab(t) { whTab = t; render(); }
+
+function _whUpdateBadge() {
+  const el = document.getElementById('wh-badge');
+  if (!el) return;
+  const n = _WAREHOUSE_ROLES.includes(currentUser) ? _whLowStock().length + _whOverdueList().length : 0;
+  el.textContent = n; el.style.display = n ? '' : 'none';
+}
+
+function renderWarehouse() {
+  if (!_WAREHOUSE_ROLES.includes(currentUser)) return '<div style="padding:40px;text-align:center;color:#6b7280">Нет доступа</div>';
+  const tabs = [['catalog', '📦 Каталог'], ['people', '👷 Сотрудники'], ['docs', '📄 Документы'], ['settings', '⚙️ Настройки']];
+  const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0">
+    ${tabs.map(([k, l]) => `<button class="kitchen-tab-btn${whTab === k ? ' active' : ''}" onclick="setWhTab('${k}')">${l}</button>`).join('')}</div>`;
+  const body = whTab === 'people' ? _whPeopleTab() : whTab === 'docs' ? _whDocsTab() : whTab === 'settings' ? _whSettingsTab() : _whCatalogTab();
+  return tabBar + body;
+}
+async function loadWhImages() { await _loadImages('img.whthumb[data-fid]'); }
+
+// Low stock and overdue returns: what needs doing, shown above the catalogue.
+function _whAlerts() {
+  const low = _whLowStock(), late = _whOverdueList();
+  let html = '';
+  if (late.length) html += `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:10px 14px;margin-bottom:10px">
+    <div style="font-weight:700;color:#b91c1c;margin-bottom:4px">⏰ Не возвращено в срок — ${late.length}</div>
+    ${late.map(h => { const it = _whItem(h.itemId) || {}, e = _whEmp(h.employeeId) || {}; return `<div style="font-size:12px;color:#7f1d1d">${_escHtml(e.name || '?')} — ${_escHtml(it.name || '?')} (${_escHtml(it.invNo || '')}) × ${_whFmtQ(h.qty)}, вернуть до ${fmtDate(h.dueDate)} · ${_whLink('открыть', `openWhEmployee('${h.employeeId}')`, '#b91c1c')}</div>`; }).join('')}
+  </div>`;
+  if (low.length) html += `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:10px 14px;margin-bottom:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+      <div style="font-weight:700;color:#92400e">⚠️ Заканчивается — ${low.length}</div>
+      <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="printWhShoppingList()">🛒 Список к закупке</button>
+    </div>
+    ${low.map(x => `<div style="font-size:12px;color:#78350f">${_escHtml(x.item.name)} (${_escHtml(x.item.invNo)}) — осталось ${_whFmtQ(x.stock)} ${_escHtml(x.item.unit || '')}, минимум ${_whFmtQ(x.item.minQty)}</div>`).join('')}
+  </div>`;
+  return html;
+}
+
+function _whCatalogTab() {
+  const catOpts = `<option value="">Все категории</option>` + WH_CATS.map(c => `<option value="${c.id}" ${whCat === c.id ? 'selected' : ''}>${c.label}</option>`).join('');
+  return `${_whAlerts()}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
+      <input class="form-control" style="flex:1;min-width:180px;max-width:320px" placeholder="🔍 Название, инв. номер, место…" value="${_escHtml(whSearch)}" oninput="whSearch=this.value;_whRefreshList()">
+      <select class="form-control" style="width:auto" onchange="whCat=this.value;_whRefreshList()">${catOpts}</select>
+      <select class="form-control" style="width:auto" onchange="whKind=this.value;_whRefreshList()">
+        <option value="" ${!whKind ? 'selected' : ''}>Всё</option>
+        <option value="asset" ${whKind === 'asset' ? 'selected' : ''}>🔧 Инструмент и оборудование</option>
+        <option value="consumable" ${whKind === 'consumable' ? 'selected' : ''}>📦 Материалы</option>
+      </select>
+      <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" ${whShowGone ? 'checked' : ''} onchange="whShowGone=this.checked;_whRefreshList()"> списанные</label>
+      <button class="btn btn-outline" style="font-size:12px;padding:6px 10px;margin-left:auto" onclick="openWhLabels()">🏷️ Наклейки QR</button>
+    </div>
+    <div id="wh-list">${_whCatalogList()}</div>`;
+}
+function _whRefreshList() { const el = document.getElementById('wh-list'); if (el) { el.innerHTML = _whCatalogList(); loadWhImages(); } }
+
+function _whCatalogList() {
+  const stock = _whStockMap(), hold = _whHoldings();
+  const q = whSearch.trim().toLowerCase();
+  const items = getWhItems().filter(i => {
+    if (whCat && i.category !== whCat) return false;
+    if (whKind && (whKind === 'asset') !== _whIsAsset(i)) return false;
+    if (!whShowGone && _whIsGone(i, stock, hold)) return false;
+    if (q && ![i.name, i.invNo, i.location, i.serial, i.notes].some(v => String(v || '').toLowerCase().includes(q))) return false;
+    return true;
+  }).sort((a, b) => String(a.invNo || '').localeCompare(String(b.invNo || '')));
+  if (!items.length) return `<div style="text-align:center;padding:50px;color:#6b7280">
+    <div style="font-size:44px;margin-bottom:10px">🧰</div>
+    <div style="font-size:15px;font-weight:600;margin-bottom:6px">${getWhItems().length ? 'Ничего не найдено' : 'Склад пока пуст'}</div>
+    ${getWhItems().length ? '' : '<div style="font-size:13px">Нажмите «+ Позиция», чтобы внести первый инструмент или материал</div>'}</div>`;
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px">${items.map(i => {
+    const onShelf = stock[i.id] || 0;
+    const out = hold.filter(h => h.itemId === i.id).reduce((s, h) => s + h.qty, 0);
+    const late = hold.some(h => h.itemId === i.id && _whIsOverdue(h));
+    const low = i.kind === 'consumable' && Number(i.minQty) > 0 && onShelf <= Number(i.minQty);
+    const gone = _whIsGone(i, stock, hold);
+    const img = (i.fileIds || []).find((f, k) => String((i.fileTypes || [])[k] || '').startsWith('image/'));
+    const thumb = img ? `<img class="whthumb" data-fid="${img}" style="width:100%;height:120px;object-fit:cover;display:block;background:#e2e8f0">`
+      : `<div style="height:120px;display:flex;align-items:center;justify-content:center;font-size:44px;background:#f1f5f9">${_whIcon(i.category)}</div>`;
+    const qtyLine = _whIsAsset(i)
+      ? `На складе: <b>${_whFmtQ(onShelf)}</b>${out ? ` · выдано: <b style="color:${late ? '#b91c1c' : '#b45309'}">${_whFmtQ(out)}</b>` : ''} ${_escHtml(i.unit || 'шт')}`
+      : `Остаток: <b style="color:${low ? '#b45309' : '#0f172a'}">${_whFmtQ(onShelf)} ${_escHtml(i.unit || '')}</b>${low ? ' ⚠️' : ''}`;
+    return `<div onclick="openWhItem('${i.id}')" style="background:white;border:1px solid ${late ? '#fca5a5' : '#e2e8f0'};border-radius:12px;overflow:hidden;cursor:pointer;${gone ? 'opacity:.55' : ''}">
+      ${thumb}
+      <div style="padding:9px 11px">
+        <div style="display:flex;justify-content:space-between;gap:6px;align-items:center;margin-bottom:3px">
+          <span style="font-size:11px;font-weight:700;color:#1d4ed8;background:#eff6ff;border-radius:6px;padding:1px 6px">${_escHtml(i.invNo || '')}</span>
+          ${gone ? '<span style="font-size:10px;color:#64748b">списано</span>' : ''}
+        </div>
+        <div style="font-weight:700;font-size:13px;line-height:1.3;margin-bottom:2px">${_escHtml(i.name)}</div>
+        <div style="font-size:11px;color:#6b7280;margin-bottom:5px">${_whCat(i.category).label}${i.location ? ' · 📍 ' + _escHtml(i.location) : ''}</div>
+        <div style="font-size:12px">${qtyLine}</div>
+      </div></div>`;
+  }).join('')}</div>`;
+}
+
+// ---------- an item ----------
+function openWhItem(id) {
+  const it = _whItem(id);
+  if (!it) { _showToast('Позиция не найдена', false); return; }
+  const stock = _whStockMap()[id] || 0, hold = _whHoldings().filter(h => h.itemId === id);
+  const imgs = (it.fileIds || []).map((f, k) => ({ id: f, type: (it.fileTypes || [])[k] || '', name: (it.fileNames || [])[k] || 'Файл' }));
+  const gallery = imgs.length ? `<div data-gids='${JSON.stringify(imgs.map(x => x.id)).replace(/'/g, '&#39;')}' data-gtypes='${JSON.stringify(imgs.map(x => x.type)).replace(/'/g, '&#39;')}' data-gnames='${JSON.stringify(imgs.map(x => x.name)).replace(/'/g, '&#39;')}' style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+    ${imgs.map((x, k) => x.type.startsWith('image/') ? `<img class="whthumb" data-fid="${x.id}" onclick="openGalleryEl(this,${k})" style="width:96px;height:96px;object-fit:cover;border-radius:10px;cursor:pointer;background:#e2e8f0">`
+      : `<div onclick="openGalleryEl(this,${k})" style="width:96px;height:96px;border-radius:10px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:30px;cursor:pointer">${fileEmoji(x.type)}</div>`).join('')}</div>` : '';
+  const row = (k, v) => v ? `<div style="display:flex;gap:8px;font-size:13px;padding:3px 0"><span style="color:#6b7280;min-width:130px">${k}</span><span>${v}</span></div>` : '';
+  const history = getWhDocs().filter(d => (d.lines || []).some(l => l.itemId === id))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  document.getElementById('modal-title').textContent = `${_whIcon(it.category)} ${it.invNo} · ${it.name}`;
+  document.getElementById('modal-body').innerHTML = `${gallery}
+    <div style="display:grid;grid-template-columns:repeat(${_whIsAsset(it) ? 2 : 1},1fr);gap:8px;margin-bottom:12px">
+      <div class="stat-card"><div class="stat-value" style="font-size:20px">${_whFmtQ(stock)} ${_escHtml(it.unit || '')}</div><div class="stat-label">${_whIsAsset(it) ? 'На складе' : 'Остаток'}</div></div>
+      ${_whIsAsset(it) ? `<div class="stat-card"><div class="stat-value" style="font-size:20px">${_whFmtQ(hold.reduce((s, h) => s + h.qty, 0))} ${_escHtml(it.unit || '')}</div><div class="stat-label">Выдано на руки</div></div>` : ''}
+    </div>
+    ${row('Учёт', _whIsAsset(it) ? '🔧 Инструмент / оборудование — выдаётся и возвращается' : '📦 Материал — выдаётся в расход')}
+    ${row('Категория', _whCat(it.category).label)}
+    ${row('Цена за ед.', it.price ? _whRub(it.price) : '')}
+    ${row('Место хранения', _escHtml(it.location || ''))}
+    ${row('Серийный номер', _escHtml(it.serial || ''))}
+    ${row('Состояние', WH_COND[it.condition] || '')}
+    ${row('Поставщик', _escHtml(it.supplier || ''))}
+    ${row('Дата покупки', it.purchaseDate ? fmtDate(it.purchaseDate) : '')}
+    ${row('Мин. остаток', it.kind === 'consumable' && it.minQty ? _whFmtQ(it.minQty) + ' ' + _escHtml(it.unit || '') : '')}
+    ${row('Примечание', _escHtml(it.notes || ''))}
+    ${hold.length ? `<div style="font-weight:700;margin:14px 0 6px">👷 Сейчас на руках</div>${hold.map(h => { const e = _whEmp(h.employeeId) || {}; return `<div style="font-size:13px;padding:5px 0;border-bottom:1px solid #f1f5f9;${_whIsOverdue(h) ? 'color:#b91c1c' : ''}">${_whLink(_escHtml(e.name || '?'), `openWhEmployee('${h.employeeId}')`)} — ${_whFmtQ(h.qty)} ${_escHtml(it.unit || '')}, с ${fmtDate(h.date)} (${_escHtml(h.no)})${h.dueDate ? ', вернуть до ' + fmtDate(h.dueDate) + (_whIsOverdue(h) ? ' ⏰' : '') : ''}</div>`; }).join('')}` : ''}
+    <div style="font-weight:700;margin:14px 0 6px">🕘 История</div>
+    ${history.length ? history.map(d => { const l = d.lines.filter(x => x.itemId === id).reduce((s, x) => s + _whQ(x.qty), 0); const e = d.employeeId ? (_whEmp(d.employeeId) || {}).name : ''; const t = WH_DOC_TYPES[d.type] || {}; return `<div style="font-size:12px;padding:4px 0;border-bottom:1px solid #f1f5f9;display:flex;gap:8px;flex-wrap:wrap"><span style="color:#6b7280;min-width:78px">${fmtDate(d.date)}</span><span>${t.icon || ''} ${t.label || d.type} ${_whFmtQ(l)} ${_escHtml(it.unit || '')}${e ? ' — ' + _escHtml(e) : ''}</span>${_whLink(_escHtml(d.no), `printWhDoc('${d.id}')`)}</div>`; }).join('') : '<div style="font-size:12px;color:#94a3b8">Движений нет</div>'}`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
+    <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
+    <button class="btn btn-outline" onclick="openWhLabels(['${id}'])">🏷️ Наклейка</button>
+    <button class="btn btn-outline" onclick="openWhItemForm('${id}')">✏️ Изменить</button>
+    <button class="btn btn-outline" onclick="openWhMove('receipt',{itemId:'${id}'})">📥 Приход</button>
+    ${stock > 0 ? `<button class="btn btn-outline" style="color:#dc2626" onclick="openWhMove('writeoff',{itemId:'${id}'})">🗑 Списать</button>` : ''}
+    ${stock > 0 ? `<button class="btn btn-primary" onclick="openWhMove('issue',{itemId:'${id}'})">📤 Выдать</button>` : ''}</div>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  loadWhImages();
+}
+
+function openWhItemForm(id) {
+  const it = id ? _whItem(id) : null;
+  pendingFiles = [];
+  _modalGen++;
+  const kind = it ? (it.kind || 'asset') : 'asset';
+  const opt = (list, cur) => list.map(([v, l]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('');
+  const existing = it && (it.fileIds || []).length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${(it.fileIds || []).map((f, k) => `<label style="font-size:11px;display:flex;align-items:center;gap:4px;background:#f1f5f9;border-radius:6px;padding:3px 7px"><input type="checkbox" class="wh-keep-file" value="${f}" checked> ${_escHtml((it.fileNames || [])[k] || 'Файл')}</label>`).join('')}</div><div style="font-size:11px;color:#6b7280;margin-bottom:6px">Снимите галочку, чтобы убрать фото.</div>` : '';
+  document.getElementById('modal-title').textContent = it ? `✏️ ${it.invNo} — изменить` : '➕ Новая позиция склада';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>Название *</label><input class="form-control" id="wh-name" value="${_escHtml(it ? it.name : '')}" placeholder="Например: Дрель-шуруповёрт Bosch GSR 18V"></div>
+    <div class="form-group"><label>Учёт</label>
+      <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:6px;cursor:pointer"><input type="radio" name="wh-kind" value="asset" ${kind === 'asset' ? 'checked' : ''} ${it ? 'disabled' : ''} onchange="_whKindChanged()"> <span><b>🔧 Инструмент / оборудование</b> — выдаётся сотруднику и возвращается</span></label>
+      <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer"><input type="radio" name="wh-kind" value="consumable" ${kind === 'consumable' ? 'checked' : ''} ${it ? 'disabled' : ''} onchange="_whKindChanged()"> <span><b>📦 Материал</b> — выдаётся в расход (химия, лампы, крепёж)</span></label>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Категория</label><select class="form-control" id="wh-cat">${opt(WH_CATS.map(c => [c.id, c.label]), it ? it.category : 'tools')}</select></div>
+      <div class="form-group"><label>Ед. измерения</label><select class="form-control" id="wh-unit">${opt(WH_UNITS.map(u => [u, u]), it ? it.unit : 'шт')}</select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      ${it ? '' : `<div class="form-group"><label>Количество сейчас</label><input type="number" min="0" step="any" class="form-control" id="wh-qty" value="1"></div>`}
+      <div class="form-group"><label>Цена за ед., ₽</label><input type="number" min="0" step="any" class="form-control" id="wh-price" value="${it && it.price ? it.price : ''}"></div>
+      <div class="form-group" id="wh-min-wrap" style="${kind === 'consumable' ? '' : 'display:none'}"><label>Мин. остаток (предупредить)</label><input type="number" min="0" step="any" class="form-control" id="wh-min" value="${it && it.minQty ? it.minQty : ''}"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Место хранения</label><input class="form-control" id="wh-loc" value="${_escHtml(it ? it.location || '' : '')}" placeholder="Склад, полка 3"></div>
+      <div class="form-group" id="wh-cond-wrap" style="${kind === 'asset' ? '' : 'display:none'}"><label>Состояние</label><select class="form-control" id="wh-cond">${opt(Object.entries(WH_COND), it ? it.condition : 'new')}</select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Серийный номер</label><input class="form-control" id="wh-serial" value="${_escHtml(it ? it.serial || '' : '')}"></div>
+      <div class="form-group"><label>Поставщик</label><input class="form-control" id="wh-supplier" value="${_escHtml(it ? it.supplier || '' : '')}"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Дата покупки</label><input type="date" class="form-control" id="wh-pdate" value="${it ? it.purchaseDate || '' : ''}"></div>
+      <div class="form-group"><label>Инв. номер</label><input class="form-control" value="${it ? it.invNo : '(присвоится при сохранении)'}" disabled></div>
+    </div>
+    <div class="form-group"><label>Примечание</label><textarea class="form-control" id="wh-notes">${_escHtml(it ? it.notes || '' : '')}</textarea></div>
+    <div class="form-group"><label>Фото</label>${existing}
+      <div class="upload-zone" onclick="document.getElementById('wh-fi').click()" id="wh-drop">📷 Добавить фото
+        <input type="file" id="wh-fi" multiple accept="image/*,application/pdf" style="display:none" onchange="onFilePick(event)"></div>
+      <div class="file-list" id="pending-list"></div></div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" id="wh-item-save" onclick="saveWhItem('${id || ''}')">💾 Сохранить</button>`;
+  setupDrop('wh-drop');
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+function _whKindChanged() {
+  const k = (document.querySelector('input[name="wh-kind"]:checked') || {}).value;
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  show('wh-min-wrap', k === 'consumable'); show('wh-cond-wrap', k === 'asset');
+}
+
+async function saveWhItem(id) { return _onceAtATime('whItem', () => _saveWhItemInner(id)); }
+async function _saveWhItemInner(id) {
+  if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
+  if (_filesStillProcessing()) { _showToast('⏳ Фото ещё обрабатываются — подождите пару секунд', false); return; }
+  const v = k => (document.getElementById(k) || {}).value || '';
+  const name = v('wh-name').trim();
+  if (!name) { alert('Укажите название'); return; }
+  const kind = id ? (_whItem(id) || {}).kind || 'asset' : ((document.querySelector('input[name="wh-kind"]:checked') || {}).value || 'asset');
+  const qty = id ? 0 : _whQ(v('wh-qty'));
+  if (qty < 0) { alert('Количество не может быть отрицательным'); return; }
+  const formGen = _modalGen, picked = pendingFiles.slice();
+  const btn = document.getElementById('wh-item-save');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Сохраняем…'; }
+  const fileIds = [], fileNames = [], fileTypes = [];
+  for (let k = 0; k < picked.length; k++) {
+    const f = picked[k];
+    fileIds.push(await dbSave({ name: f.name, type: f.type, size: f.size, data: f.data }, k + 1, picked.length));
+    fileNames.push(f.name); fileTypes.push(f.type);
+  }
+  const items = getWhItems();
+  const prev = id ? items.find(i => i.id === id) : null;
+  if (id && !prev) { alert('Эту позицию тем временем удалили'); if (btn) { btn.disabled = false; btn.textContent = '💾 Сохранить'; } return; }
+  const keep = prev ? Array.from(document.querySelectorAll('.wh-keep-file')).filter(c => c.checked).map(c => c.value) : [];
+  const kept = prev ? (prev.fileIds || []).map((f, k) => ({ f, n: (prev.fileNames || [])[k], t: (prev.fileTypes || [])[k] })).filter(x => keep.includes(x.f)) : [];
+  const item = Object.assign({}, prev || {}, {
+    id: prev ? prev.id : _newTxId(),
+    invNo: prev ? prev.invNo : _whNextInvNo(kind),
+    kind, name, category: v('wh-cat') || 'other', unit: v('wh-unit') || 'шт',
+    price: _whQ(v('wh-price')) || 0,
+    minQty: kind === 'consumable' ? (_whQ(v('wh-min')) || 0) : 0,
+    location: v('wh-loc').trim(), serial: v('wh-serial').trim(), supplier: v('wh-supplier').trim(),
+    purchaseDate: v('wh-pdate'), notes: v('wh-notes').trim(),
+    condition: kind === 'asset' ? (v('wh-cond') || 'good') : '',
+    fileIds: kept.map(x => x.f).concat(fileIds), fileNames: kept.map(x => x.n).concat(fileNames), fileTypes: kept.map(x => x.t).concat(fileTypes),
+  });
+  if (!prev) { item.createdBy = currentUser; item.createdAt = new Date().toISOString(); }
+  setLS('wh_items', prev ? items.map(i => i.id === item.id ? item : i) : items.concat([item]));
+  // What's on the shelf from the start is a receipt like any other, so the count comes from
+  // documents from the very first day.
+  if (!prev && qty > 0) {
+    const date = _todayLocal();
+    setLS('wh_docs', getWhDocs().concat([{ id: _newTxId(), no: _whNextDocNo('receipt', date), type: 'receipt', date,
+      lines: [{ itemId: item.id, qty, price: item.price || 0 }], note: 'Начальный остаток', supplier: item.supplier || '',
+      createdBy: currentUser, createdAt: new Date().toISOString() }]));
+  }
+  const sent = await _whCommit();
+  if (_modalGen === formGen) closeModal(true);
+  if (!sent) { alert(_WH_NOT_SENT); render(); return; }
+  _showToast(prev ? '✅ Сохранено' : `✅ Добавлено: ${item.invNo}`, true);
+  render();
+}
+
+// ---------- people ----------
+function _whPeopleTab() {
+  const hold = _whHoldings();
+  const emps = getWhEmployees().filter(e => !e.archived).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const list = emps.length ? emps.map(e => {
+    const mine = hold.filter(h => h.employeeId === e.id);
+    const late = mine.filter(_whIsOverdue).length;
+    return `<div onclick="openWhEmployee('${e.id}')" style="background:white;border:1px solid ${late ? '#fca5a5' : '#e2e8f0'};border-radius:12px;padding:11px 14px;margin-bottom:8px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div><div style="font-weight:700">${_escHtml(e.name)}</div><div style="font-size:12px;color:#6b7280">${_escHtml(e.position || '')}${e.phone ? ' · 📞 ' + _escHtml(e.phone) : ''}</div></div>
+      <div style="font-size:12px;text-align:right">${mine.length ? `🔧 на руках: <b>${mine.length}</b>` : '<span style="color:#94a3b8">ничего не числится</span>'}${late ? `<div style="color:#b91c1c;font-weight:700">⏰ просрочено: ${late}</div>` : ''}</div>
+    </div>`;
+  }).join('') : `<div style="text-align:center;padding:40px;color:#6b7280">Добавьте сотрудников, которым выдаются инструменты и материалы.</div>`;
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <div style="font-size:12px;color:#6b7280">Храните только ФИО, должность и телефон — без паспортных данных.</div>
+      <button class="btn btn-primary" onclick="openWhEmployeeForm()">+ Сотрудник</button></div>${list}`;
+}
+
+function openWhEmployeeForm(id) {
+  const e = id ? _whEmp(id) : null;
+  document.getElementById('modal-title').textContent = e ? '✏️ Сотрудник' : '➕ Новый сотрудник';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>ФИО *</label><input class="form-control" id="whe-name" value="${_escHtml(e ? e.name : '')}" placeholder="Иванов Иван Иванович"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Должность</label><input class="form-control" id="whe-pos" value="${_escHtml(e ? e.position || '' : '')}" placeholder="Разнорабочий"></div>
+      <div class="form-group"><label>Телефон</label><input class="form-control" id="whe-phone" value="${_escHtml(e ? e.phone || '' : '')}"></div>
+    </div>
+    ${e ? `<label style="font-size:12px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="whe-archived"> Больше не работает (скрыть из списка)</label>` : ''}`;
+  document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveWhEmployee('${id || ''}')">💾 Сохранить</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+async function saveWhEmployee(id) { return _onceAtATime('whEmployee', () => _saveWhEmployeeInner(id)); }
+async function _saveWhEmployeeInner(id) {
+  if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
+  const name = (document.getElementById('whe-name').value || '').trim();
+  if (!name) { alert('Укажите ФИО'); return; }
+  const archived = !!(document.getElementById('whe-archived') || {}).checked;
+  if (archived && _whHoldings().some(h => h.employeeId === id)) { alert('За сотрудником ещё числятся инструменты — сначала оформите возврат.'); return; }
+  const list = getWhEmployees();
+  const rec = Object.assign({}, id ? list.find(x => x.id === id) : { id: _newTxId(), createdAt: new Date().toISOString() }, {
+    name, position: (document.getElementById('whe-pos').value || '').trim(), phone: (document.getElementById('whe-phone').value || '').trim(), archived,
+  });
+  setLS('wh_employees', id ? list.map(x => x.id === id ? rec : x) : list.concat([rec]));
+  const sent = await _whCommit();
+  closeModal(true);
+  if (!sent) { alert(_WH_NOT_SENT); render(); return; }
+  _showToast('✅ Сохранено', true); render();
+}
+
+function openWhEmployee(id) {
+  const e = _whEmp(id);
+  if (!e) return;
+  const mine = _whHoldings().filter(h => h.employeeId === id);
+  const docs = getWhDocs().filter(d => d.employeeId === id).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const items = getWhItems();
+  const consumed = [];
+  docs.filter(d => d.type === 'issue').forEach(d => (d.lines || []).forEach(l => { const it = items.find(i => i.id === l.itemId); if (it && it.kind === 'consumable') consumed.push({ d, l, it }); }));
+  document.getElementById('modal-title').textContent = '👷 ' + e.name;
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-size:13px;color:#6b7280;margin-bottom:12px">${_escHtml(e.position || '')}${e.phone ? ' · 📞 ' + _escHtml(e.phone) : ''}</div>
+    <div style="font-weight:700;margin-bottom:6px">🔧 Числится за сотрудником</div>
+    ${mine.length ? mine.map(h => { const it = _whItem(h.itemId) || {}; return `<div style="font-size:13px;padding:6px 0;border-bottom:1px solid #f1f5f9;${_whIsOverdue(h) ? 'color:#b91c1c;font-weight:600' : ''}">${_whLink(_escHtml((it.invNo || '') + ' · ' + (it.name || '?')), `openWhItem('${h.itemId}')`)} × ${_whFmtQ(h.qty)} ${_escHtml(it.unit || '')} — с ${fmtDate(h.date)}${h.dueDate ? ', вернуть до ' + fmtDate(h.dueDate) + (_whIsOverdue(h) ? ' ⏰' : '') : ''}</div>`; }).join('') : '<div style="font-size:12px;color:#94a3b8">Ничего не числится</div>'}
+    ${consumed.length ? `<div style="font-weight:700;margin:14px 0 6px">📦 Получено материалов</div>${consumed.slice(0, 30).map(x => `<div style="font-size:12px;padding:3px 0">${fmtDate(x.d.date)} — ${_escHtml(x.it.name)} × ${_whFmtQ(x.l.qty)} ${_escHtml(x.it.unit || '')} (${_escHtml(x.d.no)})</div>`).join('')}` : ''}
+    <div style="font-weight:700;margin:14px 0 6px">📄 Акты</div>
+    ${docs.length ? docs.map(d => `<div style="font-size:12px;padding:3px 0">${fmtDate(d.date)} · ${(WH_DOC_TYPES[d.type] || {}).icon || ''} ${_whLink(_escHtml(d.no), `printWhDoc('${d.id}')`)}</div>`).join('') : '<div style="font-size:12px;color:#94a3b8">Актов нет</div>'}`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
+    <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
+    <button class="btn btn-outline" onclick="openWhEmployeeForm('${id}')">✏️ Изменить</button>
+    ${mine.length ? `<button class="btn btn-outline" onclick="openWhMove('return',{employeeId:'${id}'})">↩️ Принять возврат</button>` : ''}
+    <button class="btn btn-primary" onclick="openWhMove('issue',{employeeId:'${id}'})">📤 Выдать</button></div>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+// ---------- movements: issue / return / receipt / write-off ----------
+// One form for all four; the lines differ only in what they offer and ask.
+function openWhMove(type, preset) {
+  if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
+  preset = preset || {};
+  const t = WH_DOC_TYPES[type];
+  const emps = getWhEmployees().filter(e => !e.archived).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  if ((type === 'issue' || type === 'return') && !emps.length) { alert('Сначала добавьте сотрудника (вкладка «Сотрудники»).'); return; }
+  const empSel = (type === 'issue' || type === 'return') ? `<div class="form-group"><label>${type === 'issue' ? 'Кому выдаётся *' : 'Кто возвращает *'}</label>
+    <select class="form-control" id="whm-emp" onchange="_whMoveRebuild('${type}')"><option value="">— выберите —</option>${emps.map(e => `<option value="${e.id}" ${preset.employeeId === e.id ? 'selected' : ''}>${_escHtml(e.name)}${e.position ? ' — ' + _escHtml(e.position) : ''}</option>`).join('')}</select></div>` : '';
+  document.getElementById('modal-title').textContent = `${t.icon} ${type === 'issue' ? 'Выдача в подотчёт' : type === 'return' ? 'Возврат на склад' : type === 'receipt' ? 'Поступление на склад' : 'Списание'}`;
+  document.getElementById('modal-body').innerHTML = `${empSel}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Дата</label><input type="date" class="form-control" id="whm-date" value="${_todayLocal()}"></div>
+      ${type === 'issue' ? `<div class="form-group"><label>Вернуть до (для инструмента)</label><input type="date" class="form-control" id="whm-due"></div>` : ''}
+      ${type === 'receipt' ? `<div class="form-group"><label>Поставщик</label><input class="form-control" id="whm-supplier"></div>` : ''}
+      ${type === 'writeoff' ? `<div class="form-group"><label>Причина</label><select class="form-control" id="whm-reason">${WH_WRITEOFF_REASONS.map(r => `<option>${r}</option>`).join('')}</select></div>` : ''}
+    </div>
+    <div style="font-weight:700;font-size:13px;margin-bottom:6px">Позиции</div>
+    <div id="whm-lines"></div>
+    ${type !== 'return' ? `<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;margin-bottom:12px" onclick="_whAddLine('${type}')">+ Добавить позицию</button>` : ''}
+    <div class="form-group"><label>Примечание</label><input class="form-control" id="whm-note" placeholder="${type === 'issue' ? 'Для чего, на какой объект' : ''}"></div>`;
+  document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" id="whm-save" onclick="saveWhMove('${type}')">💾 ${type === 'issue' ? 'Выдать и оформить акт' : type === 'return' ? 'Принять и оформить акт' : 'Провести'}</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  if (type === 'return') _whMoveRebuild(type); else _whAddLine(type, preset.itemId);
+}
+
+// Items a line may pick, for that kind of document.
+function _whLineOptions(type, selected) {
+  const stock = _whStockMap();
+  const items = getWhItems().filter(i => type === 'receipt' || (stock[i.id] || 0) > 0 || i.id === selected)
+    .sort((a, b) => String(a.invNo).localeCompare(String(b.invNo)));
+  const groups = WH_CATS.map(c => {
+    const inCat = items.filter(i => i.category === c.id);
+    return inCat.length ? `<optgroup label="${c.label}">${inCat.map(i => `<option value="${i.id}" ${selected === i.id ? 'selected' : ''}>${_escHtml(i.invNo)} · ${_escHtml(i.name)}${type !== 'receipt' ? ` (есть ${_whFmtQ(stock[i.id] || 0)} ${_escHtml(i.unit || '')})` : ''}</option>`).join('')}</optgroup>` : '';
+  }).join('');
+  return `<option value="">— позиция —</option>${groups}`;
+}
+function _whAddLine(type, itemId) {
+  const box = document.getElementById('whm-lines');
+  if (!box) return;
+  const row = document.createElement('div');
+  row.className = 'whm-line';
+  row.style.cssText = 'display:grid;grid-template-columns:1fr 90px' + (type === 'receipt' ? ' 110px' : '') + ' 34px;gap:6px;margin-bottom:6px;align-items:center';
+  row.innerHTML = `<select class="form-control whm-item">${_whLineOptions(type, itemId)}</select>
+    <input type="number" min="0" step="any" class="form-control whm-qty" placeholder="Кол-во" value="1">
+    ${type === 'receipt' ? '<input type="number" min="0" step="any" class="form-control whm-price" placeholder="Цена, ₽">' : ''}
+    <button onclick="this.parentElement.remove()" style="background:#fee2e2;border:none;border-radius:6px;height:34px;cursor:pointer;color:#dc2626">✕</button>`;
+  box.appendChild(row);
+}
+// A return lists what that person actually has, each with the condition it comes back in.
+function _whMoveRebuild(type) {
+  if (type !== 'return') return;
+  const box = document.getElementById('whm-lines');
+  const emp = (document.getElementById('whm-emp') || {}).value;
+  if (!box) return;
+  if (!emp) { box.innerHTML = '<div style="font-size:12px;color:#94a3b8;margin-bottom:10px">Выберите сотрудника</div>'; return; }
+  const byItem = {};
+  _whHoldings().filter(h => h.employeeId === emp).forEach(h => { byItem[h.itemId] = _whQ((byItem[h.itemId] || 0) + h.qty); });
+  const ids = Object.keys(byItem);
+  box.innerHTML = ids.length ? ids.map(itemId => { const it = _whItem(itemId) || {}; return `<div class="whm-line" style="display:grid;grid-template-columns:1fr 80px 150px;gap:6px;margin-bottom:6px;align-items:center">
+      <div style="font-size:13px"><input type="hidden" class="whm-item" value="${itemId}">${_escHtml(it.invNo || '')} · ${_escHtml(it.name || '?')}<div style="font-size:11px;color:#6b7280">на руках: ${_whFmtQ(byItem[itemId])} ${_escHtml(it.unit || '')}</div></div>
+      <input type="number" min="0" max="${byItem[itemId]}" step="any" class="form-control whm-qty" value="${byItem[itemId]}">
+      <select class="form-control whm-cond">${Object.entries(WH_COND).map(([k, l]) => `<option value="${k}" ${(it.condition || 'good') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`; }).join('')
+    : '<div style="font-size:12px;color:#94a3b8;margin-bottom:10px">За сотрудником ничего не числится</div>';
+}
+
+async function saveWhMove(type) { return _onceAtATime('whMove', () => _saveWhMoveInner(type)); }
+async function _saveWhMoveInner(type) {
+  if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
+  const v = id => (document.getElementById(id) || {}).value || '';
+  const employeeId = v('whm-emp'), date = v('whm-date') || _todayLocal();
+  if ((type === 'issue' || type === 'return') && !employeeId) { alert('Выберите сотрудника'); return; }
+  const lines = Array.from(document.querySelectorAll('#whm-lines .whm-line')).map(r => ({
+    itemId: (r.querySelector('.whm-item') || {}).value || '',
+    qty: _whQ((r.querySelector('.whm-qty') || {}).value),
+    price: r.querySelector('.whm-price') ? _whQ(r.querySelector('.whm-price').value) : null,
+    condition: r.querySelector('.whm-cond') ? r.querySelector('.whm-cond').value : null,
+  })).filter(l => l.itemId && l.qty > 0);
+  if (!lines.length) { alert('Добавьте хотя бы одну позицию с количеством'); return; }
+  const dueDate = type === 'issue' ? v('whm-due') : '';
+  if (dueDate && dueDate < date) { alert('Дата возврата раньше даты выдачи'); return; }
+  // Checked against what is there NOW, not when the form opened — another admin may have
+  // issued from the same shelf meanwhile. Anything of this tab's still unsent goes first:
+  // with unsent edits the refresh can't replace its copy, and would check stale counts.
+  if (_useFirebase && (_stateDirty.size || _filesDirty.size || _filesDeleted.size)) { clearTimeout(_saveTimer); await _flushState(); }
+  await _syncBeforeDecision();
+  const items = getWhItems(), stock = _whStockMap();
+  const want = {};
+  lines.forEach(l => { want[l.itemId] = _whQ((want[l.itemId] || 0) + l.qty); });
+  if (type === 'issue' || type === 'writeoff') {
+    const short = Object.keys(want).filter(id => want[id] > (stock[id] || 0));
+    if (short.length) { alert('Не хватает на складе:\n' + short.map(id => { const it = items.find(i => i.id === id) || {}; return `${it.invNo} ${it.name}: нужно ${_whFmtQ(want[id])}, есть ${_whFmtQ(stock[id] || 0)}`; }).join('\n')); return; }
+  }
+  if (type === 'return') {
+    const held = {};
+    _whHoldings().filter(h => h.employeeId === employeeId).forEach(h => { held[h.itemId] = _whQ((held[h.itemId] || 0) + h.qty); });
+    const over = Object.keys(want).filter(id => want[id] > (held[id] || 0));
+    if (over.length) { alert('Возвращается больше, чем числится за сотрудником:\n' + over.map(id => { const it = items.find(i => i.id === id) || {}; return `${it.invNo} ${it.name}: ${_whFmtQ(want[id])} из ${_whFmtQ(held[id] || 0)}`; }).join('\n')); return; }
+  }
+  const doc = {
+    id: _newTxId(), no: _whNextDocNo(type, date), type, date,
+    lines: lines.map(l => { const it = items.find(i => i.id === l.itemId) || {}; const out = { itemId: l.itemId, qty: l.qty, price: (type === 'receipt' && l.price) ? l.price : (Number(it.price) || 0) };
+      if (type === 'issue' && _whIsAsset(it)) out.condition = it.condition || 'good';
+      if (type === 'return') out.condition = l.condition || 'good';
+      return out; }),
+    note: v('whm-note').trim(), createdBy: currentUser, createdAt: new Date().toISOString(),
+  };
+  if (employeeId) doc.employeeId = employeeId;
+  if (dueDate) doc.dueDate = dueDate;
+  if (type === 'receipt') doc.supplier = v('whm-supplier').trim();
+  if (type === 'writeoff') doc.reason = v('whm-reason');
+  setLS('wh_docs', getWhDocs().concat([doc]));
+  // A tool comes back in the condition the return says; a receipt at a new price updates
+  // the item's price for the next act.
+  let changedItems = false;
+  const nextItems = items.map(it => {
+    const l = doc.lines.find(x => x.itemId === it.id);
+    if (!l) return it;
+    if (type === 'return' && l.condition && l.condition !== it.condition) { changedItems = true; return Object.assign({}, it, { condition: l.condition }); }
+    if (type === 'receipt' && l.price && l.price !== it.price) { changedItems = true; return Object.assign({}, it, { price: l.price }); }
+    return it;
+  });
+  if (changedItems) setLS('wh_items', nextItems);
+  if (!(await _whCommit())) { closeModal(true); alert(_WH_NOT_SENT + '\n\nАкт можно будет распечатать во вкладке «Документы».'); render(); return; }
+  render();
+  // The act is printed from a fresh tap: a window opened after the save's network wait would
+  // be stopped as a pop-up.
+  document.getElementById('modal-title').textContent = `✅ ${doc.no}`;
+  document.getElementById('modal-body').innerHTML = `<div style="text-align:center;padding:10px 0">
+    <div style="font-size:40px">${WH_DOC_TYPES[type].icon}</div>
+    <div style="font-size:15px;font-weight:700;margin:6px 0">${WH_DOC_TYPES[type].label} проведена — ${_escHtml(doc.no)}</div>
+    <div style="font-size:12px;color:#6b7280">${type === 'issue' || type === 'return' ? 'Распечатайте акт и дайте подписать обеим сторонам.' : 'Документ можно распечатать.'}</div></div>`;
+  document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal()">Готово</button>
+    <button class="btn btn-primary" onclick="printWhDoc('${doc.id}')">🖨️ Печать ${type === 'issue' || type === 'return' ? 'акта' : 'документа'}</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+// ---------- documents tab ----------
+function _whDocsTab() {
+  const docs = getWhDocs().slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const items = getWhItems();
+  const sum = d => (d.lines || []).reduce((s, l) => s + _whQ(l.qty) * (Number(l.price) || 0), 0);
+  return `<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <button class="btn btn-outline" onclick="printWhBlank()">📝 Пустой бланк акта</button>
+      <button class="btn btn-outline" onclick="openWhMove('receipt')">📥 Поступление</button></div>
+    ${docs.length ? `<div class="card" style="overflow-x:auto"><table class="finance-table"><thead><tr><th>Дата</th><th>№</th><th>Вид</th><th>Сотрудник</th><th>Позиции</th><th style="text-align:right">Сумма</th></tr></thead><tbody>
+    ${docs.map(d => { const t = WH_DOC_TYPES[d.type] || {}; const e = d.employeeId ? (_whEmp(d.employeeId) || {}).name : ''; return `<tr style="cursor:pointer" onclick="printWhDoc('${d.id}')">
+      <td>${fmtDate(d.date)}</td><td style="font-weight:600;color:#1d4ed8;white-space:nowrap">${_escHtml(d.no)}</td><td>${t.icon || ''} ${t.label || ''}</td><td>${_escHtml(e || (d.supplier || ''))}</td>
+      <td style="font-size:12px">${(d.lines || []).slice(0, 3).map(l => _escHtml(((items.find(i => i.id === l.itemId) || {}).name) || '?') + ' × ' + _whFmtQ(l.qty)).join(', ')}${(d.lines || []).length > 3 ? ' …' : ''}</td>
+      <td style="text-align:right;white-space:nowrap">${_whRub(sum(d))}</td></tr>`; }).join('')}</tbody></table></div>`
+    : '<div style="text-align:center;padding:40px;color:#6b7280">Документов пока нет</div>'}`;
+}
+
+// ---------- settings ----------
+function _whSettingsTab() {
+  const s = getWhSettings();
+  const f = (id, label, val, ph) => `<div class="form-group"><label>${label}</label><input class="form-control" id="whs-${id}" value="${_escHtml(val || '')}" placeholder="${ph || ''}"></div>`;
+  return `<div class="card" style="padding:16px;max-width:760px">
+    <div style="font-weight:700;margin-bottom:4px">🏢 Реквизиты для актов</div>
+    <div style="font-size:12px;color:#6b7280;margin-bottom:12px">Печатаются в шапке каждого акта.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      ${f('orgName', 'Краткое название', s.orgName, 'Сад Будущего')}${f('legalName', 'Полное юридическое название', s.legalName, 'АНО «…»')}
+      ${f('inn', 'ИНН', s.inn)}${f('kpp', 'КПП', s.kpp)}
+      ${f('address', 'Адрес', s.address)}${f('city', 'Город (для актов)', s.city, 'г. Москва')}
+      ${f('directorName', 'Руководитель — ФИО', s.directorName)}${f('directorPosition', 'Руководитель — должность', s.directorPosition)}
+      ${f('issuerName', 'Кто выдаёт со склада — ФИО', s.issuerName)}${f('issuerPosition', 'Кто выдаёт — должность', s.issuerPosition)}
+    </div>
+    <div class="form-group"><label>Текст об ответственности (в акте выдачи)</label><textarea class="form-control" id="whs-responsibilityText" style="min-height:90px">${_escHtml(s.responsibilityText)}</textarea></div>
+    <div style="font-weight:700;margin:16px 0 6px">🤖 Напоминания в Telegram</div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:8px"><input type="checkbox" id="whs-tgReminders" ${s.tgReminders ? 'checked' : ''}> Каждое утро сообщать о просроченных возвратах и заканчивающихся материалах</label>
+    <select class="form-control" id="whs-tgTarget" style="max-width:420px">
+      <option value="topic" ${s.tgTarget !== 'subscribers' ? 'selected' : ''}>В группу, тема ${WH_TG_TOPIC_LABEL}</option>
+      <option value="subscribers" ${s.tgTarget === 'subscribers' ? 'selected' : ''}>Лично — тем, кто подписан на дайджест</option>
+    </select>
+    <div style="font-size:11px;color:#6b7280;margin-top:4px">В группе сообщение увидят все её участники, с именами сотрудников.</div>
+    <div style="margin-top:14px"><button class="btn btn-primary" onclick="saveWhSettings()">💾 Сохранить</button></div>
+  </div>`;
+}
+async function saveWhSettings() { return _onceAtATime('whSettings', _saveWhSettingsInner); }
+async function _saveWhSettingsInner() {
+  if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
+  const s = {};
+  ['orgName', 'legalName', 'inn', 'kpp', 'address', 'city', 'directorName', 'directorPosition', 'issuerName', 'issuerPosition', 'responsibilityText', 'tgTarget']
+    .forEach(k => { s[k] = ((document.getElementById('whs-' + k) || {}).value || '').trim(); });
+  s.tgReminders = !!(document.getElementById('whs-tgReminders') || {}).checked;
+  setLS('wh_settings', Object.assign({}, getLS('wh_settings') || {}, s));
+  if (!(await _whCommit())) { alert(_WH_NOT_SENT); render(); return; }
+  _showToast('✅ Настройки склада сохранены', true); render();
+}
+
+// ---------- printing ----------
+const _WH_MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+const _whLongDate = d => { const [y, m, dd] = String(d || _todayLocal()).split('-'); return `«${dd}» ${_WH_MONTHS_GEN[Number(m) - 1]} ${y} г.`; };
+
+function _whPrintPage(title, body) {
+  return `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${_escHtml(title)}</title>
+<style>
+  @page { size: A4; margin: 14mm 14mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #e2e8f0; color: #000; font: 12px/1.45 'Times New Roman', Times, serif; }
+  .bar { position: sticky; top: 0; background: #1e293b; color: #fff; padding: 10px 16px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; z-index: 2; }
+  .bar span { font-size: 12px; color: #cbd5e1; }
+  .bar button { background: #fff; color: #1e293b; border: 0; border-radius: 8px; padding: 8px 14px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .sheet { max-width: 800px; margin: 16px auto; background: #fff; padding: 36px 40px; box-shadow: 0 2px 12px rgba(0,0,0,.1); }
+  .org { font-size: 11px; line-height: 1.4; margin-bottom: 18px; }
+  h1 { font-size: 16px; text-align: center; margin: 0; letter-spacing: .02em; }
+  .sub { text-align: center; margin: 2px 0 14px; }
+  .place { display: flex; justify-content: space-between; margin-bottom: 14px; }
+  p { margin: 6px 0; text-align: justify; }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+  th, td { border: 1px solid #000; padding: 4px 6px; vertical-align: middle; }
+  th { font-size: 10.5px; font-weight: 700; text-align: center; background: #f3f4f6; }
+  td.c { text-align: center; } td.r { text-align: right; white-space: nowrap; }
+  td.ph { width: 46px; padding: 2px; text-align: center; } td.ph img { width: 40px; height: 40px; object-fit: cover; display: block; margin: 0 auto; }
+  tr.total td { font-weight: 700; }
+  .blank td { height: 26px; }
+  .sign { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 26px; }
+  .sign .who { font-weight: 700; margin-bottom: 18px; }
+  .line { border-bottom: 1px solid #000; height: 18px; margin-bottom: 2px; }
+  .hint { font-size: 9.5px; text-align: center; color: #333; }
+  .copy { margin-top: 22px; }
+  @media (max-width: 680px) { .sheet { margin: 0; padding: 18px 14px; } .sign { grid-template-columns: 1fr; } .tw { overflow-x: auto; } }
+  @media print { body { background: #fff; } .bar { display: none; } .sheet { margin: 0; padding: 0; box-shadow: none; max-width: none; } tr { break-inside: avoid; } }
+</style></head><body>
+<div class="bar"><span>Чтобы сохранить файл: в окне печати выберите «Сохранить как PDF».</span><button onclick="window.print()">🖨️ Печать / PDF</button></div>
+<div class="sheet">${body}</div></body></html>`;
+}
+
+// The full stop after a name — unless the name already ends in one (initials: «Петров П.П.»).
+const _whStop = name => /\.\s*$/.test(String(name || '')) ? '' : '.';
+
+function _whOrgBlock() {
+  const s = getWhSettings();
+  const lines = [s.legalName || s.orgName, [s.inn ? 'ИНН ' + s.inn : '', s.kpp ? 'КПП ' + s.kpp : ''].filter(Boolean).join(' / '), s.address].filter(Boolean);
+  return `<div class="org">${lines.map(_escHtml).join('<br>')}</div>`;
+}
+const _whSignBlock = (leftRole, leftName, leftPos, rightRole, rightName, rightPos) => `<div class="sign">
+  <div><div class="who">${leftRole}</div><div>${_escHtml(leftPos || '')}</div><div class="line"></div><div class="hint">подпись / ${_escHtml(leftName || 'ФИО')}</div></div>
+  <div><div class="who">${rightRole}</div><div>${_escHtml(rightPos || '')}</div><div class="line"></div><div class="hint">подпись / ${_escHtml(rightName || 'ФИО')}</div></div></div>`;
+
+function _whDocHTML(d) {
+  const s = getWhSettings(), e = d.employeeId ? (_whEmp(d.employeeId) || {}) : {};
+  const fc = getLS('files') || {};
+  const items = getWhItems();
+  // The photo column only when at least one line has a photo to show.
+  const photoOf = it => (it.fileIds || []).find((f, j) => String((it.fileTypes || [])[j] || '').startsWith('image/'));
+  const withPhoto = ['issue', 'return'].includes(d.type)
+    && (d.lines || []).some(l => { const it = items.find(i => i.id === l.itemId); return it && photoOf(it) && fc[photoOf(it)]; });
+  const total = (d.lines || []).reduce((sum, l) => sum + _whQ(l.qty) * (Number(l.price) || 0), 0);
+  const rows = (d.lines || []).map((l, k) => {
+    const it = items.find(i => i.id === l.itemId) || { name: '(позиция удалена)' };
+    const img = (it.fileIds || []).find((f, j) => String((it.fileTypes || [])[j] || '').startsWith('image/'));
+    const url = img && fc[img] ? fc[img].url : '';
+    return `<tr><td class="c">${k + 1}</td>${withPhoto ? `<td class="ph">${url ? `<img src="${_escHtml(url)}">` : ''}</td>` : ''}<td>${_escHtml(it.name)}${it.serial ? `<br><small>с/н ${_escHtml(it.serial)}</small>` : ''}</td>
+      <td class="c">${_escHtml(it.invNo || '')}</td><td class="c">${_escHtml(it.unit || '')}</td><td class="c">${_whFmtQ(l.qty)}</td>
+      <td class="r">${(Number(l.price) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</td><td class="r">${(_whQ(l.qty) * (Number(l.price) || 0)).toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</td>
+      ${d.type === 'issue' || d.type === 'return' ? `<td class="c">${_escHtml(WH_COND[l.condition] || '')}</td>` : ''}</tr>`;
+  }).join('');
+  const condCol = d.type === 'issue' || d.type === 'return';
+  const table = `<div class="tw"><table><thead><tr><th>№</th>${withPhoto ? '<th>Фото</th>' : ''}<th>Наименование</th><th>Инв. №</th><th>Ед.</th><th>Кол-во</th><th>Цена, ₽</th><th>Сумма, ₽</th>${condCol ? `<th>Состояние${d.type === 'return' ? ' при возврате' : ''}</th>` : ''}</tr></thead>
+    <tbody>${rows}<tr class="total"><td colspan="${withPhoto ? 7 : 6}" style="text-align:right">Итого:</td><td class="r">${total.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</td>${condCol ? '<td></td>' : ''}</tr></tbody></table></div>`;
+  const place = `<div class="place"><span>${_escHtml(s.city || '')}</span><span>${_whLongDate(d.date)}</span></div>`;
+  const n = (d.lines || []).length;
+  if (d.type === 'issue') return _whPrintPage(`Акт ${d.no}`, `${_whOrgBlock()}
+    <h1>АКТ № ${_escHtml(d.no)}</h1><div class="sub">приёма-передачи материальных ценностей</div>${place}
+    <p>Передающая сторона: <b>${_escHtml(s.issuerPosition)} ${_escHtml(s.issuerName)}</b>${_whStop(s.issuerName)}</p>
+    <p>Принимающая сторона: <b>${_escHtml(e.position || '')} ${_escHtml(e.name || '')}</b>${_whStop(e.name)}</p>
+    <p>Настоящий акт составлен о том, что передающая сторона передала, а принимающая сторона приняла следующие материальные ценности:</p>
+    ${table}<p>Всего наименований: ${n}, на сумму ${_whRub(total)}.${d.dueDate ? ` <b>Срок возврата инструмента и оборудования: до ${fmtDate(d.dueDate)}.</b>` : ''}</p>
+    ${d.note ? `<p>Примечание: ${_escHtml(d.note)}</p>` : ''}<p>${_escHtml(s.responsibilityText)}</p>
+    ${_whSignBlock('Передал', s.issuerName, s.issuerPosition, 'Принял', e.name, e.position)}
+    <div class="copy">Экземпляр акта получил(а): ____________________ / ${_escHtml(e.name || '')} /</div>`);
+  if (d.type === 'return') return _whPrintPage(`Акт ${d.no}`, `${_whOrgBlock()}
+    <h1>АКТ № ${_escHtml(d.no)}</h1><div class="sub">возврата материальных ценностей</div>${place}
+    <p>Сдающая сторона: <b>${_escHtml(e.position || '')} ${_escHtml(e.name || '')}</b>${_whStop(e.name)}</p>
+    <p>Принимающая сторона: <b>${_escHtml(s.issuerPosition)} ${_escHtml(s.issuerName)}</b>${_whStop(s.issuerName)}</p>
+    <p>Настоящий акт составлен о том, что сдающая сторона возвратила, а принимающая сторона приняла на склад следующие материальные ценности:</p>
+    ${table}<p>Всего наименований: ${n}, на сумму ${_whRub(total)}.</p>
+    ${d.note ? `<p>Примечание: ${_escHtml(d.note)}</p>` : ''}<p>Замечания по количеству и состоянию: ______________________________________________</p>
+    ${_whSignBlock('Сдал', e.name, e.position, 'Принял', s.issuerName, s.issuerPosition)}`);
+  if (d.type === 'writeoff') return _whPrintPage(`Акт ${d.no}`, `${_whOrgBlock()}
+    <div style="text-align:right;margin-bottom:12px">УТВЕРЖДАЮ<br>${_escHtml(s.directorPosition)}<br>____________ / ${_escHtml(s.directorName || '')} /</div>
+    <h1>АКТ № ${_escHtml(d.no)}</h1><div class="sub">списания материальных ценностей</div>${place}
+    <p>Причина списания: <b>${_escHtml(d.reason || '')}</b>.${d.note ? ' ' + _escHtml(d.note) : ''}</p>
+    <p>Подлежат списанию следующие материальные ценности:</p>${table}
+    <p>Всего наименований: ${n}, на сумму ${_whRub(total)}.</p>
+    ${_whSignBlock('Составил', s.issuerName, s.issuerPosition, 'Проверил', '', '')}`);
+  return _whPrintPage(`Документ ${d.no}`, `${_whOrgBlock()}
+    <h1>ПРИХОДНЫЙ ОРДЕР № ${_escHtml(d.no)}</h1><div class="sub">о поступлении материальных ценностей на склад</div>${place}
+    ${d.supplier ? `<p>Поставщик: <b>${_escHtml(d.supplier)}</b>.</p>` : ''}${d.note ? `<p>Основание / примечание: ${_escHtml(d.note)}</p>` : ''}
+    ${table}<p>Всего наименований: ${n}, на сумму ${_whRub(total)}.</p>
+    ${_whSignBlock('Сдал', '', '', 'Принял', s.issuerName, s.issuerPosition)}`);
+}
+
+function _whOpenPrint(html, fileBase) {
+  const w = window.open('', '_blank');
+  if (w) { w.document.open(); w.document.write(html); w.document.close(); return w; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
+  a.download = fileBase + '.html'; document.body.appendChild(a); a.click(); a.remove();
+  _showToast('📄 Документ скачан файлом — откройте его и нажмите «Печать / PDF»', true);
+  return null;
+}
+function printWhDoc(id) {
+  const d = getWhDocs().find(x => x.id === id);
+  if (!d) return;
+  _whOpenPrint(_whDocHTML(d), 'Акт_' + d.no);
+}
+
+// The same act with nothing filled in, for writing by hand.
+function printWhBlank() {
+  const s = getWhSettings();
+  const rows = Array.from({ length: 12 }, (_, k) => `<tr class="blank"><td class="c">${k + 1}</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`).join('');
+  _whOpenPrint(_whPrintPage('Бланк акта приёма-передачи', `${_whOrgBlock()}
+    <h1>АКТ № ______</h1><div class="sub">приёма-передачи материальных ценностей</div>
+    <div class="place"><span>${_escHtml(s.city || '')}</span><span>«____» ______________ 20___ г.</span></div>
+    <p>Передающая сторона: ______________________________________________________________</p>
+    <p>Принимающая сторона: _____________________________________________________________</p>
+    <p>Настоящий акт составлен о том, что передающая сторона передала, а принимающая сторона приняла следующие материальные ценности:</p>
+    <div class="tw"><table><thead><tr><th>№</th><th>Наименование</th><th>Инв. №</th><th>Ед.</th><th>Кол-во</th><th>Цена, ₽</th><th>Сумма, ₽</th><th>Состояние</th></tr></thead><tbody>${rows}
+    <tr class="total"><td colspan="6" style="text-align:right">Итого:</td><td></td><td></td></tr></tbody></table></div>
+    <p>Срок возврата инструмента и оборудования: до «____» ______________ 20___ г.</p>
+    <p>${_escHtml(s.responsibilityText)}</p>
+    ${_whSignBlock('Передал', '', '', 'Принял', '', '')}
+    <div class="copy">Экземпляр акта получил(а): ____________________ / ____________________ /</div>`), 'Бланк_акта');
+}
+
+function printWhShoppingList() {
+  const low = _whLowStock();
+  const rows = low.map((x, k) => { const need = Math.max(_whQ(x.item.minQty * 2 - x.stock), _whQ(x.item.minQty)); return `<tr><td class="c">${k + 1}</td><td>${_escHtml(x.item.name)}</td><td class="c">${_escHtml(x.item.invNo)}</td><td class="c">${_whFmtQ(x.stock)} ${_escHtml(x.item.unit || '')}</td><td class="c">${_whFmtQ(x.item.minQty)}</td><td class="c"><b>${_whFmtQ(need)} ${_escHtml(x.item.unit || '')}</b></td><td>${_escHtml(x.item.supplier || '')}</td></tr>`; }).join('');
+  _whOpenPrint(_whPrintPage('Список к закупке', `${_whOrgBlock()}<h1>СПИСОК К ЗАКУПКЕ</h1><div class="sub">материалы на исходе, на ${fmtDate(_todayLocal())}</div>
+    <div class="tw"><table><thead><tr><th>№</th><th>Наименование</th><th>Инв. №</th><th>Остаток</th><th>Минимум</th><th>Купить</th><th>Поставщик</th></tr></thead><tbody>${rows || '<tr><td colspan="7" class="c">Все материалы в достатке</td></tr>'}</tbody></table></div>
+    <p style="font-size:10.5px">«Купить» — до двойного минимального остатка.</p>`), 'Список_к_закупке');
+}
+
+// ---------- QR labels ----------
+// Each label carries the item's inventory number and a QR code. Scanned with any phone's
+// camera it opens the app on that item's card (see _whOpenFromLink).
+function _whItemUrl(id) { return location.origin + location.pathname + '?wh=' + encodeURIComponent(id); }
+function _whLoadQr() {
+  return new Promise((resolve, reject) => {
+    if (window.qrcode) return resolve();
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
+    sc.onload = () => resolve(); sc.onerror = () => reject(new Error('QR library failed to load'));
+    document.head.appendChild(sc);
+  });
+}
+function openWhLabels(ids) {
+  if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
+  if (ids && ids.length) { _printWhLabels(ids); return; }
+  const items = getWhItems().slice().sort((a, b) => String(a.invNo).localeCompare(String(b.invNo)));
+  if (!items.length) { alert('На складе пока нет позиций'); return; }
+  document.getElementById('modal-title').textContent = '🏷️ Наклейки с QR-кодом';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-size:12px;color:#6b7280;margin-bottom:10px">Распечатайте на листе наклеек (или на обычной бумаге и приклейте скотчем). Сканирование камерой телефона открывает карточку позиции.</div>
+    <div style="display:flex;gap:8px;margin-bottom:8px"><button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="document.querySelectorAll('.whl-cb').forEach(c=>c.checked=true)">Все</button>
+      <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="document.querySelectorAll('.whl-cb').forEach(c=>c.checked=false)">Снять все</button>
+      <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="document.querySelectorAll('.whl-cb').forEach(c=>c.checked=c.dataset.kind!=='consumable')">Только инструмент</button></div>
+    <div style="max-height:46vh;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;padding:6px 10px">
+      ${items.map(i => `<label style="display:flex;gap:8px;align-items:center;font-size:13px;padding:3px 0;cursor:pointer"><input type="checkbox" class="whl-cb" value="${i.id}" data-kind="${i.kind}" ${_whIsAsset(i) ? 'checked' : ''}> <b>${_escHtml(i.invNo)}</b> ${_escHtml(i.name)}</label>`).join('')}
+    </div>`;
+  document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="_printWhLabels(Array.from(document.querySelectorAll('.whl-cb')).filter(c=>c.checked).map(c=>c.value))">🖨️ Печать</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+async function _printWhLabels(ids) {
+  if (!ids.length) { alert('Отметьте хотя бы одну позицию'); return; }
+  // Opened now, inside the tap, so a pop-up blocker lets it through; filled once the QR
+  // library has loaded.
+  const w = window.open('', '_blank');
+  if (w) w.document.write('<p style="font-family:sans-serif;padding:30px">Готовим наклейки…</p>');
+  try { await _whLoadQr(); } catch (e) { if (w) w.close(); alert('Не удалось загрузить генератор QR-кодов. Проверьте интернет и попробуйте снова.'); return; }
+  const s = getWhSettings();
+  const labels = ids.map(id => _whItem(id)).filter(Boolean).map(it => {
+    const qr = window.qrcode(0, 'M'); qr.addData(_whItemUrl(it.id)); qr.make();
+    return `<div class="lab">${qr.createSvgTag({ cellSize: 3, margin: 0, scalable: true })}<div class="tx"><div class="inv">${_escHtml(it.invNo)}</div><div class="nm">${_escHtml(it.name)}</div><div class="org">${_escHtml(s.orgName)}</div></div></div>`;
+  }).join('');
+  const html = `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Наклейки склада</title><style>
+    @page { size: A4; margin: 8mm; } body { margin: 0; font-family: Arial, sans-serif; }
+    .bar { background: #1e293b; color: #fff; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; }
+    .bar button { background: #fff; border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3mm; padding: 4mm; }
+    .lab { border: 1px dashed #94a3b8; border-radius: 2mm; padding: 2.5mm; display: flex; gap: 2.5mm; align-items: center; height: 30mm; break-inside: avoid; overflow: hidden; }
+    .lab svg { width: 24mm; height: 24mm; flex-shrink: 0; }
+    .tx { min-width: 0; } .inv { font-size: 15pt; font-weight: 700; } .nm { font-size: 8.5pt; line-height: 1.2; max-height: 3.6em; overflow: hidden; } .org { font-size: 7pt; color: #475569; margin-top: 1mm; }
+    @media print { .bar { display: none; } .grid { padding: 0; } }
+  </style></head><body><div class="bar"><span>Наклеек: ${ids.length}</span><button onclick="window.print()">🖨️ Печать</button></div><div class="grid">${labels}</div></body></html>`;
+  if (w) { w.document.open(); w.document.write(html); w.document.close(); }
+  else _whOpenPrint(html, 'Наклейки_склада');
+  if (_modalIsOpen()) closeModal();
+}
+
+// A label scanned with a phone opens /?wh=<id>. The id is remembered through the login and
+// the item's card shown once a warehouse role is in.
+let _pendingWhItem = null, _whLinkOpenedAt = 0;
+function _whCaptureLink() {
+  const p = new URLSearchParams(location.search).get('wh');
+  if (!p) return;
+  _pendingWhItem = p;
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+}
+function _whOpenFromLink() {
+  if (!_pendingWhItem || !_WAREHOUSE_ROLES.includes(currentUser)) return false;
+  const id = _pendingWhItem; _pendingWhItem = null;
+  _whLinkOpenedAt = Date.now(); // read by showOwnerNewsFeed, which would otherwise cover the card
+  setTimeout(() => { showView('warehouse'); if (_whItem(id)) openWhItem(id); else _showToast('Позиция с этой наклейки не найдена', false); }, 0);
+  return true;
+}
+
+// ==============================
 // МОДАЛЬНОЕ ОКНО
 // ==============================
 // Save pressed while an earlier save of the same kind is still uploading — typically a form
@@ -8355,6 +9248,7 @@ async function init() {
     await loadSharePage(shareToken);
     return;
   }
+  _whCaptureLink();
   if (_useFirebase) {
     await _loadState();
     _setupSync();
@@ -8820,6 +9714,9 @@ function _fmtTs(ts) {
 }
 
 function showOwnerNewsFeed() {
+  // Signed in to look at a scanned warehouse label — the news can wait; it would replace
+  // the item's card the moment it opened.
+  if (Date.now() - _whLinkOpenedAt < 5000) return;
   const lastLogin = Number(localStorage.getItem('owner_last_login') || 0);
   const now = Date.now();
   localStorage.setItem('owner_last_login', String(now));
