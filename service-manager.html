@@ -10655,7 +10655,9 @@ function renderBudget() {
   // and sort/filter/sum freely.
   const canExportRegister = currentUser === 'owner' || currentUser === 'accountant';
   const exportBtn = canExportRegister ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px;margin-left:auto" onclick="exportBudgetRegisterCsv('${budgetLedger}')">📊 Реестр (Excel)</button>` : '';
-  const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0;align-items:center">${tabs}${exportBtn}</div>`;
+  // The owner's formatted month report across all the ledgers (see openBudgetReportModal).
+  const reportBtn = currentUser === 'owner' ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px${exportBtn ? '' : ';margin-left:auto'}" onclick="openBudgetReportModal()">📄 Отчёт за месяц</button>` : '';
+  const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0;align-items:center">${tabs}${exportBtn}${reportBtn}</div>`;
 
   const releaseBar = isOwner ? (getBudgetReleased()
     ? `<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#166534;font-weight:600">✅ Опубликовано — доступно администратору, Александру, бухгалтеру и кухне</div>`
@@ -10791,6 +10793,306 @@ function _regFundNames(ledgerKey) {
 function _setRegisterFunds(checked, ledgerKey) {
   document.querySelectorAll('.reg-fund').forEach(cb => { cb.checked = checked; });
   _updateRegisterCount(ledgerKey);
+}
+
+// ==============================
+// ФИНАНСОВЫЙ ОТЧЁТ ЗА МЕСЯЦ (владелец)
+// ==============================
+// A formatted month report across the ledgers, for the owner: every ledger side by side,
+// then each one's own figures, fund breakdown, operations and what is still open. It opens
+// as a page of its own, ready to be saved as PDF or printed.
+//
+// Every figure comes from _budgetBalance and the same month filter the ledger screen uses
+// (_budgetTxMonthKey), never from a calculation of its own — a report that disagreed with
+// the app by a single rouble would be worse than none.
+
+function openBudgetReportModal() {
+  if (currentUser !== 'owner') return;
+  const years = new Set([new Date().getFullYear(), budgetYear]);
+  Object.keys(FINANCE_LEDGERS).forEach(lk => getBudgetTx(lk).forEach(t => {
+    const y = Number((t.date || '').slice(0, 4)); if (y) years.add(y);
+  }));
+  const yearOpts = [...years].sort((a, b) => b - a).map(y => `<option value="${y}" ${y === budgetYear ? 'selected' : ''}>${y}</option>`).join('');
+  const monthOpts = MONTHS.map((m, i) => `<option value="${i + 1}" ${i + 1 === budgetMonth ? 'selected' : ''}>${m}</option>`).join('');
+  const ledgerBoxes = Object.keys(FINANCE_LEDGERS).map(lk => `
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0">
+      <input type="checkbox" class="rep-ledger" value="${lk}" checked> ${FINANCE_LEDGERS[lk].label}
+    </label>`).join('');
+  document.getElementById('modal-title').textContent = '📄 Финансовый отчёт за месяц';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+      <div class="form-group" style="margin:0"><label>Месяц</label><select class="form-control" id="rep-month">${monthOpts}</select></div>
+      <div class="form-group" style="margin:0"><label>Год</label><select class="form-control" id="rep-year">${yearOpts}</select></div>
+    </div>
+    <div style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:4px">Бюджеты</div>
+    <div style="margin-bottom:14px">${ledgerBoxes}</div>
+    <div style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:4px">Содержание</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0">
+      <input type="radio" name="rep-detail" class="rep-detail" value="full" checked> Подробный — итоги и все операции месяца
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 0">
+      <input type="radio" name="rep-detail" class="rep-detail" value="brief"> Краткий — только итоги
+    </label>
+    <div style="font-size:11px;color:#6b7280;margin-top:12px">Отчёт откроется в новой вкладке — там его можно сохранить в PDF или распечатать.</div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="_runBudgetReport()">📄 Сформировать</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function _runBudgetReport() {
+  if (currentUser !== 'owner') return;
+  const y = Number(document.getElementById('rep-year').value);
+  const m = Number(document.getElementById('rep-month').value);
+  const ledgers = Array.from(document.querySelectorAll('.rep-ledger')).filter(c => c.checked).map(c => c.value);
+  if (!ledgers.length) { alert('Выберите хотя бы один бюджет'); return; }
+  const detailed = ((document.querySelector('.rep-detail:checked') || {}).value || 'full') !== 'brief';
+  const html = _buildBudgetReportHTML(y, m, ledgers, detailed);
+  closeModal();
+  // Opened synchronously, inside the click, so pop-up blockers let it through.
+  const w = window.open('', '_blank');
+  if (w) { w.document.open(); w.document.write(html); w.document.close(); return; }
+  // Blocked anyway: hand it over as a file — it opens in any browser and prints the same.
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
+  a.download = `Финансовый_отчёт_${MONTHS[m - 1]}_${y}.html`;
+  document.body.appendChild(a); a.click(); a.remove();
+  _showToast('📄 Отчёт скачан файлом — откройте его, там кнопка «Сохранить PDF»', true);
+}
+
+// One ledger's month, gathered once: the balance exactly as the ledger screen computes it,
+// and that month's operations split the ways the report shows them.
+function _budgetReportLedger(ledgerKey, mk) {
+  const cfg = FINANCE_LEDGERS[ledgerKey];
+  const bal = _budgetBalance(ledgerKey, mk);
+  const tx = getBudgetTx(ledgerKey).filter(t => _budgetTxMonthKey(t) === mk)
+    .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.time || '').localeCompare(b.time || ''));
+  const isPaid = t => !!(t.accountantConfirm && t.accountantConfirm.paid);
+  const allApproved = t => cfg.approvers.every(r => t.approvals && t.approvals[r] && t.approvals[r].approved);
+  const expenses = tx.filter(t => !_isIncomeType(t));
+  const open = expenses.filter(t => t.status !== 'rejected' && !isPaid(t));
+  return {
+    ledgerKey, cfg, bal, mk, isPaid, allApproved,
+    income: tx.filter(_isIncomeType),
+    expenses,
+    paid: expenses.filter(isPaid),
+    rejected: expenses.filter(t => t.status === 'rejected'),
+    readyToPay: open.filter(allApproved),
+    awaitingApproval: open.filter(t => !allApproved(t)),
+  };
+}
+
+const _repR2 = n => Math.round((Number(n) || 0) * 100) / 100;
+const _repSum = arr => _repR2(arr.reduce((s, t) => s + (Number(t.amount) || 0), 0));
+const _repRub = n => {
+  const v = _repR2(n);
+  return (v < 0 ? '−' : '') + Math.abs(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+};
+const _repApprover = r => r === 'alexander' ? 'Александр' : r === 'owner' ? 'Йосеф' : _roleDisplayName(r);
+
+function _budgetReportStatus(t, d) {
+  if (t.status === 'rejected') return { text: 'Отклонено' + (t.rejectReason ? ': ' + t.rejectReason : ''), cls: 'st-rej' };
+  if (d.isPaid(t)) return { text: 'Оплачено' + (t.accountantConfirm.date ? ' ' + fmtDate(String(t.accountantConfirm.date).slice(0, 10)) : ''), cls: 'st-paid' };
+  if (d.allApproved(t)) return { text: 'Ждёт оплаты', cls: 'st-pay' };
+  const missing = d.cfg.approvers.filter(r => !(t.approvals && t.approvals[r] && t.approvals[r].approved)).map(_repApprover);
+  return { text: 'Ждёт согласования' + (missing.length ? ': ' + missing.join(', ') : ''), cls: 'st-appr' };
+}
+
+// Whether the figures are final: a month the owner has closed, or one that can still change.
+function _budgetReportMonthState(ledgerKey, mk) {
+  const cur = _currentMonthKey();
+  // `short` is for the summary table's narrow first column.
+  if (mk > cur) return { text: 'Будущий месяц', short: 'Будущий месяц', cls: 'open' };
+  if (mk === cur) return { text: 'Текущий месяц — данные ещё меняются', short: 'Текущий месяц', cls: 'open' };
+  if (_isMonthLockedByOwner(ledgerKey, mk)) {
+    const e = _monthLockEntry(ledgerKey, mk);
+    const when = e && e.at ? ' ' + fmtDate(String(e.at).slice(0, 10)) : '';
+    return { text: '🔒 Месяц закрыт' + when, short: '🔒 Закрыт' + when, cls: 'locked' };
+  }
+  return { text: '🔓 Месяц ещё не закрыт — данные могут измениться', short: '🔓 Не закрыт', cls: 'open' };
+}
+
+function _buildBudgetReportHTML(y, m, ledgerKeys, detailed) {
+  const mk = `${y}-${String(m).padStart(2, '0')}`;
+  const period = `${MONTHS[m - 1]} ${y}`;
+  const esc = _escHtml;
+  const data = ledgerKeys.filter(lk => FINANCE_LEDGERS[lk]).map(lk => _budgetReportLedger(lk, mk));
+  const now = new Date();
+  const generated = `${fmtDate(_todayLocal())}, ${now.toTimeString().slice(0, 5)}`;
+  const num = (n, cls) => `<td class="num ${cls || ''}">${_repRub(n)}</td>`;
+  const signCls = n => _repR2(n) < 0 ? 'neg' : '';
+
+  // ---- the summary across the ledgers ----
+  const tot = { inc: 0, paid: 0, all: 0, prelim: 0, actual: 0 };
+  const summaryRows = data.map(d => {
+    tot.inc += d.bal.thisIncome; tot.paid += d.bal.thisExpensePaid; tot.all += d.bal.thisExpenseAll;
+    tot.prelim += d.bal.prelimBalance; tot.actual += d.bal.actualBalance;
+    const st = _budgetReportMonthState(d.ledgerKey, mk);
+    return `<tr>
+      <td class="first"><b>${esc(d.cfg.label)}</b><div class="small ${st.cls}">${esc(st.short)}</div></td>
+      ${num(d.bal.thisIncome, 'pos')}${num(d.bal.thisExpensePaid)}${num(d.bal.thisExpenseAll, 'muted')}
+      ${num(d.bal.prelimBalance, signCls(d.bal.prelimBalance))}${num(d.bal.actualBalance, signCls(d.bal.actualBalance))}
+    </tr>`;
+  }).join('');
+  const summary = `
+    <h2>Сводка по бюджетам</h2>
+    <table>
+      <thead><tr><th>Бюджет</th><th class="num">Приход</th><th class="num">Расход (оплачено)</th><th class="num">Начислено за месяц</th><th class="num">Предварительный остаток</th><th class="num">Фактический остаток</th></tr></thead>
+      <tbody>${summaryRows}</tbody>
+      ${data.length > 1 ? `<tfoot><tr class="total"><td>Итого</td>${num(tot.inc)}${num(tot.paid)}${num(tot.all)}${num(tot.prelim, signCls(tot.prelim))}${num(tot.actual, signCls(tot.actual))}</tr></tfoot>` : ''}
+    </table>`;
+
+  // ---- each ledger ----
+  const sections = data.map(d => {
+    const st = _budgetReportMonthState(d.ledgerKey, mk);
+    const b = d.bal;
+    const kpis = `<div class="kpis">
+      <div class="kpi"><div class="v pos">${_repRub(b.thisIncome)}</div><div class="l">Приход за месяц</div></div>
+      <div class="kpi"><div class="v">${_repRub(b.thisExpensePaid)}</div><div class="l">Расход за месяц (оплачено)</div></div>
+      <div class="kpi"><div class="v ${signCls(b.prelimBalance)}" style="color:#1d4ed8">${_repRub(b.prelimBalance)}</div><div class="l">Предварительный остаток на конец месяца</div></div>
+      <div class="kpi"><div class="v ${signCls(b.actualBalance) || 'pos'}">${_repRub(b.actualBalance)}</div><div class="l">Фактический остаток на конец месяца</div></div>
+    </div>`;
+
+    let funds = '';
+    if (d.cfg.useFunds) {
+      const names = _sortFundNames(Object.keys(b.byFund).filter(f => f && f !== '—'));
+      if (b.byFund['—']) names.push('—');
+      if (names.length) funds = `<h3>По фондам</h3><table>
+        <thead><tr><th>Фонд</th><th class="num">Приход</th><th class="num">Расход (оплачено)</th><th class="num">Предв. остаток</th><th class="num">Факт. остаток</th></tr></thead>
+        <tbody>${names.map(f => { const v = b.byFund[f]; return `<tr>
+          <td><span class="dot" style="background:${f === '—' ? '#94a3b8' : _fundColor(f)}"></span>${f === '—' ? 'Без фонда' : esc(f)}</td>
+          ${num(v.thisIncome, 'pos')}${num(v.thisExpensePaid)}${num(v.prelimBalance, signCls(v.prelimBalance))}${num(v.actualBalance, signCls(v.actualBalance))}</tr>`; }).join('')}</tbody>
+        <tfoot><tr class="total"><td>Итого</td>${num(b.thisIncome)}${num(b.thisExpensePaid)}${num(b.prelimBalance, signCls(b.prelimBalance))}${num(b.actualBalance, signCls(b.actualBalance))}</tr></tfoot>
+      </table>`;
+    }
+
+    const attention = (d.readyToPay.length || d.awaitingApproval.length) ? `<div class="attention">
+      <b>Требует внимания:</b>
+      ${d.readyToPay.length ? `<span>💳 Ждут оплаты — ${d.readyToPay.length} на ${_repRub(_repSum(d.readyToPay))}</span>` : ''}
+      ${d.awaitingApproval.length ? `<span>📝 Ждут согласования — ${d.awaitingApproval.length} на ${_repRub(_repSum(d.awaitingApproval))}</span>` : ''}
+    </div>` : '';
+
+    let ops = '';
+    if (detailed) {
+      const fundCol = d.cfg.useFunds;
+      const incomeTable = d.income.length ? `<h3>Приход</h3><table>
+        <thead><tr><th>Дата</th><th>Источник</th>${fundCol ? '<th>Фонд</th>' : ''}<th class="num">Сумма</th><th>Примечание</th></tr></thead>
+        <tbody>${d.income.map(t => `<tr><td class="nowrap">${fmtDate(t.date)}</td><td>${esc(t.type === 'refund' ? 'Возврат: ' + (t.vendor || '') : (t.vendor || ''))}</td>
+          ${fundCol ? `<td>${esc(t.fund || '')}</td>` : ''}${num(t.amount, 'pos')}<td class="small">${esc(t.notes || '')}</td></tr>`).join('')}</tbody>
+        <tfoot><tr class="total"><td colspan="${fundCol ? 3 : 2}">Итого приход</td>${num(_repSum(d.income))}<td></td></tr></tfoot>
+      </table>` : '';
+      const expenseTable = d.expenses.length ? `<h3>Расходы</h3><table>
+        <thead><tr><th>Дата</th><th>Поставщик / назначение</th>${fundCol ? '<th>Фонд</th>' : ''}<th class="num">Сумма</th><th>Статус</th><th>Внёс</th></tr></thead>
+        <tbody>${d.expenses.map(t => { const s = _budgetReportStatus(t, d); return `<tr class="${t.status === 'rejected' ? 'rej' : ''}">
+          <td class="nowrap">${fmtDate(t.date)}</td>
+          <td>${esc(t.vendor || '')}${t.notes ? `<div class="small">${esc(t.notes)}</div>` : ''}</td>
+          ${fundCol ? `<td>${esc(t.fund || '')}</td>` : ''}${num(t.amount)}
+          <td><span class="st ${s.cls}">${esc(s.text)}</span></td>
+          <td class="small">${esc(_roleDisplayName(t.createdBy || '') || '')}</td></tr>`; }).join('')}</tbody>
+        <tfoot>
+          <tr class="total"><td colspan="${fundCol ? 3 : 2}">Начислено за месяц (все заявки)</td>${num(_repSum(d.expenses))}<td colspan="2"></td></tr>
+          <tr class="sub"><td colspan="${fundCol ? 3 : 2}">из них оплачено</td>${num(_repSum(d.paid))}<td colspan="2"></td></tr>
+          ${d.readyToPay.length ? `<tr class="sub"><td colspan="${fundCol ? 3 : 2}">ждёт оплаты</td>${num(_repSum(d.readyToPay))}<td colspan="2"></td></tr>` : ''}
+          ${d.awaitingApproval.length ? `<tr class="sub"><td colspan="${fundCol ? 3 : 2}">ждёт согласования</td>${num(_repSum(d.awaitingApproval))}<td colspan="2"></td></tr>` : ''}
+          ${d.rejected.length ? `<tr class="sub"><td colspan="${fundCol ? 3 : 2}">отклонено</td>${num(_repSum(d.rejected))}<td colspan="2"></td></tr>` : ''}
+        </tfoot>
+      </table>` : '';
+      ops = (incomeTable + expenseTable) || '<p class="muted">За этот месяц операций нет.</p>';
+    }
+
+    return `<section class="ledger">
+      <div class="ledger-head"><h2>${esc(d.cfg.label)}</h2><span class="state ${st.cls}">${esc(st.text)}</span></div>
+      ${kpis}${attention}${funds}${ops}
+    </section>`;
+  }).join('');
+
+  return `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Финансовый отчёт — ${esc(period)}</title>
+<style>
+  @page { size: A4; margin: 14mm 12mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #e2e8f0; color: #0f172a; font: 12px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; }
+  .bar { position: sticky; top: 0; z-index: 5; background: #1e293b; color: #fff; padding: 10px 16px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .bar span { font-size: 12px; color: #cbd5e1; }
+  .bar button { background: #fff; color: #1e293b; border: 0; border-radius: 8px; padding: 8px 14px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .tw { overflow-x: auto; }
+  .page { max-width: 960px; margin: 16px auto; background: #fff; padding: 32px 36px; border-radius: 10px; box-shadow: 0 2px 12px rgba(15,23,42,.08); }
+  .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; border-bottom: 3px solid #1e293b; padding-bottom: 14px; margin-bottom: 20px; flex-wrap: wrap; }
+  .org { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #64748b; font-weight: 700; }
+  h1 { font-size: 24px; margin: 2px 0 0; }
+  .meta { text-align: right; font-size: 11px; color: #64748b; }
+  h2 { font-size: 16px; margin: 22px 0 10px; }
+  h3 { font-size: 13px; margin: 18px 0 6px; color: #334155; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
+  th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: #64748b; font-weight: 700; border-bottom: 1.5px solid #cbd5e1; padding: 7px 8px; }
+  td { padding: 7px 8px; border-bottom: 1px solid #eef2f7; vertical-align: top; }
+  .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .nowrap { white-space: nowrap; }
+  td.first { min-width: 130px; }
+  tr.total td { font-weight: 700; border-top: 2px solid #1e293b; border-bottom: 0; background: #f8fafc; }
+  tr.sub td { color: #475569; border-bottom: 0; padding-top: 3px; padding-bottom: 3px; font-size: 11px; }
+  tr.rej td { color: #94a3b8; }
+  .small { font-size: 10.5px; color: #64748b; }
+  .pos { color: #15803d; } .neg { color: #b91c1c !important; } .muted { color: #94a3b8; }
+  .locked { color: #15803d; } .open { color: #b45309; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+  .ledger { margin-top: 30px; padding-top: 6px; border-top: 1px solid #e2e8f0; }
+  .ledger-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .ledger-head h2 { margin-bottom: 4px; }
+  .state { font-size: 11px; font-weight: 600; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 14px; }
+  .kpi { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; }
+  .kpi .v { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .kpi .l { font-size: 10px; color: #64748b; margin-top: 2px; }
+  .attention { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #92400e; display: flex; gap: 6px 18px; flex-wrap: wrap; margin-bottom: 8px; }
+  .st { font-size: 10.5px; font-weight: 600; white-space: nowrap; }
+  .st-paid { color: #15803d; } .st-pay { color: #b45309; } .st-appr { color: #1d4ed8; } .st-rej { color: #b91c1c; white-space: normal; }
+  .notes { margin-top: 28px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 10.5px; color: #64748b; }
+  .notes p { margin: 3px 0; }
+  @media (max-width: 680px) {
+    .page { margin: 0; border-radius: 0; padding: 18px 14px; }
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    table { font-size: 11px; } td, th { padding: 6px 5px; }
+    .meta { text-align: left; }
+  }
+  /* On paper nothing can scroll: the table has to fit the A4 width, so headings may wrap
+     and the type steps down. Ledgers follow one another rather than each starting a fresh
+     page (an empty one used to cost a whole sheet); a heading is never left at the foot of
+     a page without what it heads. */
+  @media print {
+    body { background: #fff; font-size: 10.5px; }
+    .bar { display: none; }
+    .page { margin: 0; padding: 0; max-width: none; box-shadow: none; border-radius: 0; }
+    .tw { overflow: visible; }
+    th { font-size: 8.5px; white-space: normal; padding: 5px 5px; }
+    td { padding: 5px 5px; }
+    .kpi .v { font-size: 14px; }
+    .ledger { margin-top: 18px; }
+    .ledger-head, h2, h3 { break-after: avoid; }
+    tr, .kpis, .attention { break-inside: avoid; }
+    thead { display: table-header-group; }
+  }
+</style></head><body>
+<div class="bar">
+  <span>Чтобы сохранить файл: «Сохранить PDF» → в окне печати выберите «Сохранить как PDF».</span>
+  <button onclick="window.print()">⬇️ Сохранить PDF / 🖨️ Печать</button>
+</div>
+<div class="page">
+  <div class="head">
+    <div><div class="org">Сад Будущего</div><h1>Финансовый отчёт — ${esc(period)}</h1></div>
+    <div class="meta">Сформирован: ${esc(generated)}<br>${esc(_roleDisplayName(currentUser) || '')}</div>
+  </div>
+  ${(summary + sections).split('<table>').join('<div class="tw"><table>').split('</table>').join('</table></div>')}
+  <div class="notes">
+    <p><b>Приход / Расход (оплачено)</b> — поступления и оплаченные расходы этого месяца.</p>
+    <p><b>Начислено за месяц</b> — все заявки на расход этого месяца: оплаченные, ожидающие и отклонённые.</p>
+    <p><b>Предварительный остаток</b> — фактический остаток на конец прошлого месяца + приход месяца − все начисленные расходы месяца.</p>
+    <p><b>Фактический остаток</b> — весь приход за всё время − все оплаченные расходы, по конец месяца.</p>
+    <p>Операция относится к месяцу так же, как в приложении: оплаченный расход — к месяцу оплаты; неоплаченный счёт из последних двух дней прошедшего месяца — к текущему месяцу, пока он не оплачен.</p>
+  </div>
+</div>
+</body></html>`;
 }
 
 function exportBudgetRegisterCsv(ledgerKey) {
