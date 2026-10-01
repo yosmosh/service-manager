@@ -2634,7 +2634,6 @@ const getTelegramDrafts = () => getLS('telegram_drafts') || [];
 function _telegramDraftBanner(type) {
   const drafts = getTelegramDrafts().filter(d => d.type === type);
   if (!drafts.length) return '';
-  const priLabel = { high:'🔴 Высокий', medium:'🟡 Средний', low:'🟢 Низкий' };
   const noun = drafts.length === 1 ? 'черновик' : drafts.length < 5 ? 'черновика' : 'черновиков';
   return `
     <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:12px 16px;margin-bottom:16px">
@@ -2642,7 +2641,15 @@ function _telegramDraftBanner(type) {
         <div style="font-weight:700;color:#1e40af">📥 ${drafts.length} ${noun} из Telegram — требуют проверки</div>
         ${_telegramRefreshButton()}
       </div>
-      ${drafts.map(d => {
+      ${_telegramDraftCards(drafts)}
+    </div>`;
+}
+
+// One card per draft — its source messages, the suggested record, photos, approve/reject.
+// Shared by the SOS page's banner and the maintenance page's own Telegram view.
+function _telegramDraftCards(drafts) {
+  const priLabel = { high:'🔴 Высокий', medium:'🟡 Средний', low:'🟢 Низкий' };
+  return drafts.map(d => {
         // A draft is now built from a whole thread, so the quoted source is several
         // "Имя: текст" lines — rendered with pre-line so it reads as the conversation
         // it actually was, instead of one run-on line.
@@ -2659,8 +2666,7 @@ function _telegramDraftBanner(type) {
             <button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="rejectTelegramDraft('${d.id}')">❌ Отклонить</button>
           </div>
         </div>`;
-      }).join('')}
-    </div>`;
+      }).join('');
 }
 
 // The server groups a day's Telegram messages into drafts on its own every evening; this
@@ -3313,6 +3319,9 @@ function closeMobileSidebar() {
 }
 
 function showView(v, pid, opts) {
+  // Coming to Обслуживание территории from elsewhere lands on its list of works, not on the
+  // Telegram drafts view someone left open last time.
+  if (v === 'maint' && view !== 'maint') maintShowTelegram = false;
   view = v; activeProvider = pid || null;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   const navEl = document.getElementById(v === 'provider' ? `nav-${pid}` : `nav-${v}`);
@@ -3373,7 +3382,11 @@ function render() {
   } else if (view === 'maint') {
     title.textContent = '🏗️ Обслуживание территории';
     if (currentUser === 'admin' || currentUser === 'owner') {
-      actions.innerHTML = `<button class="btn btn-primary" onclick="openMaintModal()">+ Добавить работу</button>`;
+      // The Telegram suggestions live behind this button, with how many are waiting.
+      const nTg = _maintTelegramDrafts().length;
+      const tgBtn = maintShowTelegram ? ''
+        : `<button class="btn btn-outline" onclick="showMaintTelegram(true)" style="${nTg ? 'border-color:#2563eb;color:#1d4ed8;font-weight:700' : ''}">📥 Из Telegram${nTg ? ` <span style="background:#2563eb;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;margin-left:2px">${nTg}</span>` : ''}</button>`;
+      actions.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">${tgBtn}<button class="btn btn-primary" onclick="openMaintModal()">+ Добавить работу</button></div>`;
     }
     content.innerHTML = renderMaintenance();
     loadMaintImages();
@@ -5704,12 +5717,36 @@ const MAINT_CATS = [
 const now0 = new Date();
 let maintYear  = now0.getFullYear();
 let maintMonth = now0.getMonth() + 1;
+// Обслуживание территории is the list of real works. Suggestions the Telegram bot drafted
+// from the group's messages wait in a view of their own (the 📥 button at the top), and
+// only become part of that list once someone approves them — they used to sit in a block
+// above the works themselves, pushing the actual list down the page.
+let maintShowTelegram = false;
+function showMaintTelegram(on) { maintShowTelegram = !!on; render(); }
+const _maintTelegramDrafts = () => getTelegramDrafts().filter(d => d.type === 'maintenance');
+
+function _renderMaintTelegramView() {
+  const drafts = _maintTelegramDrafts();
+  return `
+    <div style="display:flex;align-items:center;gap:12px;padding:16px 0 12px;border-bottom:1px solid #e2e8f0;margin-bottom:16px;flex-wrap:wrap">
+      <button class="btn btn-outline" style="font-size:13px;padding:7px 12px" onclick="showMaintTelegram(false)">← К работам</button>
+      <div style="font-size:16px;font-weight:700;color:#1e40af">📥 Заявки из Telegram — ждут проверки</div>
+      <div style="margin-left:auto">${_telegramRefreshButton()}</div>
+    </div>
+    <div style="font-size:12px;color:#6b7280;margin-bottom:14px">«✅ Одобрить» открывает обычную форму работы, уже заполненную, — после сохранения работа появится в общем списке. «❌ Отклонить» убирает черновик, ничего не создавая.</div>
+    ${drafts.length ? _telegramDraftCards(drafts) : `
+      <div style="text-align:center;padding:60px;color:#6b7280">
+        <div style="font-size:42px;margin-bottom:10px">✅</div>
+        <div style="font-size:15px;font-weight:600">Нет заявок, ждущих проверки</div>
+      </div>`}`;
+}
 
 function maintCatLabel(id) {
   return (MAINT_CATS.find(c => c.id === id) || MAINT_CATS[6]).label;
 }
 
 function renderMaintenance() {
+  if (maintShowTelegram && (currentUser === 'admin' || currentUser === 'owner')) return _renderMaintTelegramView();
   const _FC = _useFirebase ? (getLS('files') || {}) : {};
   const all = getMaintWorks();
   const items = all.filter(w => {
@@ -5795,7 +5832,6 @@ function renderMaintenance() {
       ${isCurrent ? '<span class="badge badge-blue" style="margin-left:4px">Текущий месяц</span>' : ''}
       ${canEdit ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px;margin-left:auto" onclick="exportMaintenanceCsv()">📊 Реестр (Excel)</button>` : ''}
     </div>
-    ${canEdit ? _telegramDraftBanner('maintenance') : ''}
     ${cards}`;
 }
 
