@@ -1805,6 +1805,33 @@ const _dirtyGen = {};
 // _doFlushState; everywhere else in the app just calls getLS/setLS as before.
 const LEDGER_KEYS = ['finance_tx_maintenance', 'finance_tx_personal'];
 
+// The warehouse (Склад) lives in documents of its own from the start: appdata/state was
+// already at about half of the 1MB cap when it was added, and a catalogue of hundreds of
+// items with an ever-growing record of every issue and return would have carried it over
+// within a year — taking every other department's saving down with it, as on 2026-09-21.
+// Items, people and settings in one document; the movement documents (acts), the part that
+// only ever grows, in another.
+const WAREHOUSE_KEYS = ['wh_items', 'wh_employees', 'wh_settings'];
+const WAREHOUSE_DOC_KEYS = ['wh_docs'];
+
+// Every key kept in a document other than appdata/state, by document. getLS/setLS don't
+// care where a key lives; loading, saving and the poll route each key by this table.
+const SIDE_DOCS = {
+  'appdata/finance_ledger': LEDGER_KEYS,
+  'appdata/warehouse': WAREHOUSE_KEYS,
+  'appdata/warehouse_docs': WAREHOUSE_DOC_KEYS,
+};
+const SIDE_KEYS = [].concat(...Object.values(SIDE_DOCS));
+function _docOfKey(k) {
+  for (const p of Object.keys(SIDE_DOCS)) if (SIDE_DOCS[p].includes(k)) return p;
+  return 'appdata/state';
+}
+// The warehouse documents are only of use to those who run the warehouse; nobody else's
+// poll pays for checking them.
+const _WAREHOUSE_ROLES = ['admin', 'owner'];
+const _sideDocsToPoll = () => Object.keys(SIDE_DOCS)
+  .filter(p => p === 'appdata/finance_ledger' || _WAREHOUSE_ROLES.includes(currentUser));
+
 // The finance ledgers are the one place where a whole-array write is genuinely unsafe.
 // Firestore merges at FIELD level, so sending finance_tx_* replaces the entire array —
 // and the owner, Alexander and the accountant are routinely in the app at the same time,
@@ -1833,6 +1860,7 @@ const TX_KEYS = [
   'sos_items', 'maint_works', 'purchase_requests', 'activity_log',
   'telegram_drafts', 'telegram_log',
   'kitchen_invoices', 'kitchen_deliveries', 'kitchen_inventory', 'kitchen_writeoffs',
+  'wh_items', 'wh_employees', 'wh_docs',
 ];
 // payment_records is the same hazard in map form: it's the "Журнал оплат" tick-list,
 // keyed provider_year_month, and the accountant and the owner both tick it. Writing it
@@ -2071,8 +2099,8 @@ function _flushState() {
 //
 // Only what was actually sent is marked clean, and only if it wasn't edited again while the
 // write was in flight; anything newer stays dirty for the next flush.
-async function _flushStateDocument(docPath, isLedger) {
-  const inDoc = k => k !== 'files' && LEDGER_KEYS.includes(k) === isLedger;
+async function _flushStateDocument(docPath) {
+  const inDoc = k => k !== 'files' && _docOfKey(k) === docPath;
   // An undefined value can't be written (Firestore rejects it) — nothing to save there.
   Array.from(_stateDirty).forEach(k => { if (inDoc(k) && _state[k] === undefined) _stateDirty.delete(k); });
 
@@ -2188,16 +2216,17 @@ async function _doFlushState() {
     const filesPart = _state.files;
     const fullStateForSizeCheck = {..._state};
     delete fullStateForSizeCheck.files;
-    LEDGER_KEYS.forEach(k => delete fullStateForSizeCheck[k]);
-    const ledgerForSizeCheck = {};
-    LEDGER_KEYS.forEach(k => { if (_state[k] !== undefined) ledgerForSizeCheck[k] = _state[k]; });
-
-    const stateSize = JSON.stringify(fullStateForSizeCheck).length;
-    const filesSize = JSON.stringify(filesPart||{}).length;
-    const ledgerSize = JSON.stringify(ledgerForSizeCheck).length;
-    if (stateSize > 900000 || filesSize > 900000 || ledgerSize > 900000) {
-      console.warn('[FLUSH] Size near Firestore 1MB document limit — state:', stateSize, 'files:', filesSize, 'ledger:', ledgerSize);
-      _showPersistentError('База данных почти заполнена (state: ' + Math.round(stateSize/1024) + ' КБ, files: ' + Math.round(filesSize/1024) + ' КБ, ledger: ' + Math.round(ledgerSize/1024) + ' КБ из ~1024 КБ макс. каждый) — сохранения могут перестать работать! Сообщите администратору.');
+    SIDE_KEYS.forEach(k => delete fullStateForSizeCheck[k]);
+    // Every document's size, each against the cap on its own.
+    const sizes = { state: JSON.stringify(fullStateForSizeCheck).length, files: JSON.stringify(filesPart||{}).length };
+    Object.keys(SIDE_DOCS).forEach(p => {
+      const part = {};
+      SIDE_DOCS[p].forEach(k => { if (_state[k] !== undefined) part[k] = _state[k]; });
+      sizes[p.replace('appdata/', '')] = JSON.stringify(part).length;
+    });
+    if (Object.values(sizes).some(n => n > 900000)) {
+      console.warn('[FLUSH] Size near Firestore 1MB document limit —', sizes);
+      _showPersistentError('База данных почти заполнена (' + Object.keys(sizes).map(k => k + ': ' + Math.round(sizes[k]/1024) + ' КБ').join(', ') + ' из ~1024 КБ макс. каждый) — сохранения могут перестать работать! Сообщите администратору.');
     }
     // files_registry first, state second: if a record's fileIds are about to be written
     // into `state`, the files they point at must already exist in the registry — writing
@@ -2222,10 +2251,8 @@ async function _doFlushState() {
     // budget-import flag) can then no longer overwrite that field just by saving something
     // unrelated — it simply never includes that field in its write at all.
     if (_stateDirty.size) {
-      await Promise.all([
-        _flushStateDocument('appdata/state', false),
-        _flushStateDocument('appdata/finance_ledger', true),
-      ]);
+      // Each document with nothing dirty in it returns at once, without a request.
+      await Promise.all(['appdata/state'].concat(Object.keys(SIDE_DOCS)).map(p => _flushStateDocument(p)));
     }
     // Anything edited while this flush was in flight is still marked dirty (see _dirtyGen);
     // make sure it gets a flush of its own rather than waiting for some unrelated later save.
@@ -2278,6 +2305,12 @@ async function _loadState() {
           }
         }
       } catch(e) { console.error('Ошибка загрузки finance_ledger:', e); }
+      // The warehouse documents. Nothing to migrate: they were separate from the start.
+      try {
+        const whPaths = Object.keys(SIDE_DOCS).filter(p => p !== 'appdata/finance_ledger');
+        const whDocs = await Promise.all(whPaths.map(p => _fsGetDoc(p)));
+        whDocs.forEach(d => { if (d) Object.assign(_state, d); });
+      } catch(e) { console.error('Ошибка загрузки склада:', e); }
     } else {
       // первый запуск — мигрируем из localStorage
       const keys = ['admin_pwd','admin_username','owner_pwd','owner_username',
@@ -2542,7 +2575,8 @@ async function _pollStateNow(force) {
   // meanwhile, the download is discarded (and its version stamp rolled back, so the next
   // poll fetches it again rather than believing it's already current).
   const editedMeanwhile = () => _stateDirty.size || _filesDirty.size || _filesDeleted.size;
-  const STATE_KEYS_TRACKED = TX_KEYS.concat(TX_MAP_KEYS).filter(k => !LEDGER_KEYS.includes(k));
+  const tracked = keys => keys.filter(k => TX_KEYS.includes(k) || TX_MAP_KEYS.includes(k));
+  const STATE_KEYS_TRACKED = tracked(TX_KEYS.concat(TX_MAP_KEYS)).filter(k => !SIDE_KEYS.includes(k));
 
   const stVer = force ? null : await _fsDocVersion('appdata/state');
   if (force || (stVer && stVer !== _docVer['appdata/state'])) {
@@ -2550,26 +2584,28 @@ async function _pollStateNow(force) {
     const st = await _fsGetDoc('appdata/state');
     if (editedMeanwhile()) { _docVer['appdata/state'] = prevVer; return changed; }
     if (st && Object.keys(st).length) {
-      // `files` and the LEDGER_KEYS live in their own documents — carry the already-loaded
-      // copies forward instead of dropping them, exactly as the old onSnapshot did.
+      // `files` and every SIDE_KEYS key live in their own documents — carry the already-
+      // loaded copies forward instead of dropping them, exactly as the old onSnapshot did.
+      // (Missing one here would blank it until its own document next changed.)
       const filesBackup = _state.files;
-      const ledgerBackup = {};
-      LEDGER_KEYS.forEach(k => { ledgerBackup[k] = _state[k]; });
+      const sideBackup = {};
+      SIDE_KEYS.forEach(k => { sideBackup[k] = _state[k]; });
       _state = st;
       _state.files = filesBackup;
-      LEDGER_KEYS.forEach(k => { if (ledgerBackup[k] !== undefined) _state[k] = ledgerBackup[k]; });
+      SIDE_KEYS.forEach(k => { if (sideBackup[k] !== undefined) _state[k] = sideBackup[k]; });
       // Same tick, no await in between: these keys now equal the server exactly.
       _snapshotTxBaseline(STATE_KEYS_TRACKED);
       changed = true;
     }
   }
 
-  const ledVer = force ? null : await _fsDocVersion('appdata/finance_ledger');
-  if (force || (ledVer && ledVer !== _docVer['appdata/finance_ledger'])) {
-    const prevVer = _docVer['appdata/finance_ledger'];
-    const led = await _fsGetDoc('appdata/finance_ledger');
-    if (editedMeanwhile()) { _docVer['appdata/finance_ledger'] = prevVer; return changed; }
-    if (led) { Object.assign(_state, led); _snapshotTxBaseline(LEDGER_KEYS); changed = true; }
+  for (const p of _sideDocsToPoll()) {
+    const ver = force ? null : await _fsDocVersion(p);
+    if (!(force || (ver && ver !== _docVer[p]))) continue;
+    const prevVer = _docVer[p];
+    const d = await _fsGetDoc(p);
+    if (editedMeanwhile()) { _docVer[p] = prevVer; return changed; }
+    if (d) { Object.assign(_state, d); _snapshotTxBaseline(tracked(SIDE_DOCS[p])); changed = true; }
   }
 
   // Photos and documents uploaded by other people live in their own document, which the
