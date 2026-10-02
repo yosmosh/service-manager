@@ -11630,6 +11630,66 @@ async function _toggleMonthLockInner(ledgerKey, mk) {
   render();
 }
 
+// The owner can say which month an operation counts in, whatever its date says and whatever
+// the automatic rules would make of it (month-end rollover, the month it was paid in) —
+// stored as monthOverride, which _budgetTxMonthKey puts first. Nothing else about the record
+// changes, approvals and payment included. A month he has closed can't be moved into or out
+// of until he opens it again — closing it was exactly the decision that its books are final.
+const _monthLabel = mk => { const [y, m] = mk.split('-').map(Number); return `${MONTHS[m - 1]} ${y}`; };
+const _monthAdd = (mk, n) => { const [y, m] = mk.split('-').map(Number); const d = new Date(y, m - 1 + n, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+const _monthClosedToOwner = (ledgerKey, mk) => mk < _currentMonthKey() && _isMonthLockedByOwner(ledgerKey, mk);
+
+function openMoveTxMonth(ledgerKey, id) {
+  if (currentUser !== 'owner') return;
+  const t = getBudgetTx(ledgerKey).find(x => x.id === id);
+  if (!t) return;
+  const from = _budgetTxMonthKey(t);
+  if (_monthClosedToOwner(ledgerKey, from)) { alert(`🔒 ${_monthLabel(from)} закрыт — чтобы перенести из него операцию, сначала откройте этот месяц.`); return; }
+  const cur = _currentMonthKey();
+  const months = [];
+  for (let k = -12; k <= 1; k++) months.push(_monthAdd(cur, k));
+  if (!months.includes(from)) months.unshift(from);
+  document.getElementById('modal-title').textContent = '📅 В каком месяце учитывать';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-size:13px;margin-bottom:10px"><b>${_escHtml(t.vendor || '')}</b> · ₽${(Number(t.amount) || 0).toLocaleString('ru-RU')} · дата ${fmtDate(t.date)}</div>
+    <div style="font-size:13px;margin-bottom:12px">Сейчас учитывается в: <b>${_monthLabel(from)}</b>${t.monthOverride ? ' (выбрано вручную)' : ''}</div>
+    <div class="form-group"><label>Учитывать в месяце</label>
+      <select class="form-control" id="mtm-month">${months.map(mk => { const closed = _monthClosedToOwner(ledgerKey, mk); return `<option value="${mk}" ${mk === from ? 'selected' : ''} ${closed ? 'disabled' : ''}>${_monthLabel(mk)}${closed ? ' — 🔒 закрыт' : ''}</option>`; }).join('')}</select></div>
+    <div style="font-size:12px;color:#6b7280">Дата операции, согласования и оплата не меняются — только месяц, в бюджете которого она учитывается. Закрытый месяц сначала откройте.</div>`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    ${t.monthOverride ? `<button class="btn btn-outline" onclick="moveBudgetTxMonth('${ledgerKey}','${id}','')">↩️ Как было (автоматически)</button>` : ''}
+    <button class="btn btn-primary" onclick="moveBudgetTxMonth('${ledgerKey}','${id}',document.getElementById('mtm-month').value)">📅 Перенести</button></div>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+async function moveBudgetTxMonth(ledgerKey, id, to) {
+  return _onceAtATime('txMonthMove', () => _moveBudgetTxMonthInner(ledgerKey, id, to));
+}
+async function _moveBudgetTxMonthInner(ledgerKey, id, to) {
+  if (currentUser !== 'owner' || !FINANCE_LEDGERS[ledgerKey]) return;
+  // Decided on what is there now — a lock or an edit from another tab counts.
+  await _syncBeforeDecision();
+  const list = getBudgetTx(ledgerKey);
+  const t = list.find(x => x.id === id);
+  if (!t) { closeModal(); alert('Эту операцию тем временем удалили'); render(); return; }
+  const from = _budgetTxMonthKey(t);
+  const next = Object.assign({}, t, { monthOverride: to || null });
+  const target = _budgetTxMonthKey(next);
+  if (_monthClosedToOwner(ledgerKey, from)) { alert(`🔒 ${_monthLabel(from)} закрыт — сначала откройте его.`); return; }
+  if (_monthClosedToOwner(ledgerKey, target)) { alert(`🔒 ${_monthLabel(target)} закрыт — сначала откройте его.`); return; }
+  if ((t.monthOverride || null) === (to || null)) { closeModal(); return; }
+  next.monthMoves = (t.monthMoves || []).concat([{ from, to: target, manual: !!to, at: new Date().toISOString() }]);
+  setBudgetTx(ledgerKey, list.map(x => x.id === id ? next : x));
+  closeModal();
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    if (!(await _flushState())) { render(); return; }
+  }
+  _showToast(from === target ? '✅ Сохранено' : `📅 Перенесено: ${_monthLabel(from)} → ${_monthLabel(target)}`, true);
+  render();
+}
+
 // A closed month's books are final: a record dated into one can no longer be edited,
 // deleted or have its documents changed by anyone, owner included — the same rule new
 // entries already follow (see the closed-month check in saveBudgetTx). What it must NOT
@@ -11654,15 +11714,18 @@ async function _toggleMonthLockInner(ledgerKey, mk) {
 // and to the last-days grace below alike, since closing it was exactly that decision.
 function _isTxMonthClosed(t, ledgerKey) {
   if (!t || !t.date) return false;
-  const mk = t.date.slice(0,7);
+  // A record the owner moved by hand belongs to the month he moved it to.
+  const mk = t.monthOverride || t.date.slice(0,7);
   if (mk >= _currentMonthKey()) return false;
   if (ledgerKey) {
     if (_ownerMayWriteMonth(ledgerKey, mk)) return false;
     const e = _monthLockEntry(ledgerKey, mk);
     if (e && e.locked === true) return true;
   }
+  if (t.monthOverride) return true; // placed there by hand — no month-end grace
   if (t.type !== 'expense') return true; // income/refund: no grace period
   if (_importedTabMonth(t)) return true;
+  if (_txPinnedMonth(t)) return true; // put there on purpose — no month-end grace either
   if (t.status === 'rejected') return true;
   if (t.accountantConfirm && t.accountantConfirm.paid) return true;
   return !_isLastDaysOfMonth(t.date); // last 2 days + still unpaid → not closed yet
@@ -11700,6 +11763,22 @@ function _importedTabMonth(t) {
   return null;
 }
 
+// An expense the owner put into a month that had already ended belongs to that month for
+// good — he went back to it on purpose (see _ownerMayWriteMonth). Neither the month-end
+// rollover below nor a payment made later moves it out. Recognised by having been entered
+// after its month ended, or — for one he moved there by changing its date — by the month
+// stamped on it then (pinnedMonth, which stops counting once the date changes again).
+function _txPinnedMonth(t) {
+  if (!t || t.type !== 'expense' || !t.date) return null;
+  const mk = t.date.slice(0, 7);
+  if (t.pinnedMonth === mk) return mk;
+  if (t.createdBy === 'owner' && t.createdAt) {
+    const c = new Date(t.createdAt);
+    if (!isNaN(c.getTime()) && `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}` > mk) return mk;
+  }
+  return null;
+}
+
 // Which month a transaction belongs to for the monthly view. Historically-imported
 // records always use their source tab (see _importedTabMonth above). For everything else
 // (live, ongoing transactions): once it's actually paid, that's the date that matters
@@ -11726,10 +11805,14 @@ function _importedTabMonth(t) {
 // nothing left to act on, so they should only ever count against the month they were
 // entered/rejected in — same as the source sheets — not keep resurfacing forever.
 function _budgetTxMonthKey(t) {
+  // The owner's own choice of month (moveBudgetTxMonth) comes before every rule below.
+  if (t.monthOverride) return t.monthOverride;
   const entered = (t.date || '').slice(0,7);
   if (t.type === 'income' || t.type === 'refund') return entered;
   const importedTab = _importedTabMonth(t);
   if (importedTab) return importedTab;
+  const pinned = _txPinnedMonth(t);
+  if (pinned) return pinned;
   if (t.status === 'rejected') return entered;
   const paidDate = t.accountantConfirm && t.accountantConfirm.paid && t.accountantConfirm.date;
   if (paidDate) return paidDate.slice(0,7);
@@ -12757,7 +12840,10 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
   const editActions = (currentUser==='owner' || creatorCanEdit) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
     <button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="openBudgetTxModal('${ledgerKey}','${t.id}')">✏️</button>
     ${monthClosed ? '' : `<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="delBudgetTx('${ledgerKey}','${t.id}')">🗑</button>`}
+    ${currentUser === 'owner' ? `<button class="btn btn-outline" style="font-size:12px;padding:5px 10px" title="В каком месяце учитывать" onclick="openMoveTxMonth('${ledgerKey}','${t.id}')">📅 Месяц</button>` : ''}
   </div>` : '';
+  const monthBadge = t.monthOverride
+    ? `<span class="badge" style="font-size:10px;background:#ede9fe;color:#5b21b6">📅 Учитывается в: ${_monthLabel(t.monthOverride)} (вручную)</span>` : '';
 
   let cardBorderColor = isIncome ? '#16a34a' : '#e2e8f0';
   let cardBg = isIncome ? 'background:#f0fdf4;' : '';
@@ -12784,7 +12870,7 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
         <div style="font-weight:600;font-size:14px">${t.vendor||''}</div>
         ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
         ${_txAttachmentsHtml(t)}
-        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${statusBadge}${approvalBadges}</div>
+        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${monthBadge}${statusBadge}${approvalBadges}</div>
       </div>
       <div style="font-weight:700;font-size:16px;color:${amtColor};flex-shrink:0">${amtSign}₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
     </div>
@@ -13109,6 +13195,10 @@ async function _saveBudgetTxInner(ledgerKey) {
     fileRef: fileRefs[0] || null,
     // Only the owner can get here with an expense and no document (see above).
     noDocument: type === 'expense' && !fileRefs.length,
+    // The owner dating an expense into a month that has ended puts it there for good — see
+    // _txPinnedMonth. Kept while the date stays as it was.
+    pinnedMonth: (type === 'expense' && currentUser === 'owner' && date.slice(0,7) < _currentMonthKey() && (!existing || existing.date !== date))
+      ? date.slice(0,7) : ((existing && existing.date === date && existing.pinnedMonth) || null),
     status: keepStatus ? existing.status : 'pending',
     approvals: keepStatus ? existing.approvals : {},
     accountantConfirm: keepStatus ? existing.accountantConfirm : {paid:false},
