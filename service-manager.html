@@ -11458,7 +11458,8 @@ function _jsonAttr(v) {
 
 function _txAttachmentsHtml(t) {
   const files = _txFiles(t);
-  if (!files.length) return '';
+  if (!files.length) return t && t.noDocument
+    ? '<div style="margin-top:4px"><span class="badge badge-gray" style="font-size:10px">📄 Без документа — внесено владельцем</span></div>' : '';
   const galFiles = files.filter(f => f.id);
   const linkFiles = files.filter(f => !f.id && f.url);
 
@@ -12862,7 +12863,7 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
     <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="bt-amount" value="${t.amount||''}" min="0" step="0.01" ${window._budgetTxReadOnly?'disabled':''}></div>
     ${cfg.useFunds ? `<div class="form-group"><label>Фонд *</label><select class="form-control" id="bt-fund" ${window._budgetTxReadOnly?'disabled':''}><option value="">— Выберите —</option>${fundOpts}</select></div>` : ''}
     <div class="form-group">
-      <label>📎 Документы (чек/счёт)</label>
+      <label>📎 Документы (чек/счёт)${currentUser === 'owner' ? ' <span style="font-weight:400;color:#6b7280">— для вас необязательно</span>' : ''}</label>
       ${window._budgetTxReadOnly ? '' : '<div style="font-size:11px;color:#6b7280;margin:-2px 0 6px">Если чек на нескольких листах или фото — выберите их все сразу, либо нажмите «Добавить» несколько раз.</div>'}
       <div id="bt-saved-files">${_renderBudgetSavedFiles()}</div>
       ${window._budgetTxReadOnly ? '' : `
@@ -13005,8 +13006,11 @@ async function _saveBudgetTxInner(ledgerKey) {
     alert('⏳ Файлы ещё обрабатываются — подождите пару секунд и нажмите «Сохранить» снова.');
     return;
   }
+  // The owner is the exception, in every ledger: he may record an expense with no document
+  // (cash, a payment he made himself). Such a record says so on its card — see
+  // _txAttachmentsHtml — so whoever approves or pays it knows there is nothing to look for.
   const savedFiles = (window._budgetTxSavedFiles || []).slice();
-  if (type === 'expense' && !savedFiles.length && !picked.length) {
+  if (type === 'expense' && !savedFiles.length && !picked.length && currentUser !== 'owner') {
     alert('📎 Загрузите скан счёта/чека — без документа заявку на оплату отправить нельзя');
     return;
   }
@@ -13103,6 +13107,8 @@ async function _saveBudgetTxInner(ledgerKey) {
     // multi-document record as having no document at all. Mirroring the first one here
     // keeps them showing something until they reload; current code reads fileRefs only.
     fileRef: fileRefs[0] || null,
+    // Only the owner can get here with an expense and no document (see above).
+    noDocument: type === 'expense' && !fileRefs.length,
     status: keepStatus ? existing.status : 'pending',
     approvals: keepStatus ? existing.approvals : {},
     accountantConfirm: keepStatus ? existing.accountantConfirm : {paid:false},
