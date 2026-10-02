@@ -10,7 +10,8 @@
     { "path": "/api/cron/warehouse-reminder", "schedule": "10 5 * * *" }
   ],
   "functions": {
-    "api/telegram/build-drafts.js": { "maxDuration": 60 }
+    "api/telegram/build-drafts.js": { "maxDuration": 60 },
+    "api/kitchen/scan-invoice.js": { "maxDuration": 60 }
   },
   "headers": [
     {

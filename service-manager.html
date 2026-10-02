@@ -314,6 +314,9 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
   /* Buttons in topbar */
   .topbar .btn{padding:7px 10px;font-size:12px}
   .wh-tb-txt{display:none}
+  /* Receipt lines: the item on its own row, quantity and price under it */
+  .whm-line.whm-rcpt{grid-template-columns:1fr 1fr 34px !important}
+  .whm-line.whm-rcpt .whm-item{grid-column:1/-1}
   /* Journal thumbnails bigger for touch */
   .jthumb-wrap img,.jthumb-wrap>div{width:72px !important;height:72px !important}
 }
@@ -6978,10 +6981,11 @@ async function _whCommit() {
 
 // ---------- numbering ----------
 // Inventory numbers: ИНВ-0001 for tools and equipment, МАТ-0001 for materials.
-function _whNextInvNo(kind) {
+// `list` when several items get numbers in one go, before any of them is stored.
+function _whNextInvNo(kind, list) {
   const prefix = kind === 'consumable' ? 'МАТ' : 'ИНВ';
   const re = new RegExp('^' + prefix + '-(\\d+)$');
-  const max = getWhItems().reduce((m, i) => { const mm = String(i.invNo || '').match(re); return mm ? Math.max(m, Number(mm[1])) : m; }, 0);
+  const max = (list || getWhItems()).reduce((m, i) => { const mm = String(i.invNo || '').match(re); return mm ? Math.max(m, Number(mm[1])) : m; }, 0);
   return prefix + '-' + String(max + 1).padStart(4, '0');
 }
 // Document numbers restart each year: АПП-2026-001, АВ-2026-001, …
@@ -7366,27 +7370,188 @@ function openWhEmployee(id) {
 function openWhMove(type, preset) {
   if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
   preset = preset || {};
+  // A new form, even when it replaces another in place — an invoice still being read for the
+  // previous one must not fill this one.
+  _modalGen++;
   const t = WH_DOC_TYPES[type];
+  const bt = type === 'receipt' && preset.budget ? getBudgetTx(preset.budget.ledger).find(x => x.id === preset.budget.txId) : null;
   const emps = getWhEmployees().filter(e => !e.archived).sort((a, b) => String(a.name).localeCompare(String(b.name)));
   if ((type === 'issue' || type === 'return') && !emps.length) { alert('Сначала добавьте сотрудника (вкладка «Сотрудники»).'); return; }
   const empSel = (type === 'issue' || type === 'return') ? `<div class="form-group"><label>${type === 'issue' ? 'Кому выдаётся *' : 'Кто возвращает *'}</label>
     <select class="form-control" id="whm-emp" onchange="_whMoveRebuild('${type}')"><option value="">— выберите —</option>${emps.map(e => `<option value="${e.id}" ${preset.employeeId === e.id ? 'selected' : ''}>${_escHtml(e.name)}${e.position ? ' — ' + _escHtml(e.position) : ''}</option>`).join('')}</select></div>` : '';
   document.getElementById('modal-title').textContent = `${t.icon} ${type === 'issue' ? 'Выдача в подотчёт' : type === 'return' ? 'Возврат на склад' : type === 'receipt' ? 'Поступление на склад' : 'Списание'}`;
   document.getElementById('modal-body').innerHTML = `${empSel}
+    ${bt ? _whBudgetBox(preset.budget.ledger, bt) : type === 'receipt' ? _whBudgetPicker() : ''}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div class="form-group"><label>Дата</label><input type="date" class="form-control" id="whm-date" value="${_todayLocal()}"></div>
       ${type === 'issue' ? `<div class="form-group"><label>Вернуть до (для инструмента)</label><input type="date" class="form-control" id="whm-due"></div>` : ''}
-      ${type === 'receipt' ? `<div class="form-group"><label>Поставщик</label><input class="form-control" id="whm-supplier"></div>` : ''}
+      ${type === 'receipt' ? `<div class="form-group"><label>Поставщик</label><input class="form-control" id="whm-supplier" value="${_escHtml(bt ? bt.vendor || '' : '')}"></div>` : ''}
       ${type === 'writeoff' ? `<div class="form-group"><label>Причина</label><select class="form-control" id="whm-reason">${WH_WRITEOFF_REASONS.map(r => `<option>${r}</option>`).join('')}</select></div>` : ''}
     </div>
     <div style="font-weight:700;font-size:13px;margin-bottom:6px">Позиции</div>
-    <div id="whm-lines"></div>
+    <div id="whm-lines" ${type === 'receipt' ? 'oninput="_whReceiptTotal()"' : ''}></div>
     ${type !== 'return' ? `<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;margin-bottom:12px" onclick="_whAddLine('${type}')">+ Добавить позицию</button>` : ''}
+    ${type === 'receipt' ? `<div id="whm-total" data-invoice="${bt ? Number(bt.amount) || 0 : ''}" style="font-size:12px;color:#475569;margin:-4px 0 12px"></div>` : ''}
     <div class="form-group"><label>Примечание</label><input class="form-control" id="whm-note" placeholder="${type === 'issue' ? 'Для чего, на какой объект' : ''}"></div>`;
   document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
     <button class="btn btn-primary" id="whm-save" onclick="saveWhMove('${type}')">💾 ${type === 'issue' ? 'Выдать и оформить акт' : type === 'return' ? 'Принять и оформить акт' : 'Провести'}</button>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
   if (type === 'return') _whMoveRebuild(type); else _whAddLine(type, preset.itemId);
+}
+
+// ---------- receipt from a budget invoice ----------
+// Goods bought through the budget go onto the shelf from their invoice: the receipt is tied
+// to that budget operation (doc.budgetRef), takes its supplier, and can have its lines read
+// off the invoice's own scan. Nothing is written to the budget — the tie lives on the
+// receipt, so an invoice's card shows its receipts without its record changing.
+const _WH_BUDGET_LEDGERS = ['maintenance', 'personal'];
+const _whReceiptsForTx = txId => getWhDocs().filter(d => d.type === 'receipt' && d.budgetRef && d.budgetRef.txId === txId);
+
+// On a budget card: the receipts made from it, and the button to make one. Only where goods
+// for the maintenance side are bought, only for those who run the warehouse, and not for an
+// invoice that was turned down.
+function _whBudgetTxActions(ledgerKey, t) {
+  if (!_WAREHOUSE_ROLES.includes(currentUser) || !_WH_BUDGET_LEDGERS.includes(ledgerKey) || t.type !== 'expense' || t.status === 'rejected') return '';
+  const docs = _whReceiptsForTx(t.id);
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px">
+    ${docs.map(d => `<button class="btn btn-outline" style="font-size:11px;padding:4px 9px;color:#15803d;border-color:#86efac" onclick="printWhDoc('${d.id}')">📦 На складе · ${_escHtml(d.no)}</button>`).join('')}
+    <button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="openWhReceiptFromBudget('${ledgerKey}','${t.id}')">📦 ${docs.length ? 'Ещё поступление' : 'Оприходовать на склад'}</button></div>`;
+}
+
+function openWhReceiptFromBudget(ledgerKey, txId) {
+  if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
+  const t = getBudgetTx(ledgerKey).find(x => x.id === txId);
+  if (!t) { _showToast('Операция не найдена', false); return; }
+  const docs = _whReceiptsForTx(txId);
+  if (docs.length && !confirm(`По этому счёту уже оформлено поступление: ${docs.map(d => d.no).join(', ')}.\n\nОформить ещё одно (например, вторая часть поставки)?`)) return;
+  openWhMove('receipt', { budget: { ledger: ledgerKey, txId } });
+}
+
+// The invoice's files the reader can take: this app's own uploads, photos or PDF, up to five.
+function _whScanUrls(t) {
+  const reg = getLS('files') || {};
+  return _txFiles(t).filter(f => {
+    const r = f.id && reg[f.id];
+    const type = (r && (r.type || f.type)) || '';
+    return r && r.url && (type.startsWith('image/') || type === 'application/pdf');
+  }).slice(0, 5).map(f => reg[f.id].url);
+}
+
+// Top of a receipt form opened from an invoice. The count of receipts already made from it is
+// kept so the save can tell whether another one appeared while this form was being filled.
+function _whBudgetBox(ledgerKey, t) {
+  const canRead = _whScanUrls(t).length > 0;
+  return `<input type="hidden" id="whm-budget" value="${ledgerKey}|${t.id}" data-known="${_whReceiptsForTx(t.id).length}">
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px">
+      <div>📄 По счёту из бюджета «${_escHtml(FINANCE_LEDGERS[ledgerKey].label)}»: <b>${_escHtml(t.vendor || '')}</b> · ${_whRub(t.amount)} · ${fmtDate(t.date)}</div>
+      ${_txAttachmentsHtml(t)}
+      ${canRead ? `<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-primary" id="whm-ai" style="font-size:12px;padding:6px 12px" onclick="whScanBudgetInvoice()">🤖 Заполнить позиции из счёта</button>
+        <span style="font-size:11px;color:#475569">ИИ прочитает документ — проверьте каждую строку</span></div>`
+        : '<div style="font-size:11px;color:#475569;margin-top:6px">Документ этого счёта автоматически не читается — добавьте позиции вручную.</div>'}
+    </div>`;
+}
+
+// A plain receipt can still be tied to an invoice: the recent ones not yet on the shelf.
+function _whBudgetPicker() {
+  const since = new Date(); since.setDate(since.getDate() - 90);
+  const from = since.toISOString().slice(0, 10);
+  const opts = [];
+  _budgetVisibleLedgers(currentUser).filter(l => _WH_BUDGET_LEDGERS.includes(l)).forEach(l => getBudgetTx(l).forEach(t => {
+    if (t.type === 'expense' && t.status !== 'rejected' && (t.date || '') >= from && !_whReceiptsForTx(t.id).length) opts.push({ l, t });
+  }));
+  if (!opts.length) return '';
+  opts.sort((a, b) => (b.t.date || '').localeCompare(a.t.date || ''));
+  return `<div class="form-group"><label>📄 По счёту из бюджета (необязательно)</label>
+    <select class="form-control" id="whm-budget-pick" onchange="_whPickBudget(this.value)"><option value="">— без счёта —</option>
+    ${opts.slice(0, 60).map(o => `<option value="${o.l}|${o.t.id}">${fmtDate(o.t.date)} · ${_escHtml(o.t.vendor || '')} · ${_whRub(o.t.amount)}</option>`).join('')}</select></div>`;
+}
+function _whPickBudget(val) {
+  const [ledger, txId] = String(val || '').split('|');
+  if (ledger && txId) openWhMove('receipt', { budget: { ledger, txId } });
+}
+
+// Words of a name, for telling whether an invoice line is an item already in the catalogue.
+// «12Вт» and «12 Вт» are the same words.
+const _whWords = s => String(s || '').toLowerCase().replace(/ё/g, 'е')
+  .replace(/(\d)([a-zа-я])/g, '$1 $2').replace(/([a-zа-я])(\d)/g, '$1 $2')
+  .split(/[^a-zа-я0-9]+/).filter(w => w.length >= 2 || /\d/.test(w));
+// The item an invoice line most likely is, or null. Deliberately strict — a wrong match puts
+// goods on the wrong card, while a missed one only offers a new item the person can change.
+// The numbers in a name (size, model, wattage: E27 vs E14, 12 Вт vs 7 Вт) must all agree;
+// beyond that most of the words must.
+const _whNums = words => words.filter(w => /^\d+$/.test(w)).sort().join(' ');
+function _whMatchItem(name, items) {
+  const a = _whWords(name);
+  if (!a.length) return null;
+  let best = null, bestScore = 0;
+  items.forEach(it => {
+    const b = _whWords(it.name);
+    if (!b.length || _whNums(a) !== _whNums(b)) return;
+    const score = a.filter(w => b.includes(w)).length / Math.max(a.length, b.length);
+    if (score > bestScore) { bestScore = score; best = it; }
+  });
+  return bestScore >= 0.6 ? best : null;
+}
+
+async function whScanBudgetInvoice() {
+  const [ledger, txId] = String((document.getElementById('whm-budget') || {}).value || '').split('|');
+  const t = ledger ? getBudgetTx(ledger).find(x => x.id === txId) : null;
+  const urls = t ? _whScanUrls(t) : [];
+  if (!urls.length) return;
+  const gen = _modalGen;
+  const setBtn = (label, disabled) => { const b = document.getElementById('whm-ai'); if (b && _modalGen === gen) { b.textContent = label; b.disabled = disabled; } };
+  setBtn('⏳ Читаю счёт… (до минуты)', true);
+  let json;
+  try {
+    const resp = await fetch('/api/kitchen/scan-invoice', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ purpose: 'warehouse', fileUrls: urls }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+    json = data.result || {};
+  } catch (e) {
+    setBtn('🤖 Заполнить позиции из счёта', false);
+    if (_modalGen === gen) alert('Не получилось прочитать счёт: ' + (e && e.message || e) + '\n\nПозиции можно добавить вручную.');
+    return;
+  }
+  const box = document.getElementById('whm-lines');
+  if (_modalGen !== gen || !box) return; // that form was closed meanwhile
+  const got = (Array.isArray(json.items) ? json.items : []).filter(x => x && String(x.name || '').trim());
+  if (!got.length) { setBtn('🤖 Заполнить позиции из счёта', false); alert('В счёте не нашлось товаров для склада — добавьте позиции вручную.'); return; }
+  // Lines left empty give way to what was read; anything already chosen stays.
+  box.querySelectorAll('.whm-line').forEach(r => { if (!(r.querySelector('.whm-item') || {}).value) r.remove(); });
+  const items = getWhItems();
+  let matched = 0;
+  got.forEach(x => {
+    const it = _whMatchItem(x.name, items);
+    if (it) matched++;
+    const price = Math.round((Number(x.price) || 0) * 100) / 100;
+    _whAddLine('receipt', it ? it.id : '__new', { name: String(x.name).trim(), qty: _whQ(x.qty) || 1, price: price || '', unit: x.unit, kind: x.kind, category: x.category });
+  });
+  const note = document.getElementById('whm-note');
+  if (note && !note.value && json.invoice_num) note.value = 'Счёт № ' + json.invoice_num + (json.date ? ' от ' + fmtDate(String(json.date)) : '');
+  _whReceiptTotal();
+  setBtn('✅ Позиции прочитаны', true);
+  _showToast(`🤖 Прочитано позиций: ${got.length} (из каталога: ${matched}, новых: ${got.length - matched}) — проверьте`, true);
+}
+
+// The receipt's total as it is being filled, against the invoice it comes from.
+function _whReceiptTotal() {
+  const el = document.getElementById('whm-total');
+  if (!el) return;
+  const sum = Array.from(document.querySelectorAll('#whm-lines .whm-line'))
+    .reduce((s, r) => s + _whQ((r.querySelector('.whm-qty') || {}).value) * (Number((r.querySelector('.whm-price') || {}).value) || 0), 0);
+  const inv = Number(el.dataset.invoice) || 0;
+  let html = `Итого по позициям: <b>${_whRub(sum)}</b>`;
+  if (inv) {
+    const diff = Math.round((inv - sum) * 100) / 100;
+    html += ` · по счёту: ${_whRub(inv)}` + (Math.abs(diff) >= 1
+      ? ` · <span style="color:#b45309">разница ${_whRub(diff)}</span> — доставка, услуги или то, что не идёт на склад`
+      : ' ✓');
+  }
+  el.innerHTML = html;
 }
 
 // Items a line may pick, for that kind of document.
@@ -7398,19 +7563,44 @@ function _whLineOptions(type, selected) {
     const inCat = items.filter(i => i.category === c.id);
     return inCat.length ? `<optgroup label="${c.label}">${inCat.map(i => `<option value="${i.id}" ${selected === i.id ? 'selected' : ''}>${_escHtml(i.invNo)} · ${_escHtml(i.name)}${type !== 'receipt' ? ` (есть ${_whFmtQ(stock[i.id] || 0)} ${_escHtml(i.unit || '')})` : ''}</option>`).join('')}</optgroup>` : '';
   }).join('');
-  return `<option value="">— позиция —</option>${groups}`;
+  // A receipt can bring in something the catalogue doesn't have yet — it's added on save.
+  const addNew = type === 'receipt' ? `<option value="__new" ${selected === '__new' ? 'selected' : ''}>➕ Новая позиция в каталог…</option>` : '';
+  return `<option value="">— позиция —</option>${addNew}${groups}`;
 }
-function _whAddLine(type, itemId) {
+// `spec` pre-fills a line — a new item's name, kind, category and unit, its quantity and price.
+function _whAddLine(type, itemId, spec) {
   const box = document.getElementById('whm-lines');
   if (!box) return;
+  spec = spec || {};
+  const rcpt = type === 'receipt';
+  const opt = (list, cur) => list.map(([v, l]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('');
   const row = document.createElement('div');
-  row.className = 'whm-line';
-  row.style.cssText = 'display:grid;grid-template-columns:1fr 90px' + (type === 'receipt' ? ' 110px' : '') + ' 34px;gap:6px;margin-bottom:6px;align-items:center';
-  row.innerHTML = `<select class="form-control whm-item">${_whLineOptions(type, itemId)}</select>
-    <input type="number" min="0" step="any" class="form-control whm-qty" placeholder="Кол-во" value="1">
-    ${type === 'receipt' ? '<input type="number" min="0" step="any" class="form-control whm-price" placeholder="Цена, ₽">' : ''}
-    <button onclick="this.parentElement.remove()" style="background:#fee2e2;border:none;border-radius:6px;height:34px;cursor:pointer;color:#dc2626">✕</button>`;
+  row.className = 'whm-line' + (rcpt ? ' whm-rcpt' : '');
+  row.style.cssText = 'display:grid;grid-template-columns:1fr 90px' + (rcpt ? ' 110px' : '') + ' 34px;gap:6px;margin-bottom:6px;align-items:center';
+  row.innerHTML = `<select class="form-control whm-item" ${rcpt ? 'onchange="_whLineItemChanged(this)"' : ''}>${_whLineOptions(type, itemId)}</select>
+    <input type="number" min="0" step="any" class="form-control whm-qty" placeholder="Кол-во" value="${spec.qty != null ? spec.qty : 1}">
+    ${rcpt ? `<input type="number" min="0" step="any" class="form-control whm-price" placeholder="Цена, ₽" value="${spec.price || ''}">` : ''}
+    <button onclick="this.parentElement.remove();_whReceiptTotal()" style="background:#fee2e2;border:none;border-radius:6px;height:34px;cursor:pointer;color:#dc2626">✕</button>
+    ${rcpt ? `<div class="whm-new" style="grid-column:1/-1;${itemId === '__new' ? '' : 'display:none;'}background:#f8fafc;border:1px dashed #cbd5e1;border-radius:8px;padding:8px;margin-bottom:4px">
+      <input class="form-control whm-new-name" placeholder="Название новой позиции *" value="${_escHtml(spec.name || '')}">
+      <div style="display:grid;grid-template-columns:1fr 1fr 90px;gap:6px;margin-top:6px">
+        <select class="form-control whm-new-kind">${opt([['asset', '🔧 Инструмент / оборудование'], ['consumable', '📦 Материал']], spec.kind === 'consumable' ? 'consumable' : 'asset')}</select>
+        <select class="form-control whm-new-cat">${opt(WH_CATS.map(c => [c.id, c.label]), WH_CATS.some(c => c.id === spec.category) ? spec.category : 'other')}</select>
+        <select class="form-control whm-new-unit">${opt(WH_UNITS.map(u => [u, u]), WH_UNITS.includes(spec.unit) ? spec.unit : 'шт')}</select>
+      </div></div>` : ''}`;
   box.appendChild(row);
+  _whReceiptTotal();
+}
+function _whLineItemChanged(sel) {
+  const row = sel.closest('.whm-line');
+  const extra = row && row.querySelector('.whm-new');
+  if (extra) extra.style.display = sel.value === '__new' ? '' : 'none';
+  if (sel.value === '__new') { const n = extra && extra.querySelector('.whm-new-name'); if (n && !n.value) n.focus(); }
+  // A known item brings its last price, unless one is already typed.
+  const it = sel.value && sel.value !== '__new' ? _whItem(sel.value) : null;
+  const p = row && row.querySelector('.whm-price');
+  if (it && p && !p.value && it.price) p.value = it.price;
+  _whReceiptTotal();
 }
 // A return lists what that person actually has, each with the condition it comes back in.
 function _whMoveRebuild(type) {
@@ -7435,13 +7625,19 @@ async function _saveWhMoveInner(type) {
   const v = id => (document.getElementById(id) || {}).value || '';
   const employeeId = v('whm-emp'), date = v('whm-date') || _todayLocal();
   if ((type === 'issue' || type === 'return') && !employeeId) { alert('Выберите сотрудника'); return; }
+  const val = (r, sel) => (r.querySelector(sel) || {}).value || '';
   const lines = Array.from(document.querySelectorAll('#whm-lines .whm-line')).map(r => ({
-    itemId: (r.querySelector('.whm-item') || {}).value || '',
-    qty: _whQ((r.querySelector('.whm-qty') || {}).value),
+    itemId: val(r, '.whm-item'),
+    qty: _whQ(val(r, '.whm-qty')),
     price: r.querySelector('.whm-price') ? _whQ(r.querySelector('.whm-price').value) : null,
     condition: r.querySelector('.whm-cond') ? r.querySelector('.whm-cond').value : null,
+    newItem: type === 'receipt' && val(r, '.whm-item') === '__new'
+      ? { name: val(r, '.whm-new-name').trim(), kind: val(r, '.whm-new-kind'), category: val(r, '.whm-new-cat'), unit: val(r, '.whm-new-unit') } : null,
   })).filter(l => l.itemId && l.qty > 0);
   if (!lines.length) { alert('Добавьте хотя бы одну позицию с количеством'); return; }
+  if (lines.some(l => l.newItem && !l.newItem.name)) { alert('Укажите название каждой новой позиции'); return; }
+  const budgetRef = type === 'receipt' ? v('whm-budget') : '';
+  const knownReceipts = Number((document.getElementById('whm-budget') || { dataset: {} }).dataset.known) || 0;
   const dueDate = type === 'issue' ? v('whm-due') : '';
   if (dueDate && dueDate < date) { alert('Дата возврата раньше даты выдачи'); return; }
   // Checked against what is there NOW, not when the form opened — another admin may have
@@ -7450,6 +7646,20 @@ async function _saveWhMoveInner(type) {
   if (_useFirebase && (_stateDirty.size || _filesDirty.size || _filesDeleted.size)) { clearTimeout(_saveTimer); await _flushState(); }
   await _syncBeforeDecision();
   const items = getWhItems(), stock = _whStockMap();
+  let budgetTx = null, budgetLedger = '';
+  if (budgetRef) {
+    const [ledger, txId] = budgetRef.split('|');
+    budgetLedger = ledger;
+    budgetTx = getBudgetTx(ledger).find(x => x.id === txId) || null;
+    if (!budgetTx && !confirm('Этот счёт в бюджете тем временем удалили. Провести поступление без привязки к счёту?')) return;
+    const nowMade = budgetTx ? _whReceiptsForTx(budgetTx.id) : [];
+    if (nowMade.length > knownReceipts && !confirm(`Пока вы заполняли, по этому счёту уже оформили поступление: ${nowMade.map(d => d.no).join(', ')}.\n\nВсё равно провести ещё одно?`)) return;
+  }
+  // A new item named exactly like one already in the catalogue is that item — most often
+  // because someone else added it meanwhile.
+  const normName = s => String(s || '').trim().toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ');
+  const clash = lines.map(l => l.newItem && items.find(i => normName(i.name) === normName(l.newItem.name))).find(Boolean);
+  if (clash) { alert(`«${clash.name}» уже есть в каталоге (${clash.invNo}) — выберите её в списке вместо новой позиции.`); return; }
   const want = {};
   lines.forEach(l => { want[l.itemId] = _whQ((want[l.itemId] || 0) + l.qty); });
   if (type === 'issue' || type === 'writeoff') {
@@ -7462,9 +7672,31 @@ async function _saveWhMoveInner(type) {
     const over = Object.keys(want).filter(id => want[id] > (held[id] || 0));
     if (over.length) { alert('Возвращается больше, чем числится за сотрудником:\n' + over.map(id => { const it = items.find(i => i.id === id) || {}; return `${it.invNo} ${it.name}: ${_whFmtQ(want[id])} из ${_whFmtQ(held[id] || 0)}`; }).join('\n')); return; }
   }
+  // New catalogue items first — the document names them. Two lines with the same new name
+  // are one item.
+  const supplier = type === 'receipt' ? v('whm-supplier').trim() : '';
+  const created = [], newIdByName = {};
+  lines.forEach(l => {
+    if (!l.newItem) return;
+    const key = normName(l.newItem.name);
+    if (!newIdByName[key]) {
+      const kind = l.newItem.kind === 'consumable' ? 'consumable' : 'asset';
+      const it = {
+        id: _newTxId(), invNo: _whNextInvNo(kind, items.concat(created)), kind, name: l.newItem.name,
+        category: WH_CATS.some(c => c.id === l.newItem.category) ? l.newItem.category : 'other',
+        unit: WH_UNITS.includes(l.newItem.unit) ? l.newItem.unit : 'шт',
+        price: l.price || 0, minQty: 0, location: '', serial: '', supplier, purchaseDate: date, notes: '',
+        condition: kind === 'asset' ? 'new' : '', fileIds: [], fileNames: [], fileTypes: [],
+        createdBy: currentUser, createdAt: new Date().toISOString(),
+      };
+      created.push(it); newIdByName[key] = it.id;
+    }
+    l.itemId = newIdByName[key];
+  });
+  const allItems = items.concat(created);
   const doc = {
     id: _newTxId(), no: _whNextDocNo(type, date), type, date,
-    lines: lines.map(l => { const it = items.find(i => i.id === l.itemId) || {}; const out = { itemId: l.itemId, qty: l.qty, price: (type === 'receipt' && l.price) ? l.price : (Number(it.price) || 0) };
+    lines: lines.map(l => { const it = allItems.find(i => i.id === l.itemId) || {}; const out = { itemId: l.itemId, qty: l.qty, price: (type === 'receipt' && l.price) ? l.price : (Number(it.price) || 0) };
       if (type === 'issue' && _whIsAsset(it)) out.condition = it.condition || 'good';
       if (type === 'return') out.condition = l.condition || 'good';
       return out; }),
@@ -7472,7 +7704,10 @@ async function _saveWhMoveInner(type) {
   };
   if (employeeId) doc.employeeId = employeeId;
   if (dueDate) doc.dueDate = dueDate;
-  if (type === 'receipt') doc.supplier = v('whm-supplier').trim();
+  if (type === 'receipt') doc.supplier = supplier;
+  // What the invoice was, kept on the receipt itself: it prints on the order, and still reads
+  // right if the budget record is later edited or removed.
+  if (budgetTx) doc.budgetRef = { ledger: budgetLedger, txId: budgetTx.id, vendor: budgetTx.vendor || '', amount: Number(budgetTx.amount) || 0, date: budgetTx.date || '' };
   if (type === 'writeoff') doc.reason = v('whm-reason');
   setLS('wh_docs', getWhDocs().concat([doc]));
   // A tool comes back in the condition the return says; a receipt at a new price updates
@@ -7485,7 +7720,7 @@ async function _saveWhMoveInner(type) {
     if (type === 'receipt' && l.price && l.price !== it.price) { changedItems = true; return Object.assign({}, it, { price: l.price }); }
     return it;
   });
-  if (changedItems) setLS('wh_items', nextItems);
+  if (changedItems || created.length) setLS('wh_items', nextItems.concat(created));
   if (!(await _whCommit())) { closeModal(true); alert(_WH_NOT_SENT + '\n\nАкт можно будет распечатать во вкладке «Документы».'); render(); return; }
   render();
   // The act is printed from a fresh tap: a window opened after the save's network wait would
@@ -7494,9 +7729,11 @@ async function _saveWhMoveInner(type) {
   document.getElementById('modal-body').innerHTML = `<div style="text-align:center;padding:10px 0">
     <div style="font-size:40px">${WH_DOC_TYPES[type].icon}</div>
     <div style="font-size:15px;font-weight:700;margin:6px 0">${WH_DOC_TYPES[type].label} проведена — ${_escHtml(doc.no)}</div>
-    <div style="font-size:12px;color:#6b7280">${type === 'issue' || type === 'return' ? 'Распечатайте акт и дайте подписать обеим сторонам.' : 'Документ можно распечатать.'}</div></div>`;
-  document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal()">Готово</button>
-    <button class="btn btn-primary" onclick="printWhDoc('${doc.id}')">🖨️ Печать ${type === 'issue' || type === 'return' ? 'акта' : 'документа'}</button>`;
+    <div style="font-size:12px;color:#6b7280">${type === 'issue' || type === 'return' ? 'Распечатайте акт и дайте подписать обеим сторонам.' : 'Документ можно распечатать.'}</div>
+    ${created.length ? `<div style="font-size:12px;color:#1e40af;background:#eff6ff;border-radius:8px;padding:8px 10px;margin-top:12px;text-align:left">➕ В каталог добавлено новых позиций: ${created.length} (${created.map(i => _escHtml(i.invNo)).join(', ')}). Фото и место хранения можно добавить в карточке позиции.</div>` : ''}</div>`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot"><button class="btn btn-outline" onclick="closeModal()">Готово</button>
+    ${created.length ? `<button class="btn btn-outline" onclick="openWhLabels(${_escHtml(JSON.stringify(created.map(i => i.id)))})">🏷️ Наклейки для новых</button>` : ''}
+    <button class="btn btn-primary" onclick="printWhDoc('${doc.id}')">🖨️ Печать ${type === 'issue' || type === 'return' ? 'акта' : 'документа'}</button></div>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
@@ -7652,7 +7889,9 @@ function _whDocHTML(d) {
     ${_whSignBlock('Составил', s.issuerName, s.issuerPosition, 'Проверил', '', '')}`);
   return _whPrintPage(`Документ ${d.no}`, `${_whOrgBlock()}
     <h1>ПРИХОДНЫЙ ОРДЕР № ${_escHtml(d.no)}</h1><div class="sub">о поступлении материальных ценностей на склад</div>${place}
-    ${d.supplier ? `<p>Поставщик: <b>${_escHtml(d.supplier)}</b>.</p>` : ''}${d.note ? `<p>Основание / примечание: ${_escHtml(d.note)}</p>` : ''}
+    ${d.supplier ? `<p>Поставщик: <b>${_escHtml(d.supplier)}</b>.</p>` : ''}
+    ${d.budgetRef ? `<p>Основание: счёт ${_escHtml(d.budgetRef.vendor)}${d.budgetRef.date ? ' от ' + fmtDate(d.budgetRef.date) : ''} на сумму ${_whRub(d.budgetRef.amount)}.</p>` : ''}
+    ${d.note ? `<p>${d.budgetRef ? 'Примечание' : 'Основание / примечание'}: ${_escHtml(d.note)}</p>` : ''}
     ${table}<p>Всего наименований: ${n}, на сумму ${_whRub(total)}.</p>
     ${_whSignBlock('Сдал', '', '', 'Принял', s.issuerName, s.issuerPosition)}`);
 }
@@ -12548,7 +12787,7 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
       </div>
       <div style="font-weight:700;font-size:16px;color:${amtColor};flex-shrink:0">${amtSign}₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
     </div>
-    ${actionsHtml}${editActions}
+    ${actionsHtml}${editActions}${_whBudgetTxActions(ledgerKey, t)}
   </div>`;
 }
 
