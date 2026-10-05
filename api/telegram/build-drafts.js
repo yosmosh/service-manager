@@ -24,11 +24,11 @@
 
 const {
   fsString, fsInt, fsStringArray, readDoc, updateDoc, registerFiles, acquireLease, releaseLease,
+  RUN_QUERY_URL, dbFetch, uploadPhoto,
 } = require('../_lib/firestore');
 const { DRAFTS_LEASE_DOC, signalAfterCheck, nudgeGate } = require('../_lib/drafts-signal');
 
-const FIRESTORE_QUERY_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents:runQuery';
-const STORAGE_BUCKET = 'sad-budushego.firebasestorage.app';
+const FIRESTORE_QUERY_URL = RUN_QUERY_URL;
 const TELEGRAM_CHAT_ID = -1004438968318;
 
 const DRAFT_TOPIC_IDS = [57]; // Хозчасть и Ремонт
@@ -111,7 +111,7 @@ async function fetchRecentMessages(sinceIso) {
       orderBy: [{ field: { fieldPath: 'date' }, direction: 'ASCENDING' }],
     },
   };
-  const res = await fetch(FIRESTORE_QUERY_URL, {
+  const res = await dbFetch(FIRESTORE_QUERY_URL, {
     method: 'POST', headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(body),
   });
   const rows = await res.json();
@@ -145,18 +145,7 @@ async function downloadTelegramFile(fileId) {
   return { buf: Buffer.from(await fileRes.arrayBuffer()), ext: (filePath.split('.').pop() || 'jpg').toLowerCase() };
 }
 
-async function uploadPhotoToStorage(buf, ext) {
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
-  const name = `files/${id}.${ext}`;
-  const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-  const uploadRes = await fetch(`https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o?uploadType=media&name=${encodeURIComponent(name)}`, {
-    method: 'POST', headers: { 'Content-Type': mime }, body: buf,
-  });
-  const meta = await uploadRes.json();
-  if (!meta.downloadTokens) return null;
-  const url = `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o/${encodeURIComponent(name)}?alt=media&token=${meta.downloadTokens}`;
-  return { id, name: `telegram-photo.${ext}`, type: mime, size: Number(meta.size) || buf.length, url };
-}
+const uploadPhotoToStorage = uploadPhoto;
 
 // ---------- Clustering ----------
 

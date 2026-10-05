@@ -1,6 +1,7 @@
 {
   "rewrites": [
-    { "source": "/", "destination": "/service-manager.html" }
+    { "source": "/", "destination": "/service-manager.html" },
+    { "source": "/db/:path*", "destination": "https://d5do4n0o23evidqovr16.jki8ffxa.apigw.yandexcloud.net/db/:path*" }
   ],
   "crons": [
     { "path": "/api/cron/sos-reminder", "schedule": "0 5 * * *" },

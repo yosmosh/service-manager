@@ -26,12 +26,12 @@
 // ANTHROPIC_API_KEY (shared with api/cron/telegram-digest.js — Phase 2b features are
 // silently skipped if it's not set).
 
-const { readDoc, updateDoc, registerFiles } = require('../_lib/firestore');
+const { readDoc, updateDoc, registerFiles, DOCS, dbFetch, uploadPhoto } = require('../_lib/firestore');
 const { DRAFTS_LEASE_DOC, signalOnCapture } = require('../_lib/drafts-signal');
 
-const FIRESTORE_MESSAGES_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/telegram_messages';
-const STORAGE_BUCKET = 'sad-budushego.firebasestorage.app';
-const BUILD_DRAFTS_URL = 'https://sad-budushego.ru/api/telegram/build-drafts';
+const FIRESTORE_MESSAGES_URL = `${DOCS}/telegram_messages`;
+// Straight to Vercel: the main address is Yandex's gateway now, which would only pass it back.
+const BUILD_DRAFTS_URL = 'https://api.sad-budushego.ru/api/telegram/build-drafts';
 const TELEGRAM_CHAT_ID = -1004438968318; // Сад Будущего | Рабочая группа — ignore anything from elsewhere
 
 // Known topic names — extend this as more topics are identified (same technique used
@@ -59,8 +59,8 @@ async function sendTelegramDM(chatId, text) {
 }
 
 // ---------- Photo pipeline (Phase 2b) ----------
-// Downloads a Telegram-hosted photo and re-hosts it in the same Firebase Storage bucket
-// the client already uses for every other file upload (dbSave, service-manager.html),
+// Downloads a Telegram-hosted photo and re-hosts it where the client keeps every other file
+// upload (dbSave, service-manager.html; uploadPhoto in ../_lib/firestore.js),
 // registering it in appdata/files_registry so the normal file-preview/gallery code in
 // the app can show it with no special-casing for "came from Telegram".
 
@@ -76,20 +76,7 @@ async function downloadTelegramFile(fileId) {
   return { buf, ext };
 }
 
-async function uploadPhotoToStorage(buf, ext) {
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
-  const name = `files/${id}.${ext}`;
-  const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-  const uploadRes = await fetch(`https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o?uploadType=media&name=${encodeURIComponent(name)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': mime },
-    body: buf,
-  });
-  const meta = await uploadRes.json();
-  if (!meta.downloadTokens) return null;
-  const url = `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o/${encodeURIComponent(name)}?alt=media&token=${meta.downloadTokens}`;
-  return { id, name: `telegram-photo.${ext}`, type: mime, size: Number(meta.size) || buf.length, url };
-}
+const uploadPhotoToStorage = uploadPhoto;
 
 // Registered by its own per-id path, never by reading the whole registry and writing it
 // back — that used to erase any photo another user uploaded in between.
@@ -294,7 +281,7 @@ module.exports = async (req, res) => {
       // Numeric, always: this id goes into the document path, and Telegram is the only caller
       // (the secret header sees to that), but a path built from someone else's field is not
       // something to leave to trust.
-      saved = await fetch(`${FIRESTORE_MESSAGES_URL}/${Math.trunc(Number(msg.message_id)) || 0}`, {
+      saved = await dbFetch(`${FIRESTORE_MESSAGES_URL}/${Math.trunc(Number(msg.message_id)) || 0}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
         body: JSON.stringify(body),

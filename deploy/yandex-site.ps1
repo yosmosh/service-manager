@@ -7,6 +7,11 @@
 # The page and the service worker are never cached (an update reaches everyone at once);
 # vendor/ is cached for a year — each library version has a folder of its own, so a new
 # version is a new address, never a changed file.
+#
+#   -Rehearsal  publishes only a copy of the page with DATA_BACKEND = 'yandex', at /test - the
+#               move's rehearsal, on the data copied into Yandex. The real page is untouched.
+
+param([switch]$Rehearsal)
 
 $ErrorActionPreference = 'Stop'
 $yc = "$env:USERPROFILE\yandex-cloud\bin\yc.exe"
@@ -24,6 +29,22 @@ $files = @(
 )
 Get-ChildItem -Path (Join-Path $root 'vendor') -Recurse -File | ForEach-Object {
   $files += @{ path = $_.FullName.Substring($root.Length + 1).Replace('\', '/'); cache = $forever }
+}
+
+if ($Rehearsal) {
+  $page = [IO.File]::ReadAllText((Join-Path $root 'service-manager.html'), [Text.Encoding]::UTF8)
+  $from = "const DATA_BACKEND = 'firebase';"
+  if (([regex]::Matches($page, [regex]::Escape($from))).Count -ne 1) { throw "The page does not have exactly one line: $from" }
+  $copy = Join-Path ([IO.Path]::GetTempPath()) 'rehearsal-test.html'
+  [IO.File]::WriteAllText($copy, $page.Replace($from, "const DATA_BACKEND = 'yandex';"), (New-Object Text.UTF8Encoding($false)))
+  $ErrorActionPreference = 'Continue'
+  & $yc storage s3api put-object --bucket $bucket --key 'test' --body $copy --content-type $types['.html'] --cache-control $noCache 2>&1 | Out-Null
+  $ok = ($LASTEXITCODE -eq 0)
+  $ErrorActionPreference = 'Stop'
+  [IO.File]::Delete($copy)
+  if (-not $ok) { throw 'Upload of the rehearsal page failed' }
+  Write-Output 'uploaded  test  (service-manager.html with DATA_BACKEND = yandex)'
+  return
 }
 
 foreach ($f in $files) {

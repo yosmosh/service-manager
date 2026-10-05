@@ -216,6 +216,18 @@ test('changing a password: the new one works, the old one and its sessions stop'
   assert.strictEqual((await t.call('GET', 'v1/documents/appdata/state', { token: owner })).status, 200);
 });
 
+test('the owner changing their own password stays signed in, on the new token', async () => {
+  const t = await imported();
+  const old = (await login(t, 'Yosmosh', 'own-secret')).body.token;
+  const r = await t.call('POST', 'v1/auth:setAccount', { token: old, body: { kind: 'role', id: 'owner', user: 'Yosmosh', password: 'brand-new' } });
+  assert.strictEqual(r.status, 200);
+  assert.ok(r.body.token && r.body.token !== old);
+  assert.strictEqual((await t.call('GET', 'v1/documents/appdata/state', { token: old })).status, 401);
+  assert.strictEqual((await t.call('GET', 'v1/documents/appdata/state', { token: r.body.token })).status, 200);
+  const other = await t.call('POST', 'v1/auth:setAccount', { token: r.body.token, body: { kind: 'role', id: 'admin', user: 'admin', password: 'x1' } });
+  assert.strictEqual(other.body.token, undefined, 'no token for someone else\'s account');
+});
+
 test('a new name alone keeps the password and the sessions', async () => {
   const t = await imported();
   const owner = (await login(t, 'Yosmosh', 'own-secret')).body.token;

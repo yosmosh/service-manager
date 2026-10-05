@@ -436,7 +436,7 @@ img{max-width:100%;height:auto}
       </div>
     </div>
     <div class="login-error" id="login-error">Неверное имя пользователя или пароль.</div>
-    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:10px"
+    <button class="btn btn-primary" id="login-btn" style="width:100%;justify-content:center;padding:10px"
             onclick="doLogin()">Войти →</button>
     <div id="app-version" style="text-align:center;margin-top:12px;font-size:11px;color:#94a3b8"></div>
   </div>
@@ -818,90 +818,57 @@ function getManagementPwd()     { return getLS('management_pwd')          || 'bo
 function getAdmin2User()        { return getLS('admin2_username')         || 'admin2'; }
 function getAdmin2Pwd()         { return getLS('admin2_pwd')              || 'lichny2026'; }
 
+// Where each account lands after signing in. A provider's role is its own id.
+const _LANDING = {
+  owner: 'dashboard', admin: 'dashboard', kitchen: 'kitchen', kitchen_worker: 'kitchen',
+  alexander: 'budget', accountant: 'budget', management: 'journal', admin2: 'budget',
+};
+function _enterAs(role) {
+  currentUser = role;
+  document.getElementById('login-screen').style.display = 'none';
+  applyUserLayout();
+  if (_LANDING[role]) showView(_LANDING[role]);
+  else showView('provider', role);
+  if (role === 'owner') setTimeout(showOwnerNewsFeed, 400);
+}
+
+function _showLoginError(text) {
+  const errEl = document.getElementById('login-error');
+  if (text) errEl.dataset.defaultText = errEl.dataset.defaultText || errEl.textContent;
+  errEl.textContent = text || errEl.dataset.defaultText || errEl.textContent;
+  errEl.style.display = 'block';
+  document.getElementById('login-pwd').value = '';
+  document.getElementById('login-pwd').focus();
+}
+
 function doLogin() {
   const username = (document.getElementById('login-username').value || '').trim().toLowerCase();
   const pwd = document.getElementById('login-pwd').value;
-  const errEl = document.getElementById('login-error');
+  if (_YDB) { _doLoginOnServer(username, pwd); return; }
 
   // Check owner (super-admin) first
-  if (username === getOwnerUser().toLowerCase() && pwd === getOwnerPwd()) {
-    currentUser = 'owner';
-    document.getElementById('login-screen').style.display = 'none';
-    applyUserLayout();
-    showView('dashboard');
-    setTimeout(showOwnerNewsFeed, 400);
-    return;
-  }
-
+  if (username === getOwnerUser().toLowerCase() && pwd === getOwnerPwd()) return _enterAs('owner');
   // Check admin
-  if (username === getAdminUser().toLowerCase() && pwd === getAdminPwd()) {
-    currentUser = 'admin';
-    document.getElementById('login-screen').style.display = 'none';
-    applyUserLayout();
-    showView('dashboard');
-    return;
-  }
-
+  if (username === getAdminUser().toLowerCase() && pwd === getAdminPwd()) return _enterAs('admin');
   // Check kitchen manager
-  if (username === getKitchenUser().toLowerCase() && pwd === getKitchenPwd()) {
-    currentUser = 'kitchen';
-    document.getElementById('login-screen').style.display = 'none';
-    applyUserLayout();
-    showView('kitchen');
-    return;
-  }
-
+  if (username === getKitchenUser().toLowerCase() && pwd === getKitchenPwd()) return _enterAs('kitchen');
   // Check kitchen worker (limited: delivery intake only)
-  if (username === getKitchenWorkerUser().toLowerCase() && pwd === getKitchenWorkerPwd()) {
-    currentUser = 'kitchen_worker';
-    document.getElementById('login-screen').style.display = 'none';
-    applyUserLayout();
-    showView('kitchen');
-    return;
-  }
-
+  if (username === getKitchenWorkerUser().toLowerCase() && pwd === getKitchenWorkerPwd()) return _enterAs('kitchen_worker');
   // Check Alexander (finance co-approver: kitchen + maintenance ledgers) — refused
   // until the owner publishes Бюджет, so this login does nothing while it's still
   // owner-only.
-  if (getBudgetReleased() && username === getAlexanderUser().toLowerCase() && pwd === getAlexanderPwd()) {
-    currentUser = 'alexander';
-    document.getElementById('login-screen').style.display = 'none';
-    applyUserLayout();
-    showView('budget');
-    return;
-  }
-
+  if (getBudgetReleased() && username === getAlexanderUser().toLowerCase() && pwd === getAlexanderPwd()) return _enterAs('alexander');
   // Check accountant (marks approved transactions as paid, across all ledgers) — same
   // release gate as Alexander.
-  if (getBudgetReleased() && username === getAccountantUser().toLowerCase() && pwd === getAccountantPwd()) {
-    currentUser = 'accountant';
-    document.getElementById('login-screen').style.display = 'none';
-    applyUserLayout();
-    showView('budget');
-    return;
-  }
-
+  if (getBudgetReleased() && username === getAccountantUser().toLowerCase() && pwd === getAccountantPwd()) return _enterAs('accountant');
   // Check community management (read-only: Журнал визитов, Обслуживание территории,
   // Бюджет — maintenance+kitchen ledgers only, never personal) — same release gate as
   // Alexander/accountant so it doesn't see an unpublished budget.
-  if (getBudgetReleased() && username === getManagementUser().toLowerCase() && pwd === getManagementPwd()) {
-    currentUser = 'management';
-    document.getElementById('login-screen').style.display = 'none';
-    applyUserLayout();
-    showView('journal');
-    return;
-  }
-
+  if (getBudgetReleased() && username === getManagementUser().toLowerCase() && pwd === getManagementPwd()) return _enterAs('management');
   // Check admin2 (budget data-entry only — enters expenses/invoices into ТО и зарплаты
   // and Личный бюджет, the same two ledgers admin has, nothing else in the app) — same
   // release gate as the other budget roles.
-  if (getBudgetReleased() && username === getAdmin2User().toLowerCase() && pwd === getAdmin2Pwd()) {
-    currentUser = 'admin2';
-    document.getElementById('login-screen').style.display = 'none';
-    applyUserLayout();
-    showView('budget');
-    return;
-  }
+  if (getBudgetReleased() && username === getAdmin2User().toLowerCase() && pwd === getAdmin2Pwd()) return _enterAs('admin2');
 
   // Check providers
   const usernames = getProviderUsernames();
@@ -909,17 +876,68 @@ function doLogin() {
     const uname = (usernames[p.id] || p.id).toLowerCase();
     return uname === username && pwd === getProviderPin(p.id);
   });
+  if (provider) _enterAs(provider.id);
+  else _showLoginError();
+}
 
-  if (provider) {
-    currentUser = provider.id;
-    document.getElementById('login-screen').style.display = 'none';
-    applyUserLayout();
-    showView('provider', provider.id);
-  } else {
-    errEl.style.display = 'block';
-    document.getElementById('login-pwd').value = '';
-    document.getElementById('login-pwd').focus();
+// Yandex: the server checks the password (yandex/data-api/accounts.js — the same accounts,
+// in the same order, as above) and answers with a token. Nothing can be read before that,
+// so the data is loaded only now — once per tab; signing in again later reuses it.
+let _stateLoadedOnce = false;
+let _loginBusy = false;
+async function _doLoginOnServer(username, pwd) {
+  if (_loginBusy) return;
+  _loginBusy = true;
+  const btn = document.getElementById('login-btn');
+  const btnText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Вход...'; }
+  try {
+    let r, j = {};
+    try {
+      r = await fetch('/db/v1/auth:login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password: pwd }),
+      });
+      j = await r.json().catch(() => ({}));
+    } catch (e) { _showLoginError('Нет связи с сервером — проверьте интернет и попробуйте ещё раз'); return; }
+    if (r.status === 401) { _showLoginError(); return; }
+    if (!r.ok || !j.token) { _showLoginError((j && j.error) || ('Ошибка входа (' + r.status + ')')); return; }
+    _authToken = j.token;
+    _sessionEndedShown = false;
+    document.getElementById('login-error').style.display = 'none';
+    if (!_stateLoadedOnce) {
+      if (btn) btn.textContent = '⏳ Загрузка данных...';
+      await _loadState();
+      if (!_stateLoadedOnce) {
+        _authToken = null;
+        _showLoginError('Не удалось загрузить данные — попробуйте войти ещё раз');
+        return;
+      }
+      _setupSync();
+    } else if (_stateDirty.size || _filesDirty.size || _filesDeleted.size) {
+      // Changes made before the session ended were kept in memory; they go out now.
+      _scheduleSave();
+    }
+    _enterAs(j.role === 'provider' ? j.providerId : j.role);
+  } finally {
+    _loginBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = btnText; }
   }
+}
+
+// The server turned the token away: it expired, or this account's password was changed.
+// Back to the sign-in screen, keeping whatever is unsaved in memory for after it.
+let _sessionEndedShown = false;
+function _sessionEnded() {
+  _authToken = null;
+  if (_sessionEndedShown) return;
+  _sessionEndedShown = true;
+  currentUser = null;
+  try { closeModal(); } catch (e) { /* no modal open */ }
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('login-loading').style.display = 'none';
+  document.getElementById('login-box').style.display = 'block';
+  _showLoginError('Сеанс завершён — войдите снова');
 }
 
 function togglePwdVisibility() {
@@ -937,6 +955,7 @@ function togglePwdVisibility() {
 function logout() {
   if (!confirm('Выйти из системы?')) return;
   currentUser = null;
+  _authToken = null;
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('login-username').value = '';
   document.getElementById('login-pwd').value = '';
@@ -1069,7 +1088,76 @@ function updateRequestBadge() {
   }
 }
 
-function openSettingsModal() {
+// ---- Accounts on Yandex ----
+// The page never holds a password there: the settings screen gets the account names from the
+// server (yandex/data-api/accounts.js), each password field starts empty, and only what was
+// typed into one is sent — empty means "keep the current password".
+let _acctNames = null;
+async function _authApi(method, route, body) {
+  const headers = { Authorization: 'Bearer ' + _authToken };
+  if (body) headers['Content-Type'] = 'application/json';
+  const r = await fetch('/db/v1/' + route, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && _authToken) _sessionEnded();
+  return { ok: r.ok, status: r.status, body: j };
+}
+async function _loadAccountNames() {
+  try {
+    const r = await _authApi('GET', 'auth:accounts');
+    if (!r.ok) { alert('Не удалось загрузить учётные записи: ' + (r.body.error || r.status)); return false; }
+    _acctNames = r.body;
+    return true;
+  } catch (e) { alert('Нет связи с сервером — попробуйте ещё раз'); return false; }
+}
+function _credUser(role, legacy) {
+  if (!_YDB) return legacy();
+  const e = _acctNames && _acctNames.roles && _acctNames.roles[role];
+  return e ? e.user : '';
+}
+const _credPwd = legacy => (_YDB ? '' : legacy());
+const _pwdPh = text => (_YDB ? 'Новый пароль (пусто — не менять)' : text);
+function _provUser(pid, usernames) {
+  if (!_YDB) return usernames[pid] || pid;
+  const e = _acctNames && _acctNames.providers && _acctNames.providers[pid];
+  return e ? e.user : pid;
+}
+// → null when saved, else what went wrong.
+async function _saveAccountOnServer(kind, id, user, password) {
+  let r;
+  try { r = await _authApi('POST', 'auth:setAccount', { kind, id, user, password }); }
+  catch (e) { return 'нет связи с сервером'; }
+  if (!r.ok) return r.body.error || ('ошибка ' + r.status);
+  // Changing one's own password replaces this session's token (the old one stops working).
+  if (r.body.token) _authToken = r.body.token;
+  const k = kind === 'provider' ? 'providers' : 'roles';
+  if (_acctNames) (_acctNames[k] = _acctNames[k] || {})[id] = { user: r.body.user || user };
+  return null;
+}
+async function _saveRoleCreds(role, user, password, okText) {
+  const err = await _saveAccountOnServer('role', role, user, password);
+  if (err) { alert('⚠️ Не сохранено: ' + err); return; }
+  alert(okText + (password ? '' : ' (пароль не изменён)'));
+}
+async function _saveProvidersOnServer() {
+  const changes = PROVIDERS.map(p => ({
+    p,
+    user: (document.getElementById('uname-' + p.id)?.value || '').trim() || p.id,
+    password: (document.getElementById('pin-' + p.id)?.value || '').trim(),
+  })).filter(c => c.password || c.user !== _provUser(c.p.id, {}));
+  if (!changes.length) { alert('Изменений нет'); return; }
+  const failed = [];
+  for (const c of changes) {
+    const err = await _saveAccountOnServer('provider', c.p.id, c.user, c.password);
+    if (err) failed.push(c.p.name + ': ' + err);
+  }
+  if (failed.length) { alert('⚠️ Не сохранено:\n' + failed.join('\n')); return; }
+  alert('Данные поставщиков сохранены');
+  closeModal();
+}
+
+async function openSettingsModal() {
+  // Yandex: the names come from the server first — the page holds no passwords at all.
+  if (_YDB && !(await _loadAccountNames())) return;
   document.getElementById('modal-title').textContent = '⚙️ Настройки доступа';
   const pins = getProviderPins();
   const usernames = getProviderUsernames();
@@ -1081,11 +1169,11 @@ function openSettingsModal() {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
-          <input type="text" class="form-control" id="new-owner-user" value="${getOwnerUser()}" placeholder="yosef">
+          <input type="text" class="form-control" id="new-owner-user" value="${_credUser('owner', getOwnerUser)}" placeholder="yosef">
         </div>
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
-          <input type="text" class="form-control" id="new-owner-pwd" value="${getOwnerPwd()}" placeholder="Пароль владельца...">
+          <input type="text" class="form-control" id="new-owner-pwd" value="${_credPwd(getOwnerPwd)}" placeholder="${_pwdPh('Пароль владельца...')}">
         </div>
       </div>
       <button class="btn btn-primary" style="width:100%;justify-content:center;background:#7c3aed;border-color:#7c3aed" onclick="saveOwnerCreds()">💾 Сохранить учётную запись владельца</button>
@@ -1097,11 +1185,11 @@ function openSettingsModal() {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
-          <input type="text" class="form-control" id="new-admin-user" value="${getAdminUser()}" placeholder="admin">
+          <input type="text" class="form-control" id="new-admin-user" value="${_credUser('admin', getAdminUser)}" placeholder="admin">
         </div>
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
-          <input type="text" class="form-control" id="new-admin-pwd" value="${getAdminPwd()}" placeholder="Новый пароль...">
+          <input type="text" class="form-control" id="new-admin-pwd" value="${_credPwd(getAdminPwd)}" placeholder="${_pwdPh('Новый пароль...')}">
         </div>
       </div>
       <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveAdminCreds()">💾 Сохранить данные администратора</button>
@@ -1123,11 +1211,11 @@ function openSettingsModal() {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
-          <input type="text" class="form-control" id="kitchen-cred-user" value="${getKitchenUser()}" placeholder="kitchen">
+          <input type="text" class="form-control" id="kitchen-cred-user" value="${_credUser('kitchen', getKitchenUser)}" placeholder="kitchen">
         </div>
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
-          <input type="text" class="form-control" id="kitchen-cred-pwd" value="${getKitchenPwd()}" placeholder="Пароль...">
+          <input type="text" class="form-control" id="kitchen-cred-pwd" value="${_credPwd(getKitchenPwd)}" placeholder="${_pwdPh('Пароль...')}">
         </div>
       </div>
       <button class="btn btn-success" style="width:100%;justify-content:center" onclick="saveKitchenCreds()">💾 Сохранить данные менеджера кухни</button>
@@ -1138,11 +1226,11 @@ function openSettingsModal() {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
-          <input type="text" class="form-control" id="kitchen-worker-user" value="${getKitchenWorkerUser()}" placeholder="worker">
+          <input type="text" class="form-control" id="kitchen-worker-user" value="${_credUser('kitchen_worker', getKitchenWorkerUser)}" placeholder="worker">
         </div>
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
-          <input type="text" class="form-control" id="kitchen-worker-pwd" value="${getKitchenWorkerPwd()}" placeholder="Пароль...">
+          <input type="text" class="form-control" id="kitchen-worker-pwd" value="${_credPwd(getKitchenWorkerPwd)}" placeholder="${_pwdPh('Пароль...')}">
         </div>
       </div>
       <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveKitchenWorkerCreds()">💾 Сохранить данные сотрудника кухни</button>
@@ -1153,11 +1241,11 @@ function openSettingsModal() {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
-          <input type="text" class="form-control" id="alexander-cred-user" value="${getAlexanderUser()}" placeholder="alexander">
+          <input type="text" class="form-control" id="alexander-cred-user" value="${_credUser('alexander', getAlexanderUser)}" placeholder="alexander">
         </div>
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
-          <input type="text" class="form-control" id="alexander-cred-pwd" value="${getAlexanderPwd()}" placeholder="Пароль...">
+          <input type="text" class="form-control" id="alexander-cred-pwd" value="${_credPwd(getAlexanderPwd)}" placeholder="${_pwdPh('Пароль...')}">
         </div>
       </div>
       <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveAlexanderCreds()">💾 Сохранить данные Александра</button>
@@ -1168,11 +1256,11 @@ function openSettingsModal() {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
-          <input type="text" class="form-control" id="accountant-cred-user" value="${getAccountantUser()}" placeholder="accountant">
+          <input type="text" class="form-control" id="accountant-cred-user" value="${_credUser('accountant', getAccountantUser)}" placeholder="accountant">
         </div>
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
-          <input type="text" class="form-control" id="accountant-cred-pwd" value="${getAccountantPwd()}" placeholder="Пароль...">
+          <input type="text" class="form-control" id="accountant-cred-pwd" value="${_credPwd(getAccountantPwd)}" placeholder="${_pwdPh('Пароль...')}">
         </div>
       </div>
       <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveAccountantCreds()">💾 Сохранить данные бухгалтера</button>
@@ -1183,11 +1271,11 @@ function openSettingsModal() {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
-          <input type="text" class="form-control" id="management-cred-user" value="${getManagementUser()}" placeholder="management">
+          <input type="text" class="form-control" id="management-cred-user" value="${_credUser('management', getManagementUser)}" placeholder="management">
         </div>
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
-          <input type="text" class="form-control" id="management-cred-pwd" value="${getManagementPwd()}" placeholder="Пароль...">
+          <input type="text" class="form-control" id="management-cred-pwd" value="${_credPwd(getManagementPwd)}" placeholder="${_pwdPh('Пароль...')}">
         </div>
       </div>
       <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveManagementCreds()">💾 Сохранить данные руководства</button>
@@ -1198,11 +1286,11 @@ function openSettingsModal() {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
-          <input type="text" class="form-control" id="admin2-cred-user" value="${getAdmin2User()}" placeholder="admin2">
+          <input type="text" class="form-control" id="admin2-cred-user" value="${_credUser('admin2', getAdmin2User)}" placeholder="admin2">
         </div>
         <div>
           <div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
-          <input type="text" class="form-control" id="admin2-cred-pwd" value="${getAdmin2Pwd()}" placeholder="Пароль...">
+          <input type="text" class="form-control" id="admin2-cred-pwd" value="${_credPwd(getAdmin2Pwd)}" placeholder="${_pwdPh('Пароль...')}">
         </div>
       </div>
       <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveAdmin2Creds()">💾 Сохранить данные admin2</button>
@@ -1439,9 +1527,9 @@ function openSettingsModal() {
         <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 10px;align-items:center">
           <span style="font-size:15px">${p.emoji}</span>
           <input type="text" class="form-control" id="uname-${p.id}"
-                 value="${usernames[p.id]||p.id}" placeholder="${p.id}" style="font-size:12px">
+                 value="${_provUser(p.id, usernames)}" placeholder="${p.id}" style="font-size:12px">
           <input type="text" class="form-control" id="pin-${p.id}"
-                 value="${pins[p.id]||'1234'}" placeholder="1234" style="font-size:12px">
+                 value="${_YDB ? '' : (pins[p.id]||'1234')}" placeholder="${_YDB ? 'новый пароль' : '1234'}" style="font-size:12px">
         </div>`).join('')}
     </div>
     ${dangerHtml}`;
@@ -1504,6 +1592,7 @@ function saveOwnerCreds() {
   const u = (document.getElementById('new-owner-user').value||'').trim();
   const p = (document.getElementById('new-owner-pwd').value||'').trim();
   if (!u) { alert('Введите имя пользователя'); return; }
+  if (_YDB) return _saveRoleCreds('owner', u, p, 'Данные владельца сохранены');
   if (!p) { alert('Введите пароль'); return; }
   setLS('owner_username', u);
   setLS('owner_pwd', p);
@@ -1514,6 +1603,7 @@ function saveAdminCreds() {
   const u = (document.getElementById('new-admin-user').value||'').trim();
   const p = (document.getElementById('new-admin-pwd').value||'').trim();
   if (!u) { alert('Введите имя пользователя'); return; }
+  if (_YDB) return _saveRoleCreds('admin', u, p, 'Данные администратора сохранены');
   if (!p) { alert('Введите пароль'); return; }
   setLS('admin_username', u);
   setLS('admin_pwd', p);
@@ -1524,6 +1614,7 @@ function saveKitchenCreds() {
   const u = (document.getElementById('kitchen-cred-user').value||'').trim();
   const p = (document.getElementById('kitchen-cred-pwd').value||'').trim();
   if (!u) { alert('Введите имя пользователя'); return; }
+  if (_YDB) return _saveRoleCreds('kitchen', u, p, 'Данные менеджера кухни сохранены');
   if (!p) { alert('Введите пароль'); return; }
   setLS('kitchen_username', u);
   setLS('kitchen_pwd', p);
@@ -1535,6 +1626,7 @@ function saveKitchenWorkerCreds() {
   const u = (document.getElementById('kitchen-worker-user').value||'').trim();
   const p = (document.getElementById('kitchen-worker-pwd').value||'').trim();
   if (!u) { alert('Введите имя пользователя'); return; }
+  if (_YDB) return _saveRoleCreds('kitchen_worker', u, p, 'Данные сотрудника кухни сохранены');
   if (!p) { alert('Введите пароль'); return; }
   setLS('kitchen_worker_username', u);
   setLS('kitchen_worker_pwd', p);
@@ -1546,6 +1638,7 @@ function saveAlexanderCreds() {
   const u = (document.getElementById('alexander-cred-user').value||'').trim();
   const p = (document.getElementById('alexander-cred-pwd').value||'').trim();
   if (!u) { alert('Введите имя пользователя'); return; }
+  if (_YDB) return _saveRoleCreds('alexander', u, p, 'Данные Александра сохранены');
   if (!p) { alert('Введите пароль'); return; }
   setLS('alexander_username', u);
   setLS('alexander_pwd', p);
@@ -1557,6 +1650,7 @@ function saveAccountantCreds() {
   const u = (document.getElementById('accountant-cred-user').value||'').trim();
   const p = (document.getElementById('accountant-cred-pwd').value||'').trim();
   if (!u) { alert('Введите имя пользователя'); return; }
+  if (_YDB) return _saveRoleCreds('accountant', u, p, 'Данные бухгалтера сохранены');
   if (!p) { alert('Введите пароль'); return; }
   setLS('accountant_username', u);
   setLS('accountant_pwd', p);
@@ -1568,6 +1662,7 @@ function saveManagementCreds() {
   const u = (document.getElementById('management-cred-user').value||'').trim();
   const p = (document.getElementById('management-cred-pwd').value||'').trim();
   if (!u) { alert('Введите имя пользователя'); return; }
+  if (_YDB) return _saveRoleCreds('management', u, p, 'Данные руководства сохранены');
   if (!p) { alert('Введите пароль'); return; }
   setLS('management_username', u);
   setLS('management_pwd', p);
@@ -1579,6 +1674,7 @@ function saveAdmin2Creds() {
   const u = (document.getElementById('admin2-cred-user').value||'').trim();
   const p = (document.getElementById('admin2-cred-pwd').value||'').trim();
   if (!u) { alert('Введите имя пользователя'); return; }
+  if (_YDB) return _saveRoleCreds('admin2', u, p, 'Данные второго администратора сохранены');
   if (!p) { alert('Введите пароль'); return; }
   setLS('admin2_username', u);
   setLS('admin2_pwd', p);
@@ -1631,6 +1727,7 @@ function clearAllData() {
 }
 
 function saveAllPins() {
+  if (_YDB) { _saveProvidersOnServer(); return; }
   const pins = {};
   const usernames = {};
   PROVIDERS.forEach(p => {
@@ -1658,7 +1755,19 @@ const FIREBASE_CONFIG = {
   appId: "1:1018143876011:web:f7b2ac72c51f40fbab28ee"
 };
 
+// Where the data and files live. 'firebase': Google (Firestore + Firebase Storage), as it
+// was from the start. 'yandex': the data API in Yandex Cloud, at /db on this same address
+// (yandex/data-api) — documents in YDB, files in Object Storage, sign-in checked on the
+// server. The move's rehearsal copy of this page is published with 'yandex'
+// (deploy/yandex-site.ps1 -Rehearsal); the move itself is flipping this line.
+const DATA_BACKEND = 'firebase';
+const _YDB = DATA_BACKEND === 'yandex';
+
+// _useFirebase has always meant "the data is shared, on a server" (as opposed to the
+// browser's own storage); on Yandex it is that too. Firebase itself is then needed only
+// for push notifications, so its failing to start must not take the data down with it.
 let _firestoreDB = null, _storageRoot = null, _useFirebase = false;
+if (_YDB) { _firestoreDB = { rest: true }; _useFirebase = true; }
 if (FIREBASE_CONFIG) {
   try {
     firebase.initializeApp(FIREBASE_CONFIG);
@@ -1666,10 +1775,10 @@ if (FIREBASE_CONFIG) {
     // third of a megabyte on every page load) isn't loaded at all.
     _firestoreDB = { rest: true };
     _useFirebase = true;
-    try { _storageRoot = firebase.storage().ref(); } catch(se) { console.warn('Storage init failed:', se); }
-  } catch(e) { console.error('Firebase init error:', e); _firestoreDB = null; _useFirebase = false; }
+    if (!_YDB) { try { _storageRoot = firebase.storage().ref(); } catch(se) { console.warn('Storage init failed:', se); } }
+  } catch(e) { console.error('Firebase init error:', e); if (!_YDB) { _firestoreDB = null; _useFirebase = false; } }
 }
-console.log('[FB] useFirebase=', _useFirebase, 'db=', !!_firestoreDB, 'storage=', !!_storageRoot);
+console.log('[FB] backend=', DATA_BACKEND, 'useFirebase=', _useFirebase, 'db=', !!_firestoreDB, 'storage=', !!_storageRoot);
 
 // ==============================
 // FIRESTORE ACCESS OVER REST (not the SDK)
@@ -1685,7 +1794,27 @@ console.log('[FB] useFirebase=', _useFirebase, 'db=', !!_firestoreDB, 'storage='
 // REST here, and _setupSync polls instead of using onSnapshot. The Firebase SDK stays
 // loaded only for Storage (file uploads), which use a different, unaffected endpoint.
 const _FS_KEY = FIREBASE_CONFIG.apiKey;
-const _FS_DOCS = 'https://firestore.googleapis.com/v1/projects/' + FIREBASE_CONFIG.projectId + '/databases/(default)/documents';
+// The Yandex data API speaks the same REST shapes (yandex/data-api/core.js), so only the
+// address changes — and every request carries the token sign-in returned instead of the
+// project's public key.
+const _FS_DOCS = _YDB ? location.origin + '/db/v1/documents'
+  : 'https://firestore.googleapis.com/v1/projects/' + FIREBASE_CONFIG.projectId + '/databases/(default)/documents';
+let _authToken = null;
+
+function _fsUrl(path, params) {
+  const q = (_YDB ? [] : ['key=' + _FS_KEY]).concat(params || []);
+  return _FS_DOCS + '/' + path + (q.length ? '?' + q.join('&') : '');
+}
+const _maskParams = (name, fields) => (fields || []).map(f => name + '=' + encodeURIComponent(f));
+
+async function _fsFetch(path, params, init) {
+  const opts = Object.assign({}, init || {});
+  if (_YDB && _authToken) opts.headers = Object.assign({}, opts.headers || {}, { Authorization: 'Bearer ' + _authToken });
+  const r = await fetch(_fsUrl(path, params), opts);
+  // The token stopped being good — expired, or the password was changed since.
+  if (_YDB && r.status === 401 && _authToken) _sessionEnded();
+  return r;
+}
 
 function _toFs(v) {
   if (v === null || v === undefined) return { nullValue: null };
@@ -1726,7 +1855,7 @@ function _fsFieldsToObj(fields) { const o = {}; const f = fields || {}; for (con
 const _docVer = {};
 async function _fsDocVersion(path) {
   try {
-    const r = await fetch(_FS_DOCS + '/' + path + '?key=' + _FS_KEY + '&mask.fieldPaths=zzVersionProbe');
+    const r = await _fsFetch(path, ['mask.fieldPaths=zzVersionProbe']);
     if (!r.ok) return null;
     const j = await r.json();
     return j.updateTime || null;
@@ -1736,16 +1865,15 @@ async function _fsDocVersion(path) {
 async function _fsGetDoc(path, maskFields) {
   // maskFields keeps the pre-write ledger re-read cheap — it fetches just the arrays being
   // merged rather than pulling the whole (large) document on every save.
-  const mask = (maskFields && maskFields.length)
-    ? '&' + maskFields.map(f => 'mask.fieldPaths=' + encodeURIComponent(f)).join('&') : '';
-  const r = await fetch(_FS_DOCS + '/' + path + '?key=' + _FS_KEY + mask);
+  const mask = _maskParams('mask.fieldPaths', maskFields);
+  const r = await _fsFetch(path, mask);
   if (r.status === 404) return null;
   if (!r.ok) throw new Error('Firestore GET ' + path + ' → ' + r.status + ' ' + (await r.text()).slice(0, 200));
   const j = await r.json();
   // Remember the version of what we just pulled in full, so the next poll can tell
   // whether anything has actually changed since. Masked reads are partial, so they must
   // not claim to represent the whole document.
-  if (!mask && j.updateTime) _docVer[path] = j.updateTime;
+  if (!mask.length && j.updateTime) _docVer[path] = j.updateTime;
   return _fsFieldsToObj(j.fields || {});
 }
 // Low-level merge PATCH: caller supplies already-encoded Firestore `fields` and the exact
@@ -1759,9 +1887,9 @@ async function _fsGetDoc(path, maskFields) {
 // Returns { conflict: true } for that case, else { updateTime } of the new version.
 async function _fsRawPatch(path, fields, maskPaths, ifUpdateTime) {
   if (!maskPaths.length) return { updateTime: null };
-  let qs = maskPaths.map(p => 'updateMask.fieldPaths=' + encodeURIComponent(p)).join('&');
-  if (ifUpdateTime) qs += '&currentDocument.updateTime=' + encodeURIComponent(ifUpdateTime);
-  const r = await fetch(_FS_DOCS + '/' + path + '?' + qs + '&key=' + _FS_KEY, {
+  const qs = _maskParams('updateMask.fieldPaths', maskPaths);
+  if (ifUpdateTime) qs.push('currentDocument.updateTime=' + encodeURIComponent(ifUpdateTime));
+  const r = await _fsFetch(path, qs, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields })
   });
   if (!r.ok) {
@@ -1776,9 +1904,8 @@ async function _fsRawPatch(path, fields, maskPaths, ifUpdateTime) {
 // A masked read that also reports the document's version — the version a following
 // conditional write is pinned to. A mask naming no real field returns just the version.
 async function _fsGetDocMeta(path, maskFields) {
-  const mask = '&' + (maskFields && maskFields.length ? maskFields : ['zzVersionProbe'])
-    .map(f => 'mask.fieldPaths=' + encodeURIComponent(f)).join('&');
-  const r = await fetch(_FS_DOCS + '/' + path + '?key=' + _FS_KEY + mask);
+  const mask = _maskParams('mask.fieldPaths', maskFields && maskFields.length ? maskFields : ['zzVersionProbe']);
+  const r = await _fsFetch(path, mask);
   if (r.status === 404) return { data: {}, updateTime: null };
   if (!r.ok) throw new Error('Firestore GET ' + path + ' → ' + r.status + ' ' + (await r.text()).slice(0, 200));
   const j = await r.json();
@@ -1788,7 +1915,7 @@ async function _fsGetDocMeta(path, maskFields) {
 async function _fsSetDoc(path, obj) {
   const fields = {};
   for (const k of Object.keys(obj || {})) { if (obj[k] !== undefined) fields[k] = _toFs(obj[k]); }
-  const r = await fetch(_FS_DOCS + '/' + path + '?key=' + _FS_KEY, {
+  const r = await _fsFetch(path, [], {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields })
   });
   if (!r.ok) throw new Error('Firestore SET ' + path + ' → ' + r.status + ' ' + (await r.text()).slice(0, 200));
@@ -2349,7 +2476,7 @@ async function _loadState() {
         const whDocs = await Promise.all(whPaths.map(p => _fsGetDoc(p)));
         whDocs.forEach(d => { if (d) Object.assign(_state, d); });
       } catch(e) { console.error('Ошибка загрузки склада:', e); }
-    } else {
+    } else if (!_YDB) {
       // первый запуск — мигрируем из localStorage
       const keys = ['admin_pwd','admin_username','owner_pwd','owner_username',
         'provider_pins','provider_usernames','provider_prices','prices_locked',
@@ -2365,6 +2492,9 @@ async function _loadState() {
     // genuine local changes ever get marked dirty and sent.
     _filesBaseline = JSON.parse(JSON.stringify(_state.files || {}));
     _snapshotTxBaseline();
+    // On Yandex, sign-in waits for this: nobody is let into a screen built on data that
+    // never arrived (where a save could then write that emptiness back).
+    if (doc && Object.keys(doc).length > 0) _stateLoadedOnce = true;
   } catch(e) { console.error('Ошибка загрузки:', e); }
   finally { _filesReadyResolve(); }
 }
@@ -2509,9 +2639,19 @@ function _doReload() {
     if (currentUser) sessionStorage.setItem(_RESUME_KEY, JSON.stringify({
       u: currentUser, v: view, p: activeProvider,
       bl: budgetLedger, bm: budgetMonth, by: budgetYear, t: Date.now(),
+      tk: _authToken || undefined,
     }));
   } catch (e) { /* storage blocked — the reload still happens, just logged out as before */ }
   location.reload();
+}
+
+// What _doReload() left for this load, without consuming it — init() needs the token
+// (Yandex) before it can load anything; _resumeAfterUpdate() consumes it afterwards.
+function _peekResume() {
+  try {
+    const s = JSON.parse(sessionStorage.getItem(_RESUME_KEY) || 'null');
+    return s && s.u && Date.now() - s.t < 120000 ? s : null;
+  } catch (e) { return null; }
 }
 
 // Restores what _doReload() carried over, using the same role checks doLogin() applies,
@@ -2520,7 +2660,8 @@ function _resumeAfterUpdate() {
   let s = null;
   try { s = JSON.parse(sessionStorage.getItem(_RESUME_KEY) || 'null'); sessionStorage.removeItem(_RESUME_KEY); }
   catch (e) { return false; }
-  if (!s || !s.u || !(Date.now() - s.t < 120000)) return false;
+  if (!s || !s.u || !(Date.now() - s.t < 120000)) { if (_YDB) _authToken = null; return false; }
+  if (_YDB && !(_authToken && _stateLoadedOnce)) { _authToken = null; return false; }
   const releaseGated = ['alexander', 'accountant', 'management', 'admin2'];
   const known = ['owner', 'admin', 'kitchen', 'kitchen_worker'].concat(releaseGated).includes(s.u)
     || PROVIDERS.some(p => p.id === s.u);
@@ -2576,6 +2717,7 @@ function _setupVersionCheck() {
 }
 
 async function _pollState() {
+  if (_YDB && !_authToken) return; // signed out: nothing may be read until the next sign-in
   if (document.hidden) return;
   if (_modalIsOpen()) return;
   if (_stateDirty.size || _filesDirty.size || _filesDeleted.size) return;
@@ -3047,7 +3189,37 @@ function _showUploadBar(name, pct, idx, total) {
 }
 function _hideUploadBar() { const el = document.getElementById('_upbar'); if (el) el.remove(); }
 
+// Yandex: the server only hands out an address to PUT the file at (yandex/data-api/files.js)
+// — the file itself goes from here straight into the bucket, so a video is no problem. The
+// headers it returns are part of that address's signature and must go with the PUT as given.
+function _putWithProgress(url, blob, headers, onPct) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('PUT', url);
+    Object.keys(headers || {}).forEach(h => x.setRequestHeader(h, headers[h]));
+    x.upload.onprogress = e => { if (e.lengthComputable) onPct(e.loaded / e.total * 100); };
+    x.onload = () => (x.status >= 200 && x.status < 300 ? resolve() : reject(new Error('загрузка файла → ' + x.status)));
+    x.onerror = () => reject(new Error('загрузка файла: нет связи с хранилищем'));
+    x.send(blob);
+  });
+}
+async function _uploadToYandex(fileData) {
+  const pr = await _authApi('POST', 'files:presign', { name: fileData.name, type: fileData.type || 'application/octet-stream' });
+  if (!pr.ok || !pr.body.uploadUrl) throw new Error('загрузка файла: ' + ((pr.body.error && (pr.body.error.message || pr.body.error)) || pr.status));
+  await _putWithProgress(pr.body.uploadUrl, dataURLtoBlob(fileData.data), pr.body.headers, pct => _showUploadBar(null, pct));
+  return { id: pr.body.id, url: pr.body.url };
+}
+
 async function dbSave(fileData, fileIdx, totalFiles) {
+  if (_YDB) {
+    _showUploadBar(fileData.name, 0, fileIdx, totalFiles);
+    let up;
+    try { up = await _uploadToYandex(fileData); } finally { _hideUploadBar(); }
+    const files = getLS('files') || {};
+    files[up.id] = { id: up.id, name: fileData.name, type: fileData.type, size: fileData.size, url: up.url, fp: _fileFP(fileData.data, fileData.size) };
+    setLS('files', files);
+    return up.id;
+  }
   if (_useFirebase) {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
     const blob = dataURLtoBlob(fileData.data);
@@ -3096,7 +3268,10 @@ async function dbGet(id) {
 
 async function dbDel(id) {
   if (_useFirebase) {
-    try { await _storageRoot.child(`files/${id}`).delete(); } catch(e) {}
+    try {
+      if (_YDB) await _authApi('DELETE', 'files/' + encodeURIComponent(id));
+      else await _storageRoot.child(`files/${id}`).delete();
+    } catch(e) {}
     const files = getLS('files') || {};
     delete files[id];
     setLS('files', files);
@@ -3147,6 +3322,7 @@ function openFileUtilitiesModal() {
 }
 
 async function recompressExistingImages() {
+  if (_YDB) { _showToast('Не требуется: файлы хранятся в Яндексе', false); return; }
   if (!_useFirebase) { _showToast('פועל רק עם Firebase', false); return; }
   const allFiles = getLS('files') || {};
   const imgs = Object.values(allFiles).filter(f => f.type && f.type.startsWith('image/') && f.url);
@@ -3198,6 +3374,7 @@ async function recompressExistingImages() {
 // instead of opening/previewing in the browser. Only updates Storage metadata (no
 // re-upload of the file bytes needed), so this is fast even with many files.
 async function fixFileDispositions() {
+  if (_YDB) { _showToast('Не требуется: файлы хранятся в Яндексе', false); return; }
   if (currentUser !== 'owner') return;
   if (!_useFirebase) { _showToast('Работает только с Firebase', false); return; }
   const files = getLS('files') || {};
@@ -3234,6 +3411,7 @@ async function fixFileDispositions() {
 // always completed there first) and re-adds its registry entry using the name/type
 // already saved alongside the id on the record itself.
 async function recoverMissingFileRegistry() {
+  if (_YDB) { _showToast('Не требуется: файлы хранятся в Яндексе', false); return; }
   if (currentUser !== 'owner') return;
   if (!_useFirebase) { _showToast('Работает только с Firebase', false); return; }
   if (!confirm('Просканировать все разделы приложения и попытаться восстановить ссылки на файлы, которые записаны в карточках, но отсутствуют в реестре файлов (из-за чего фото/файлы не открываются)?\n\nЭто может занять некоторое время в зависимости от количества файлов.')) return;
@@ -9793,7 +9971,16 @@ async function init() {
     return;
   }
   _whCaptureLink();
-  if (_useFirebase) {
+  if (_YDB) {
+    // Nothing can be read before sign-in. The one exception is the automatic reload after
+    // a deploy, which carries this tab's token across it (see _doReload).
+    const resume = _peekResume();
+    if (resume && resume.tk) {
+      _authToken = resume.tk;
+      await _loadState();
+      if (_stateLoadedOnce) _setupSync();
+    }
+  } else if (_useFirebase) {
     await _loadState();
     _setupSync();
     // Verify Firestore is writable
@@ -9815,7 +10002,7 @@ async function init() {
   document.getElementById('login-loading').style.display = 'none';
   document.getElementById('login-box').style.display = 'block';
   const verEl = document.getElementById('app-version');
-  if (verEl) verEl.textContent = APP_VERSION + (_useFirebase ? ' · Firebase ✅' : ' · Offline ⚠️');
+  if (verEl) verEl.textContent = APP_VERSION + (_YDB ? ' · Яндекс ✅' : _useFirebase ? ' · Firebase ✅' : ' · Offline ⚠️');
 
   // Build sidebar nav
   const nav = document.getElementById('providers-nav');

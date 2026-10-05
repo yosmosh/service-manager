@@ -12,15 +12,15 @@
 //   ANTHROPIC_API_KEY   — for the summarization call
 //   CRON_SECRET         — shared with the other cron functions
 
-const { appendLog } = require('../_lib/firestore');
+const { appendLog, DOCS, RUN_QUERY_URL, dbFetch } = require('../_lib/firestore');
 
-const FIRESTORE_STATE_BASE = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/appdata/state';
-const FIRESTORE_QUERY_URL = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents:runQuery';
+const FIRESTORE_STATE_BASE = `${DOCS}/appdata/state`;
+const FIRESTORE_QUERY_URL = RUN_QUERY_URL;
 const LOG_CAP = 50;
 
 function fsGet(fields) {
   const mask = fields.map(f => `mask.fieldPaths=${f}`).join('&');
-  return fetch(`${FIRESTORE_STATE_BASE}?${mask}`).then(r => r.json());
+  return dbFetch(`${FIRESTORE_STATE_BASE}?${mask}`).then(r => r.json());
 }
 
 function fsString(v) { return { stringValue: v == null ? '' : String(v) }; }
@@ -83,7 +83,7 @@ async function fetchRecentMessages(sinceIso) {
       orderBy: [{ field: { fieldPath: 'date' }, direction: 'ASCENDING' }],
     },
   };
-  const res = await fetch(FIRESTORE_QUERY_URL, {
+  const res = await dbFetch(FIRESTORE_QUERY_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
     body: JSON.stringify(body),

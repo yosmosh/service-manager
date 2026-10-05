@@ -17,9 +17,9 @@
 //
 // Wired up in vercel.json's "crons" list — Hobby plan allows once/day.
 
-const { recordReminders } = require('../_lib/firestore');
+const { recordReminders, DOCS, dbFetch } = require('../_lib/firestore');
 
-const FIRESTORE_BASE = 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents/appdata/state';
+const FIRESTORE_BASE = `${DOCS}/appdata/state`;
 const TELEGRAM_CHAT_ID = -1004438968318; // Сад Будущего | Рабочая группа
 const TOPIC_HOZCHAST = 57; // Хозчасть и Ремонт
 const DEFAULT_STALE_HOURS = 24;
@@ -30,7 +30,7 @@ const LOG_CAP = 50;
 
 function fsGet(fields) {
   const mask = fields.map(f => `mask.fieldPaths=${f}`).join('&');
-  return fetch(`${FIRESTORE_BASE}?${mask}`).then(r => r.json());
+  return dbFetch(`${FIRESTORE_BASE}?${mask}`).then(r => r.json());
 }
 
 function fsString(v) { return { stringValue: v == null ? '' : String(v) }; }

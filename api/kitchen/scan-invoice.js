@@ -12,7 +12,7 @@
 // they are fetched here, and PDFs are read as well as photos. One endpoint, so one daily cap
 // covers both.
 
-const { updateDoc, fsString, fsInt } = require('../_lib/firestore');
+const { updateDoc, fsString, fsInt, OWN_FILE_PREFIXES } = require('../_lib/firestore');
 
 // This URL is public (the app has no server-side login), and every call is a paid vision
 // request on the same Anthropic key the Telegram drafts and the digest use — anyone who found
@@ -68,7 +68,6 @@ const WAREHOUSE_PROMPT = 'Это счёт / накладная / чек пост
 // Only this app's own uploads are fetched. The URL comes from the browser, and the function is
 // public: fetching whatever address it was handed would let anyone use it to read other
 // places on the server's behalf.
-const OWN_FILES = 'https://firebasestorage.googleapis.com/v0/b/sad-budushego.firebasestorage.app/o/files%2F';
 const MAX_FILES = 5;
 const MAX_IMAGE_BYTES = 3.75 * 1024 * 1024; // 5 MB once base64-encoded — the API's limit for one image
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
@@ -78,7 +77,7 @@ const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const userError = msg => Object.assign(new Error(msg), { userFacing: true });
 
 async function fetchOwnFile(url) {
-  if (typeof url !== 'string' || !url.startsWith(OWN_FILES)) throw userError('Файл не из хранилища приложения');
+  if (typeof url !== 'string' || !OWN_FILE_PREFIXES.some(p => url.startsWith(p))) throw userError('Файл не из хранилища приложения');
   const r = await fetch(url, { redirect: 'error' });
   if (!r.ok) throw userError('Не удалось открыть файл счёта (' + r.status + ')');
   const type = String(r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();

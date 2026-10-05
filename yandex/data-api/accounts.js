@@ -299,7 +299,13 @@ function createAccounts({ store, auth, now }) {
       });
     });
     genCache.gens = null;
-    return { status: 200, body: { ok: true, user } };
+    const body = { ok: true, user };
+    // Changing one's own password ends one's own session too — unless it is replaced here.
+    if (kind === 'roles' && id === role && password) {
+      const iat = Math.floor(clock() / 1000);
+      body.token = auth.sign({ r: role, s: role, g: next.gen, iat, exp: iat + TOKEN_DAYS * 86400 });
+    }
+    return { status: 200, body };
   }
 
   // ---- the move from Firebase ----
