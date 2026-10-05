@@ -325,6 +325,19 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 <style>
 /* flatpickr Russian overrides */
 .flatpickr-calendar { font-family: 'Segoe UI', Arial, sans-serif; direction: ltr; }
+/* A form's files: thumbnails, a 🗑 on each (see _ffHtml / _pendingGrid) */
+.ff-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.ff-cell{position:relative;width:72px;height:72px;flex-shrink:0}
+.ff-box{width:100%;height:100%;box-sizing:border-box;border-radius:8px;overflow:hidden;border:2px solid #e2e8f0;background:#f8fafc;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer}
+.ff-box img{width:100%;height:100%;object-fit:cover;display:block}
+.ff-name{font-size:9px;color:#64748b;text-align:center;padding:0 2px;word-break:break-all;line-height:1.2;max-height:28px;overflow:hidden}
+.ff-del{position:absolute;top:3px;right:3px;width:24px;height:24px;border-radius:50%;border:none;padding:0;background:rgba(15,23,42,.62);color:#fff;font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent}
+.ff-del:hover{background:#dc2626}
+.ff-new .ff-box{border-color:#86efac;cursor:default}
+.ff-undo{font-size:12px;color:#b45309;margin:-2px 0 8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ff-undo button{background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:2px 9px;cursor:pointer;font:inherit;color:#92400e}
+[data-theme="dark"] .ff-box{background:#0f172a;border-color:#334155}
+@media(max-width:768px){.ff-cell{width:80px;height:80px}.ff-del{width:28px;height:28px;font-size:14px}}
 /* Warehouse cards carry more buttons than fit in one row on a phone */
 .wh-foot{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;width:100%}
 /* Mobile thumbnail wrapper (maintenance) */
@@ -3779,31 +3792,21 @@ function openRecordModal(pid, yr, mo) {
   pendingFiles = [];
   pendingVisitFiles = {};
   currentVisits = visits;
+  // Every visit the month has — never fewer than DISPLAY_VISITS slots, but more when a month
+  // holds more (one moved in from Обслуживание территории, or by the move tool). Showing and
+  // saving only the first DISPLAY_VISITS used to drop the rest on the next save.
+  const slotCount = visits.length;
 
   document.getElementById('modal-title').textContent = `${MONTHS[mo-1]} ${yr} — ${p.name}`;
 
-  const visitSections = Array.from({length:DISPLAY_VISITS}, (_,vi) => {
+  const visitSections = Array.from({length:slotCount}, (_,vi) => {
     const v = visits[vi] || {};
     const isRequired = vi < requiredVisits;
     const existFileCount = (v.fileIds||[]).length;
 
-    // Sort: video → image → docs
-    const _vfSorted = (v.fileIds||[]).map((fid,i)=>({fid,i,ft:(v.fileTypes||[])[i]||'',fn:(v.fileNames||[])[i]||'Файл'}))
-      .sort((a,b)=>{const p=ft=>ft.startsWith('video/')?0:ft.startsWith('image/')?1:2;return p(a.ft)-p(b.ft);});
-    const existingGalleryHtml = _vfSorted.length ? `
-      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
-        ${_vfSorted.map(({fid,ft,fn},gi) => ft.startsWith('image/') ? `
-          <div onclick="openVisitGallery(${vi},${gi})" title="${fn.replace(/'/g,'&#39;')}"
-            style="width:72px;height:72px;border-radius:8px;overflow:hidden;cursor:pointer;border:2px solid #e2e8f0;flex-shrink:0;background:#f8fafc;display:flex;align-items:center;justify-content:center">
-            <img class="vthumb" data-fid="${fid}" data-vi="${vi}" alt="${fn.replace(/'/g,'&#39;')}"
-              style="width:100%;height:100%;object-fit:cover;display:block">
-          </div>` : `
-          <div onclick="openVisitGallery(${vi},${gi})" title="${fn.replace(/'/g,'&#39;')}"
-            style="width:72px;height:72px;border-radius:8px;overflow:hidden;cursor:pointer;border:2px solid #e2e8f0;flex-shrink:0;background:#f8fafc;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">
-            <span style="font-size:26px">${fileEmoji(ft)}</span>
-            <span style="font-size:9px;color:#64748b;text-align:center;padding:0 2px;word-break:break-all;line-height:1.2;max-height:28px;overflow:hidden">${fn}</span>
-          </div>`).join('')}
-      </div>` : '';
+    // Only the provider himself and the owner take files off a visit.
+    _ffInit('visit-' + vi, _ffFromArrays(v.fileIds, v.fileNames, v.fileTypes), { readOnly: currentUser !== 'owner' && currentUser !== pid });
+    const existingGalleryHtml = _ffHtml('visit-' + vi);
 
     return `
       <div id="visit-card-${vi}" style="border:1px solid ${isRequired ? (v.completed?'#86efac':'#e2e8f0') : '#f1f5f9'};border-radius:10px;padding:12px 14px;margin-bottom:10px;background:${v.completed?'#f0fdf4':isRequired?'#f8fafc':'#fafafa'}">
@@ -3860,7 +3863,7 @@ function openRecordModal(pid, yr, mo) {
     <div style="background:${p.bg};border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
       <div style="font-size:12px;color:${p.color};font-weight:600">${p.emoji} ${sched?.desc||p.name}</div>
       <div style="display:flex;gap:2px;align-items:center">
-        ${Array.from({length:DISPLAY_VISITS}, (_,vi) => `<span style="font-size:14px;color:${visits[vi]?.completed?'var(--success)':vi<requiredVisits?'#cbd5e1':'#f1f5f9'}">${visits[vi]?.completed?'●':'○'}</span>`).join('')}
+        ${Array.from({length:slotCount}, (_,vi) => `<span style="font-size:14px;color:${visits[vi]?.completed?'var(--success)':vi<requiredVisits?'#cbd5e1':'#f1f5f9'}">${visits[vi]?.completed?'●':'○'}</span>`).join('')}
         <span style="font-size:11px;color:#6b7280;margin-left:5px">${doneCnt}/${requiredVisits}</span>
       </div>
     </div>
@@ -3868,23 +3871,12 @@ function openRecordModal(pid, yr, mo) {
 
   document.getElementById('modal-footer').innerHTML = `
     <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
-    <button class="btn btn-primary" onclick="saveRecord2('${pid}',${yr},${mo},${DISPLAY_VISITS})">💾 Сохранить</button>`;
-
-  // Store gallery context per visit for gallery navigation + delete
-  window._visitGalData = {};
-  visits.forEach((v, vi) => {
-    const sorted = (v.fileIds||[]).map((fid,i)=>({fid,i,ft:(v.fileTypes||[])[i]||'',fn:(v.fileNames||[])[i]||'Файл'}))
-      .sort((a,b)=>{const p=ft=>ft.startsWith('video/')?0:ft.startsWith('image/')?1:2;return p(a.ft)-p(b.ft);});
-    window._visitGalData[vi] = { pid, yr, mo, vi,
-      ids: sorted.map(f=>f.fid), types: sorted.map(f=>f.ft),
-      names: sorted.map(f=>f.fn), origIndices: sorted.map(f=>f.i) };
-  });
-  window._visitGalPid = pid; window._visitGalYr = yr; window._visitGalMo = mo;
+    <button class="btn btn-primary" onclick="saveRecord2('${pid}',${yr},${mo},${slotCount})">💾 Сохранить</button>`;
 
   // Setup drag-and-drop for each visit zone
-  Array.from({length:DISPLAY_VISITS}, (_,vi) => setupVisitDrop(vi));
+  Array.from({length:slotCount}, (_,vi) => setupVisitDrop(vi));
   document.getElementById('modal-overlay').classList.remove('hidden');
-  loadVisitImages();
+  _ffLoadThumbs();
 }
 
 function onToggle() {
@@ -3899,7 +3891,7 @@ function onToggle() {
 function onVisitToggle(vi) {
   const cb = document.getElementById(`v-done-${vi}`);
   if (cb.checked) {
-    const existingCount = (currentVisits[vi]?.fileIds || []).length;
+    const existingCount = _ffKept('visit-' + vi).length;
     const pendingCount = (pendingVisitFiles[vi] || []).length;
     if (existingCount + pendingCount === 0) {
       cb.checked = false;
@@ -3947,13 +3939,7 @@ function readVisitFiles(vi, files) {
 function renderVisitPending(vi) {
   const el = document.getElementById(`visit-pending-${vi}`);
   if (!el) return;
-  el.innerHTML = (pendingVisitFiles[vi] || []).map((f,i) => `
-    <div class="file-item">
-      <span>${fileEmoji(f.type)}</span>
-      <span class="fn">${f.name}</span>
-      <span class="fs">${fmtSize(f.size)}</span>
-      <button onclick="removeVisitFile(${vi},${i})" style="color:#dc2626">✕</button>
-    </div>`).join('');
+  el.innerHTML = _pendingGrid(pendingVisitFiles[vi], i => `removeVisitFile(${vi},${i})`);
 }
 
 function removeVisitFile(vi, idx) {
@@ -4139,13 +4125,7 @@ function renderPending() {
   if (!el) return;
   const busy = pendingFiles._reading || 0;
   const failed = pendingFiles._failed || [];
-  el.innerHTML = pendingFiles.map((f,i) => `
-    <div class="file-item">
-      <span>${fileEmoji(f.type)}</span>
-      <span class="fn">${_escHtml(f.name)}</span>
-      <span class="fs">${fmtSize(f.size)}</span>
-      <button onclick="pendingFiles.splice(${i},1);renderPending()" style="color:#dc2626">✕</button>
-    </div>`).join('')
+  el.innerHTML = _pendingGrid(pendingFiles, i => `pendingFiles.splice(${i},1);renderPending()`)
     + (busy ? `<div style="font-size:12px;color:#6b7280;margin-top:4px">⏳ Обработка файлов… (${busy})</div>` : '')
     + (failed.length ? `<div style="font-size:12px;color:#dc2626;margin-top:4px">⚠️ Не удалось обработать — выберите снова: ${failed.map(_escHtml).join(', ')}</div>` : '');
 }
@@ -4214,6 +4194,102 @@ function openGalleryEl(el, index) {
 
 async function previewFile(id, type, name) {
   openGallery([id], [type], [name], 0);
+}
+
+// ==============================
+// ФАЙЛЫ В ФОРМЕ — одна сетка миниатюр для всех форм
+// ==============================
+// Every form that edits a record's files shows them the same way: a thumbnail per file, a tap
+// opens the gallery, and a small 🗑 on the thumbnail (or in the gallery) takes it off. Taking
+// one off only changes the form; it is deleted for real when the form is saved, once the
+// record that no longer points at it has reached the server. So a mistaken tap is undone by
+// «Вернуть» or «Отмена», and nothing typed in the form is lost — deleting used to delete at
+// once and reopen the form from the stored record, dropping whatever hadn't been saved yet.
+let _ff = {}; // slot → { files: [{id,name,type,…}] in the record's order, removed: [ids], readOnly }
+const _ffRank = t => String(t || '').startsWith('video/') ? 0 : String(t || '').startsWith('image/') ? 1 : 2;
+const _ffFromArrays = (ids, names, types) => (ids || []).map((id, i) => ({ id, name: (names || [])[i] || 'Файл', type: (types || [])[i] || '' }));
+
+function _ffInit(slot, files, opts) {
+  _ff[slot] = { files: (files || []).filter(f => f && f.id).map(f => Object.assign({}, f)), removed: [], readOnly: !!(opts && opts.readOnly) };
+}
+const _ffKept = slot => { const s = _ff[slot]; return s ? s.files.filter(f => !s.removed.includes(f.id)) : []; };
+const _ffShown = slot => _ffKept(slot).slice().sort((a, b) => _ffRank(a.type) - _ffRank(b.type));
+const _ffRemoved = slot => (_ff[slot] ? _ff[slot].removed.slice() : []);
+// A record's own file lists without the removed ones — taken from the record as stored now,
+// so a file another tab added meanwhile stays.
+function _ffKeep(rec, removed) {
+  const out = { fileIds: [], fileNames: [], fileTypes: [] };
+  (rec.fileIds || []).forEach((id, i) => {
+    if (removed.includes(id)) return;
+    out.fileIds.push(id); out.fileNames.push((rec.fileNames || [])[i]); out.fileTypes.push((rec.fileTypes || [])[i]);
+  });
+  return out;
+}
+// Deleted from storage only after the save that dropped them has reached the server — an
+// unreferenced file is harmless, a record pointing at a deleted one is not.
+async function _ffDeleteFiles(ids) {
+  if (!ids || !ids.length) return;
+  for (const id of ids) { try { await dbDel(id); } catch (e) {} }
+  if (_useFirebase) _scheduleSave();
+}
+
+// One thumbnail: an image, or an icon with the name. src when the address is at hand,
+// otherwise filled in by _loadImages.
+function _thumbCell(f, src, onOpen, onDel) {
+  const inner = String(f.type || '').startsWith('image/')
+    ? `<img class="ffthumb" ${src ? `src="${_escHtml(src)}"` : `data-fid="${_escHtml(f.id || '')}"`} alt="">`
+    : `<span style="font-size:26px">${fileEmoji(f.type || '')}</span><span class="ff-name">${_escHtml(f.name || '')}</span>`;
+  return `<div class="ff-cell" title="${_escHtml(f.name || '')}">
+    <div class="ff-box" ${onOpen ? `onclick="${onOpen}"` : ''}>${inner}</div>
+    ${onDel ? `<button type="button" class="ff-del" onclick="event.stopPropagation();${onDel}" title="Удалить" aria-label="Удалить">🗑</button>` : ''}</div>`;
+}
+
+const _ffHtml = slot => `<div id="ff-${slot}">${_ffBody(slot)}</div>`;
+function _ffBody(slot) {
+  const s = _ff[slot];
+  if (!s) return '';
+  const reg = getLS('files') || {};
+  const cells = _ffShown(slot).map((f, i) => _thumbCell(f, (reg[f.id] || {}).url, `_ffOpen('${slot}',${i})`, s.readOnly ? '' : `_ffRemove('${slot}','${f.id}')`)).join('');
+  return (cells ? `<div class="ff-grid">${cells}</div>` : '')
+    + (s.removed.length ? `<div class="ff-undo">🗑 При сохранении будет удалено: ${s.removed.length} <button type="button" onclick="_ffUndo('${slot}')">↩️ Вернуть</button></div>` : '');
+}
+function _ffRender(slot) {
+  const el = document.getElementById('ff-' + slot);
+  if (el) el.innerHTML = _ffBody(slot);
+  _ffLoadThumbs();
+}
+const _ffLoadThumbs = () => _loadImages('img.ffthumb[data-fid]');
+function _ffRemove(slot, id) {
+  const s = _ff[slot];
+  if (!s || s.readOnly || s.removed.includes(id) || !s.files.some(f => f.id === id)) return;
+  s.removed.push(id);
+  _ffRender(slot);
+}
+function _ffUndo(slot) {
+  if (!_ff[slot]) return;
+  _ff[slot].removed = [];
+  _ffRender(slot);
+}
+function _ffOpen(slot, i) {
+  const s = _ff[slot], shown = _ffShown(slot);
+  if (!shown.length) return;
+  _gal = { ids: shown.map(f => f.id), types: shown.map(f => f.type), names: shown.map(f => f.name), index: i,
+    onDel: s && !s.readOnly ? id => _ffRemove(slot, id) : null };
+  return _galShow(i);
+}
+// The 🗑 in a gallery opened from a form — the same as the thumbnail's.
+function _galFormDel() {
+  if (!_gal || !_gal.onDel) return;
+  const del = _gal.onDel, id = _gal.ids[_gal.index];
+  _galClose();
+  del(id);
+}
+
+// Files picked in a form and not uploaded yet: the same thumbnails, the 🗑 just drops them.
+// delCall(i) gives the call that drops the i-th.
+function _pendingGrid(list, delCall) {
+  if (!list || !list.length) return '';
+  return `<div class="ff-grid ff-new">${list.map((f, i) => _thumbCell(f, String(f.type || '').startsWith('image/') ? f.data : '', '', delCall(i))).join('')}</div>`;
 }
 
 async function _galShow(index) {
@@ -4331,9 +4407,7 @@ async function _galShow(index) {
         ${total > 1 ? `<span style="color:rgba(255,255,255,.7);font-size:12px">${index+1} / ${total}</span>` : ''}
         <button onclick="event.stopPropagation();_galDl()"
            style="color:white;background:rgba(255,255,255,.18);padding:${isMobile?'7px 12px':'5px 12px'};border-radius:6px;font-size:13px;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent">⬇</button>
-        ${_gal.workId ? `<button onclick="event.stopPropagation();_galDelMaint()"
-          style="color:#fca5a5;background:rgba(220,38,38,.35);border:none;padding:${isMobile?'7px 12px':'5px 12px'};border-radius:6px;font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent">🗑</button>` : ''}
-        ${_gal.visitCtx ? `<button onclick="event.stopPropagation();_galDelVisit()"
+        ${_gal.onDel ? `<button onclick="event.stopPropagation();_galFormDel()" title="Удалить"
           style="color:#fca5a5;background:rgba(220,38,38,.35);border:none;padding:${isMobile?'7px 12px':'5px 12px'};border-radius:6px;font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent">🗑</button>` : ''}
         <button onclick="event.stopPropagation();_galClose()"
           style="color:white;background:rgba(255,255,255,.18);border:none;padding:${isMobile?'7px 14px':'5px 12px'};border-radius:6px;font-size:${isMobile?16:13}px;cursor:pointer;-webkit-tap-highlight-color:transparent">✕</button>
@@ -4356,15 +4430,6 @@ function _galNav(dir) {
 function _galClose() {
   document.getElementById('file-preview-overlay')?.remove();
   _gal = null;
-}
-
-async function _galDelMaint() {
-  if (!_gal || !_gal.workId) return;
-  if (!confirm('Удалить этот файл?')) return;
-  const workId = _gal.workId;
-  const origIdx = _gal.origIndices[_gal.index];
-  _galClose();
-  await delMaintFile(workId, origIdx, true);
 }
 
 function _makePDFFromJPEG(jpegBytes, w, h) {
@@ -4436,80 +4501,6 @@ document.addEventListener('keydown', e => {
 
 async function loadVisitImages() { await _loadImages('img.vthumb[data-fid]'); }
 
-function openVisitGallery(vi, startIndex) {
-  const d = window._visitGalData?.[vi];
-  if (!d) return;
-  _gal = { ids: d.ids, types: d.types, names: d.names, index: startIndex, visitCtx: {pid: d.pid, yr: d.yr, mo: d.mo, vi: d.vi}, origIndices: d.origIndices };
-  _galShow(startIndex);
-}
-
-async function _galDelVisit() {
-  if (!_gal || !_gal.visitCtx) return;
-  if (!confirm('Удалить этот файл?')) return;
-  const {pid, yr, mo, vi} = _gal.visitCtx;
-  const origIdx = _gal.origIndices[_gal.index];
-  _galClose();
-  await delVisitFile(pid, yr, mo, vi, origIdx, true);
-}
-
-async function delVisitFile(pid, yr, mo, vi, fi, skipConfirm) {
-  if (currentUser !== 'owner' && currentUser !== pid) { alert('Удалить файл может только поставщик или владелец (yosef).'); return; }
-  if (!skipConfirm && !confirm('Удалить этот файл?')) return;
-  const r = getRecord(pid, yr, mo);
-  const visits = r.visits ? r.visits.map(v => ({...v,
-    fileIds: [...(v.fileIds||[])],
-    fileNames: [...(v.fileNames||[])],
-    fileTypes: [...(v.fileTypes||[])]
-  })) : [];
-  if (!visits[vi]) return;
-  const fid = visits[vi].fileIds[fi];
-  if (fid) await dbDel(fid);
-  visits[vi].fileIds.splice(fi, 1);
-  visits[vi].fileNames.splice(fi, 1);
-  visits[vi].fileTypes.splice(fi, 1);
-  saveRecord(pid, yr, mo, {visits});
-  openRecordModal(pid, yr, mo);
-}
-
-async function delSosFile(sosId, fi) {
-  if (!confirm('Удалить этот файл?')) return;
-  const list = getSOS();
-  const idx = list.findIndex(s => s.id === sosId);
-  if (idx < 0) return;
-  const fid = (list[idx].fileIds||[])[fi];
-  if (fid) await dbDel(fid);
-  ['fileIds','fileNames','fileTypes'].forEach(k => { if (list[idx][k]) list[idx][k].splice(fi,1); });
-  setLS('sos_items', list);
-  if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
-  openSosModal(sosId);
-}
-
-async function delMaintFile(maintId, fi, skipConfirm) {
-  if (!skipConfirm && !confirm('Удалить этот файл?')) return;
-  const list = getMaintWorks();
-  const idx = list.findIndex(w => w.id === maintId);
-  if (idx < 0) return;
-  const fid = (list[idx].fileIds||[])[fi];
-  if (fid) await dbDel(fid);
-  ['fileIds','fileNames','fileTypes'].forEach(k => { if (list[idx][k]) list[idx][k].splice(fi,1); });
-  setLS('maint_works', list);
-  if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
-  openMaintModal(maintId);
-}
-
-async function delReqFile(reqId, fi) {
-  if (!confirm('Удалить этот файл?')) return;
-  const list = getRequests();
-  const idx = list.findIndex(r => r.id === reqId);
-  if (idx < 0) return;
-  const fid = (list[idx].fileIds||[])[fi];
-  if (fid) await dbDel(fid);
-  ['fileIds','fileNames','fileTypes'].forEach(k => { if (list[idx][k]) list[idx][k].splice(fi,1); });
-  saveRequests(list);
-  if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
-  openRequestModal(reqId);
-}
-
 async function saveRecord2(pid, yr, mo, visitCount) {
   return _onceAtATime("record", () => _saveRecord2Inner(pid, yr, mo, visitCount));
 }
@@ -4519,18 +4510,24 @@ async function _saveRecord2Inner(pid, yr, mo, visitCount) {
   try {
     visitCount = visitCount || DISPLAY_VISITS;
     const visits = [];
+    const dropped = [];
     for (let vi = 0; vi < visitCount; vi++) {
       const completed = document.getElementById(`v-done-${vi}`)?.checked || false;
       const completedDate = document.getElementById(`v-date-${vi}`)?.value || '';
       const notes = document.getElementById(`v-notes-${vi}`)?.value || '';
       const existing = currentVisits[vi] || {};
-      visits.push({
-        completed, completedDate, notes,
-        fileIds:   [...(existing.fileIds   || [])],
-        fileNames: [...(existing.fileNames || [])],
-        fileTypes: [...(existing.fileTypes || [])]
-      });
+      const removed = _ffRemoved('visit-' + vi);
+      removed.forEach(id => { if ((existing.fileIds || []).includes(id)) dropped.push(id); });
+      // Whatever else the visit carries stays — a work moved in keeps its _origin (see
+      // openMoveTool); rebuilding the visit from these fields alone used to drop it.
+      visits.push(Object.assign({}, existing, { completed, completedDate, notes }, _ffKeep(existing, removed)));
     }
+    // Visits past the slots this form showed are kept as they are.
+    currentVisits.slice(visitCount).forEach(v => { if (v && Object.keys(v).length) visits.push(v); });
+    // A visit marked done needs a file — the toggle insists on it; taking the last one off
+    // here must not get round that.
+    const emptied = visits.findIndex((v, vi) => v.completed && !v.fileIds.length && !(pendingVisitFiles[vi] || []).length && _ffRemoved('visit-' + vi).length);
+    if (emptied >= 0) { alert(`Посещение ${emptied + 1} отмечено выполненным — оставьте хотя бы один файл или снимите отметку.`); return; }
 
     // Save data immediately (without waiting for file uploads)
     saveRecord(pid, yr, mo, {visits});
@@ -4582,7 +4579,8 @@ async function _saveRecord2Inner(pid, yr, mo, visitCount) {
       clearTimeout(_saveTimer);
       const ok = await _flushState();
       if (!ok) _showToast('⚠️ Не удалось сохранить файлы на сервере — откройте запись ещё раз и повторите загрузку', false);
-    }
+      else await _ffDeleteFiles(dropped);
+    } else await _ffDeleteFiles(dropped);
   } catch(e) {
     console.error('[SAVE] saveRecord2 error:', e);
     alert('Ошибка сохранения:\n' + e.message);
@@ -4781,17 +4779,9 @@ function openRequestModal(editId) {
   const items = ex ? ex.items : [{ name:'', qty:'', unit:'шт', price:'' }];
   document.getElementById('modal-title').textContent = ex ? '✏️ Редактировать заявку' : '📦 Новая заявка на закупку';
 
-  const existingReqFilesHtml = (ex?.fileIds||[]).length
-    ? '<div style="margin-bottom:8px">' + (ex.fileIds||[]).map((fid,fi) => {
-        const fn2 = ((ex.fileNames||[])[fi]||'Файл');
-        const ft2 = (ex.fileTypes||[])[fi]||'';
-        const fn2esc = fn2.replace(/'/g,"\\'");
-        return '<div class="file-item"><span>' + fileEmoji(ft2) + '</span><span class="fn">' + fn2 + '</span>'
-          + '<button onclick="previewFile(\'' + fid + '\',\'' + ft2 + '\',\'' + fn2esc + '\')" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button>'
-          + '<button onclick="delReqFile(\'' + ex.id + '\',' + fi + ')" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Удалить файл">✕</button>'
-          + '</div>';
-      }).join('') + '</div>'
-    : '';
+  // Only the owner takes files off a request.
+  _ffInit('req', ex ? _ffFromArrays(ex.fileIds, ex.fileNames, ex.fileTypes) : [], { readOnly: currentUser !== 'owner' });
+  const existingReqFilesHtml = _ffHtml('req');
 
   const renderItemRows = () => items.map((it,i) => `
     <div style="display:grid;grid-template-columns:1fr 70px 60px 100px 36px;gap:6px;align-items:center;margin-bottom:6px" id="req-item-row-${i}">
@@ -4854,6 +4844,7 @@ function openRequestModal(editId) {
   window._reqPendingFiles = [];
   setupReqDrop();
   document.getElementById('modal-overlay').classList.remove('hidden');
+  _ffLoadThumbs();
   // Scroll modal to top so the title field is visible
   setTimeout(() => { const m = document.getElementById('modal'); if (m) m.scrollTop = 0; }, 30);
 }
@@ -4892,34 +4883,29 @@ function readReqFiles(files) {
 function renderReqPendingFiles() {
   const el = document.getElementById('req-pending-files');
   if (!el) return;
-  el.innerHTML = (window._reqPendingFiles||[]).map((f,i) => `
-    <div class="file-item">
-      <span>${fileEmoji(f.type)}</span>
-      <span class="fn">${f.name}</span>
-      <span class="fs">${fmtSize(f.size)}</span>
-      <button onclick="removeReqPendingFile(${i})" style="color:#dc2626;background:none;border:none;cursor:pointer">✕</button>
-    </div>`).join('');
+  el.innerHTML = _pendingGrid(window._reqPendingFiles, i => `removeReqPendingFile(${i})`);
 }
 
-function removeReqPendingFile(idx) {
-  (window._reqPendingFiles||[]).splice(idx, 1);
-  renderReqPendingFiles();
-}
-
+// The ✕ on a file in a request's card in the list (not its form — there, the 🗑 on a
+// thumbnail takes it off on Save). Owner only.
 async function delReqFile(reqId, fi) {
   if (currentUser !== 'owner') { alert('Удалить файл может только владелец (yosef).'); return; }
   if (!confirm('Удалить этот файл из заявки?')) return;
   const list = getRequests();
   const idx = list.findIndex(r => r.id === reqId);
   if (idx < 0) return;
-  const r = list[idx];
-  const fid = (r.fileIds||[])[fi];
-  if (fid) await dbDel(fid);
-  (r.fileIds||[]).splice(fi,1);
-  (r.fileNames||[]).splice(fi,1);
-  (r.fileTypes||[]).splice(fi,1);
+  const fid = (list[idx].fileIds || [])[fi];
+  if (!fid) return;
+  list[idx] = Object.assign({}, list[idx], _ffKeep(list[idx], [fid]));
   saveRequests(list);
   render();
+  if (_useFirebase) { clearTimeout(_saveTimer); if (!(await _flushState())) return; }
+  await _ffDeleteFiles([fid]);
+}
+
+function removeReqPendingFile(idx) {
+  (window._reqPendingFiles||[]).splice(idx, 1);
+  renderReqPendingFiles();
 }
 
 function removeReqItem(idx) {
@@ -4975,10 +4961,15 @@ async function _saveRequestInner(editId) {
     // approving one of them hit whichever the lookup reached first, leaving the other stuck
     // with no way to act on it. Every other record in the app already uses this.
     const reqId = editId || _newTxId();
+    let dropped = [];
 
     if (editId) {
       const idx = list.findIndex(r => r.id === editId);
-      if (idx >= 0) list[idx] = { ...list[idx], title, date, notes, items };
+      if (idx >= 0) {
+        const removed = _ffRemoved('req');
+        dropped = removed.filter(id => (list[idx].fileIds || []).includes(id));
+        list[idx] = { ...list[idx], title, date, notes, items, ..._ffKeep(list[idx], removed) };
+      }
     } else {
       list.push({ id: reqId, providerId: currentUser, providerName: prov ? prov.name : currentUser,
         date, title, notes, items, fileIds: [], fileNames: [], fileTypes: [],
@@ -5017,7 +5008,8 @@ async function _saveRequestInner(editId) {
       clearTimeout(_saveTimer);
       const ok = await _flushState();
       if (!ok) _showToast('⚠️ Не удалось сохранить файлы на сервере — откройте заявку ещё раз и повторите загрузку', false);
-    }
+      else await _ffDeleteFiles(dropped);
+    } else await _ffDeleteFiles(dropped);
   } catch(e) {
     console.error('saveRequest error:', e);
     alert('Ошибка: ' + e.message);
@@ -5909,28 +5901,7 @@ function openMaintModal(editId) {
   _modalGen++;
   document.getElementById('modal-title').textContent = ex ? '✏️ Редактировать работу' : '➕ Добавить работу';
 
-  const _exSorted = (ex?.fileIds||[])
-    .map((fid,i) => ({ fid, i, ft:(ex.fileTypes||[])[i]||'', fn:(ex.fileNames||[])[i]||'Файл' }))
-    .sort((a,b)=>{const p=ft=>ft.startsWith('video/')?0:ft.startsWith('image/')?1:2;return p(a.ft)-p(b.ft);});
-  const _exIds    = _exSorted.map(f=>f.fid);
-  const _exTypes  = _exSorted.map(f=>f.ft);
-  const _exNames  = _exSorted.map(f=>f.fn);
-  const _exOrig   = _exSorted.map(f=>f.i);
-  const existFiles = _exSorted.length ? `
-    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
-      ${_exSorted.map(({fid,ft,fn},gi) => ft.startsWith('image/') ? `
-        <div onclick="openMaintGallery('${ex.id}',${gi})" title="${fn.replace(/'/g,"\\'")}"
-          style="width:72px;height:72px;border-radius:8px;overflow:hidden;cursor:pointer;border:2px solid #e2e8f0;flex-shrink:0;background:#f8fafc;display:flex;align-items:center;justify-content:center">
-          <img class="mthumb" data-fid="${fid}" alt="${fn.replace(/'/g,"\\'")}"
-            style="width:100%;height:100%;object-fit:cover;display:block">
-        </div>` : `
-        <div onclick="openMaintGallery('${ex.id}',${gi})" title="${fn.replace(/'/g,"\\'")}"
-          style="width:72px;height:72px;border-radius:8px;overflow:hidden;cursor:pointer;border:2px solid #e2e8f0;flex-shrink:0;background:#f8fafc;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">
-          <span style="font-size:26px">${fileEmoji(ft)}</span>
-          <span style="font-size:9px;color:#64748b;text-align:center;padding:0 2px;word-break:break-all;line-height:1.2;max-height:28px;overflow:hidden">${fn}</span>
-        </div>`).join('')}
-    </div>` : '';
-  window._maintGalData = ex ? {workId:ex.id, ids:_exIds, types:_exTypes, names:_exNames, origIndices:_exOrig} : null;
+  _ffInit('maint', ex ? _ffFromArrays(ex.fileIds, ex.fileNames, ex.fileTypes) : []);
 
   const defaultDate = ex?.date || `${maintYear}-${String(maintMonth).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
   const catOptions = MAINT_CATS.map(c =>
@@ -5995,7 +5966,7 @@ function openMaintModal(editId) {
     </div>
     <div class="form-group">
       <label>Фото / документы</label>
-      ${existFiles}
+      ${_ffHtml('maint')}
       <div class="upload-zone" onclick="document.getElementById('maint-fi').click()" id="maint-drop">
         📂 Загрузить фото, видео, документы
         <input type="file" id="maint-fi" multiple style="display:none" onchange="onFilePick(event)">
@@ -6009,14 +5980,7 @@ function openMaintModal(editId) {
 
   setupDrop('maint-drop');
   document.getElementById('modal-overlay').classList.remove('hidden');
-  if (ex) loadMaintImages();
-}
-
-function openMaintGallery(workId, startIndex) {
-  const d = window._maintGalData;
-  if (!d || d.workId !== workId) return;
-  _gal = { ids: d.ids, types: d.types, names: d.names, index: startIndex, workId: d.workId, origIndices: d.origIndices };
-  _galShow(startIndex);
+  _ffLoadThumbs();
 }
 
 // One maintenance save at a time — the button was disabled, but an exception mid-upload
@@ -6059,6 +6023,8 @@ async function _saveMaintInner(editId) {
     // Taken before the first upload — see _saveSOSInner.
     const formGen = _modalGen;
     const picked = pendingFiles.slice();
+    const removed = editId ? _ffRemoved('maint') : [];
+    let dropped = [];
     const draftId = _resolvingDraftId, draftFrom = _resolvingDraftExtra;
 
     // Upload files first (synchronous, like SOS)
@@ -6080,10 +6046,12 @@ async function _saveMaintInner(editId) {
     if (editId) {
       const idx = list.findIndex(w => w.id === editId);
       if (idx >= 0) {
+        const kept = _ffKeep(list[idx], removed);
+        dropped = removed.filter(id => (list[idx].fileIds || []).includes(id));
         const updated = { ...list[idx], title, date, cost, category, status, description,
-          fileIds:   [...(list[idx].fileIds||[]),   ...fileIds],
-          fileNames: [...(list[idx].fileNames||[]), ...fileNames],
-          fileTypes: [...(list[idx].fileTypes||[]), ...fileTypes]
+          fileIds:   [...kept.fileIds,   ...fileIds],
+          fileNames: [...kept.fileNames, ...fileNames],
+          fileTypes: [...kept.fileTypes, ...fileTypes]
         };
         if (quarterlySection) updated.quarterlySection = quarterlySection;
         else delete updated.quarterlySection;
@@ -6140,6 +6108,7 @@ async function _saveMaintInner(editId) {
         clearTimeout(_saveTimer);
         if (!(await _flushState())) return false;
       }
+      await _ffDeleteFiles(dropped); dropped = [];
       const _maintDetail = title + (description ? ' — ' + description.slice(0,120) : '') + ' · ' + date;
       _notifyOwner('🏗️ Обслуживание территории', _getFromName(), _maintDetail);
       addActivity('maint', _getFromName(), title, _maintDetail);
@@ -6973,15 +6942,7 @@ function openSosModal(editId) {
   _modalGen++;
   document.getElementById('modal-title').textContent = ex ? 'Редактировать событие SOS' : 'Добавить событие SOS';
 
-  const existFiles = (ex?.fileIds||[])
-    .map((fid,i) => ({ fid, i, ft:(ex.fileTypes||[])[i]||'', fn:(ex.fileNames||[])[i]||'Файл' }))
-    .sort((a,b)=>{const p=ft=>ft.startsWith('video/')?0:ft.startsWith('image/')?1:2;return p(a.ft)-p(b.ft);})
-    .map(({fid,i,ft,fn}) => `<div class="file-item">
-      <span>${fileEmoji(ft)}</span>
-      <span class="fn">${fn}</span>
-      <button onclick="previewFile('${fid}','${ft}','${fn.replace(/'/g,"\\'")}'")" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button>
-      <button onclick="delSosFile('${ex.id}',${i})" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Удалить файл">✕</button>
-    </div>`).join('');
+  _ffInit('sos', ex ? _ffFromArrays(ex.fileIds, ex.fileNames, ex.fileTypes) : []);
 
   document.getElementById('modal-body').innerHTML = `
     <div class="form-group">
@@ -7015,8 +6976,8 @@ function openSosModal(editId) {
       <textarea class="form-control" id="sos-desc" placeholder="Подробно опишите проблему, что сделано, что требуется...">${ex?.description||''}</textarea>
     </div>
     <div class="form-group">
-      <label>Файлы</label>
-      ${existFiles ? `<div class="file-list" style="margin-bottom:8px">${existFiles}</div>` : ''}
+      <label>Фото / документы</label>
+      ${_ffHtml('sos')}
       <div class="upload-zone" onclick="document.getElementById('sos-fi').click()" id="sos-drop">
         📂 Загрузить фото, видео, документы
         <input type="file" id="sos-fi" multiple style="display:none" onchange="onFilePick(event)">
@@ -7030,6 +6991,7 @@ function openSosModal(editId) {
 
   setupDrop('sos-drop');
   document.getElementById('modal-overlay').classList.remove('hidden');
+  _ffLoadThumbs();
 }
 
 // One SOS save at a time — a double tap on Save used to create the report twice, since
@@ -7065,6 +7027,7 @@ async function _saveSOSInner(editId) {
     // photos in the next one attached THOSE photos to this report (see _saveBudgetTxInner).
     const formGen = _modalGen;
     const picked = pendingFiles.slice();
+    const removed = editId ? _ffRemoved('sos') : [];
     const draftId = _resolvingDraftId, draftFrom = _resolvingDraftExtra;
 
     const fileIds=[], fileNames=[], fileTypes=[];
@@ -7075,6 +7038,7 @@ async function _saveSOSInner(editId) {
     }
 
     const list = getSOS();
+    let dropped = [];
     const draftExtra = _takeDraft(draftId, draftFrom);
     if (draftExtra) {
       fileIds.unshift(...draftExtra.fileIds);
@@ -7084,12 +7048,16 @@ async function _saveSOSInner(editId) {
 
     if (editId) {
       const idx = list.findIndex(s => s.id === editId);
-      if (idx >= 0) list[idx] = {
-        ...list[idx], title, date, priority, status, description,
-        fileIds: [...(list[idx].fileIds||[]), ...fileIds],
-        fileNames: [...(list[idx].fileNames||[]), ...fileNames],
-        fileTypes: [...(list[idx].fileTypes||[]), ...fileTypes]
-      };
+      if (idx >= 0) {
+        const kept = _ffKeep(list[idx], removed);
+        dropped = removed.filter(id => (list[idx].fileIds || []).includes(id));
+        list[idx] = {
+          ...list[idx], title, date, priority, status, description,
+          fileIds: [...kept.fileIds, ...fileIds],
+          fileNames: [...kept.fileNames, ...fileNames],
+          fileTypes: [...kept.fileTypes, ...fileTypes]
+        };
+      }
     } else {
       const item = { id: _newTxId(), title, date, priority, status, description, fileIds, fileNames, fileTypes, createdBy: currentUser, createdAt: new Date().toISOString() };
       if (draftExtra && draftExtra.sourceMessageId) item.telegramSourceMessageId = draftExtra.sourceMessageId;
@@ -7105,6 +7073,7 @@ async function _saveSOSInner(editId) {
         clearTimeout(_saveTimer);
         if (!(await _flushState())) return false;
       }
+      await _ffDeleteFiles(dropped); dropped = [];
       const _sosDetail = title + (description ? ' — ' + description.slice(0,120) : '');
       if (!editId) _notifyOwner('🚨 Экстренное ТО (SOS)', _getFromName(), _sosDetail);
       addActivity('sos', _getFromName(), title, _sosDetail);
@@ -7487,7 +7456,8 @@ function openWhItemForm(id) {
   _modalGen++;
   const kind = it ? (it.kind || 'asset') : 'asset';
   const opt = (list, cur) => list.map(([v, l]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('');
-  const existing = it && (it.fileIds || []).length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${(it.fileIds || []).map((f, k) => `<label style="font-size:11px;display:flex;align-items:center;gap:4px;background:#f1f5f9;border-radius:6px;padding:3px 7px"><input type="checkbox" class="wh-keep-file" value="${f}" checked> ${_escHtml((it.fileNames || [])[k] || 'Файл')}</label>`).join('')}</div><div style="font-size:11px;color:#6b7280;margin-bottom:6px">Снимите галочку, чтобы убрать фото.</div>` : '';
+  _ffInit('wh', it ? _ffFromArrays(it.fileIds, it.fileNames, it.fileTypes) : []);
+  const existing = _ffHtml('wh');
   document.getElementById('modal-title').textContent = it ? `✏️ ${it.invNo} — изменить` : '➕ Новая позиция склада';
   document.getElementById('modal-body').innerHTML = `
     <div class="form-group"><label>Название *</label><input class="form-control" id="wh-name" value="${_escHtml(it ? it.name : '')}" placeholder="Например: Дрель-шуруповёрт Bosch GSR 18V"></div>
@@ -7526,6 +7496,7 @@ function openWhItemForm(id) {
     <button class="btn btn-primary" id="wh-item-save" onclick="saveWhItem('${id || ''}')">💾 Сохранить</button>`;
   setupDrop('wh-drop');
   document.getElementById('modal-overlay').classList.remove('hidden');
+  _ffLoadThumbs();
 }
 function _whKindChanged() {
   const k = (document.querySelector('input[name="wh-kind"]:checked') || {}).value;
@@ -7543,7 +7514,7 @@ async function _saveWhItemInner(id) {
   const kind = id ? (_whItem(id) || {}).kind || 'asset' : ((document.querySelector('input[name="wh-kind"]:checked') || {}).value || 'asset');
   const qty = id ? 0 : _whQ(v('wh-qty'));
   if (qty < 0) { alert('Количество не может быть отрицательным'); return; }
-  const formGen = _modalGen, picked = pendingFiles.slice();
+  const formGen = _modalGen, picked = pendingFiles.slice(), removed = id ? _ffRemoved('wh') : [];
   const btn = document.getElementById('wh-item-save');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Сохраняем…'; }
   const fileIds = [], fileNames = [], fileTypes = [];
@@ -7555,8 +7526,8 @@ async function _saveWhItemInner(id) {
   const items = getWhItems();
   const prev = id ? items.find(i => i.id === id) : null;
   if (id && !prev) { alert('Эту позицию тем временем удалили'); if (btn) { btn.disabled = false; btn.textContent = '💾 Сохранить'; } return; }
-  const keep = prev ? Array.from(document.querySelectorAll('.wh-keep-file')).filter(c => c.checked).map(c => c.value) : [];
-  const kept = prev ? (prev.fileIds || []).map((f, k) => ({ f, n: (prev.fileNames || [])[k], t: (prev.fileTypes || [])[k] })).filter(x => keep.includes(x.f)) : [];
+  const kept = prev ? _ffKeep(prev, removed) : { fileIds: [], fileNames: [], fileTypes: [] };
+  const dropped = prev ? removed.filter(f => (prev.fileIds || []).includes(f)) : [];
   const item = Object.assign({}, prev || {}, {
     id: prev ? prev.id : _newTxId(),
     invNo: prev ? prev.invNo : _whNextInvNo(kind),
@@ -7566,7 +7537,7 @@ async function _saveWhItemInner(id) {
     location: v('wh-loc').trim(), serial: v('wh-serial').trim(), supplier: v('wh-supplier').trim(),
     purchaseDate: v('wh-pdate'), notes: v('wh-notes').trim(),
     condition: kind === 'asset' ? (v('wh-cond') || 'good') : '',
-    fileIds: kept.map(x => x.f).concat(fileIds), fileNames: kept.map(x => x.n).concat(fileNames), fileTypes: kept.map(x => x.t).concat(fileTypes),
+    fileIds: kept.fileIds.concat(fileIds), fileNames: kept.fileNames.concat(fileNames), fileTypes: kept.fileTypes.concat(fileTypes),
   });
   if (!prev) { item.createdBy = currentUser; item.createdAt = new Date().toISOString(); }
   setLS('wh_items', prev ? items.map(i => i.id === item.id ? item : i) : items.concat([item]));
@@ -7581,6 +7552,7 @@ async function _saveWhItemInner(id) {
   const sent = await _whCommit();
   if (_modalGen === formGen) closeModal(true);
   if (!sent) { alert(_WH_NOT_SENT); render(); return; }
+  await _ffDeleteFiles(dropped);
   _showToast(prev ? '✅ Сохранено' : `✅ Добавлено: ${item.invNo}`, true);
   render();
 }
@@ -13179,14 +13151,13 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   const cfg = FINANCE_LEDGERS[ledgerKey];
   const t = id ? (getBudgetTx(ledgerKey).find(x=>x.id===id)||{}) : {};
   _editingBudgetTx = id || null;
-  // Already-saved documents (editing an existing operation) and newly-picked-but-not-yet-
-  // uploaded files are tracked separately, exactly like the SOS/maintenance modals: the
-  // former shown with their own delete button (removes on save), the latter in the shared
-  // `pendingFiles` staging list (same one those other modals use) shown via renderPending().
-  window._budgetTxSavedFiles = _txFiles(t).slice();
-  // A closed month's record is shown read-only — see _isTxMonthClosed. Read by
-  // _renderBudgetSavedFiles() too, so the ✕/add controls disappear along with everything else.
+  // A closed month's record is shown read-only — see _isTxMonthClosed. Its documents too: no
+  // 🗑 on them, no adding.
   window._budgetTxReadOnly = !!id && _isTxMonthClosed(t, ledgerKey);
+  // Already-saved documents (editing an existing operation) are the shared form-file grid
+  // (_ffInit — taken off on Save); newly-picked ones are the shared `pendingFiles` staging
+  // list shown via renderPending(), like every other form.
+  _budgetFormFiles(_txFiles(t));
   pendingFiles = [];
   _modalGen++;
   // A new entry made while the owner is looking at an ended month he still has open goes into
@@ -13251,7 +13222,7 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
       <div id="bt-saved-files">${_renderBudgetSavedFiles()}</div>
       ${window._budgetTxReadOnly ? '' : `
       <input type="file" id="bt-file" accept="image/*,application/pdf" multiple style="display:none" onchange="onFilePick(event)">
-      <button type="button" class="btn btn-outline" style="width:100%;justify-content:center" onclick="document.getElementById('bt-file').click()">📂 ${(window._budgetTxSavedFiles||[]).length?'Добавить ещё':'Загрузить'}</button>
+      <button type="button" class="btn btn-outline" style="width:100%;justify-content:center" onclick="document.getElementById('bt-file').click()">📂 ${_budgetSavedFiles().length?'Добавить ещё':'Загрузить'}</button>
       <div id="pending-list"></div>`}
     </div>
     <div class="form-group"><label>Примечание</label><textarea class="form-control" id="bt-notes" ${window._budgetTxReadOnly?'disabled':''}>${t.notes||''}</textarea></div>`;
@@ -13260,28 +13231,28 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
     : `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
     <button class="btn btn-primary" id="bt-save-btn" onclick="saveBudgetTx('${ledgerKey}')">💾 Сохранить</button>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
+  _ffLoadThumbs();
 }
 
-// Already-saved documents of the operation being edited — shown separately from the
-// `pendingFiles` staging list (new picks not yet uploaded), each with a 👁 preview (via
-// the same gallery) and a ✕ to drop it. Dropping here only updates this in-memory list;
-// the actual storage delete happens on Save, together with everything else, so closing
-// the modal without saving leaves the record untouched — same as a fresh upload isn't
-// sent to Storage until Save either.
+// The operation's saved documents in the form. Uploaded ones go in the shared grid; the old
+// Google Drive links of imported history (no file of ours to show) stay as links, kept.
+function _budgetFormFiles(files) {
+  _ffInit('bt', (files || []).filter(f => f.id), { readOnly: window._budgetTxReadOnly });
+  window._budgetTxLinkFiles = (files || []).filter(f => !f.id);
+}
+// What the record keeps of them, as the form stands — what saveBudgetTx stores.
+const _budgetSavedFiles = () => (window._budgetTxLinkFiles || []).concat(_ffKept('bt'));
 function _renderBudgetSavedFiles() {
-  const files = window._budgetTxSavedFiles || [];
-  if (!files.length) return '';
-  return `<div style="margin-bottom:8px">${files.map((f, i) => `
-    <div class="file-item">
-      <span>${fileEmoji(f.type||'')}</span>
-      <span class="fn">${_escHtml(f.name||'Документ')}</span>
-      ${f.id ? `<span data-gids='${_jsonAttr([f.id])}' data-gtypes='${_jsonAttr([f.type||''])}' data-gnames='${_jsonAttr([f.name||'Документ'])}' style="display:inline"><button onclick="openGalleryEl(this,0)" style="color:#2563eb;background:none;border:none;cursor:pointer;padding:0 4px" title="Просмотр">👁</button></span>` : ''}
-      ${window._budgetTxReadOnly ? '' : `<button onclick="_removeBudgetSavedFile(${i})" style="color:#dc2626;background:none;border:none;cursor:pointer;padding:0 4px;font-size:16px" title="Убрать">✕</button>`}
-    </div>`).join('')}</div>`;
+  const links = window._budgetTxLinkFiles || [];
+  return _ffHtml('bt') + (links.length ? `<div style="margin-bottom:8px">${links.map(f => `<div style="margin-top:4px">
+      <a href="${_safeHref(f.url)}" target="_blank" rel="noopener" style="font-size:12px;color:#2563eb;text-decoration:none">📎 ${_escHtml(f.name || 'Документ')}</a></div>`).join('')}</div>` : '');
 }
-
+// The i-th saved document taken off, as the form lists them (links first, then uploads).
 function _removeBudgetSavedFile(i) {
-  (window._budgetTxSavedFiles||[]).splice(i,1);
+  const f = _budgetSavedFiles()[i];
+  if (!f || window._budgetTxReadOnly) return;
+  if (f.id) { _ffRemove('bt', f.id); return; }
+  window._budgetTxLinkFiles = (window._budgetTxLinkFiles || []).filter(x => x !== f);
   const el = document.getElementById('bt-saved-files');
   if (el) el.innerHTML = _renderBudgetSavedFiles();
 }
@@ -13392,7 +13363,7 @@ async function _saveBudgetTxInner(ledgerKey) {
   // The owner is the exception, in every ledger: he may record an expense with no document
   // (cash, a payment he made himself). Such a record says so on its card — see
   // _txAttachmentsHtml — so whoever approves or pays it knows there is nothing to look for.
-  const savedFiles = (window._budgetTxSavedFiles || []).slice();
+  const savedFiles = _budgetSavedFiles().slice();
   if (type === 'expense' && !savedFiles.length && !picked.length && currentUser !== 'owner') {
     alert('📎 Загрузите скан счёта/чека — без документа заявку на оплату отправить нельзя');
     return;
@@ -13510,9 +13481,10 @@ async function _saveBudgetTxInner(ledgerKey) {
   // save's form; if it was closed and another opened meanwhile, that one isn't touched.
   if (_modalGen === formGen) {
     pendingFiles = [];
-    window._budgetTxSavedFiles = fileRefs;
+    _budgetFormFiles(fileRefs);
     const sf = document.getElementById('bt-saved-files');
     if (sf) sf.innerHTML = _renderBudgetSavedFiles();
+    _ffLoadThumbs();
     renderPending();
   }
   // Everything after the record is in local state. Run once now, and again by
