@@ -199,7 +199,7 @@ async function appendLog(logEntries, logCap) {
 }
 
 module.exports = {
-  BACKEND, YANDEX, DOCS, RUN_QUERY_URL, dbFetch, uploadPhoto, OWN_FILE_PREFIXES, fsString, fsInt, fsStringArray, clone,
+  BACKEND, YANDEX, DATA_API, DOCS, RUN_QUERY_URL, dbFetch, uploadPhoto, OWN_FILE_PREFIXES, fsString, fsInt, fsStringArray, clone,
   readDoc, updateDoc, registerFiles, acquireLease, releaseLease,
   recordReminders, appendLog,
 };
