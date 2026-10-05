@@ -1759,9 +1759,9 @@ const FIREBASE_CONFIG = {
 // Where the data and files live. 'firebase': Google (Firestore + Firebase Storage), as it
 // was from the start. 'yandex': the data API in Yandex Cloud, at /db on this same address
 // (yandex/data-api) — documents in YDB, files in Object Storage, sign-in checked on the
-// server. The move's rehearsal copy of this page is published with 'yandex'
-// (deploy/yandex-site.ps1 -Rehearsal); the move itself is flipping this line.
-const DATA_BACKEND = 'firebase';
+// server. On Yandex since the move of 2026-10-06; Firebase stays as it was, untouched, as the
+// fallback for a few weeks — flipping this line back is the way back.
+const DATA_BACKEND = 'yandex';
 const _YDB = DATA_BACKEND === 'yandex';
 // The rehearsal copy (yandex-site.ps1 -Rehearsal sets this): it works on a copy of the data, so
 // nothing done in it may reach anyone — no notification emails, no Telegram check — and it

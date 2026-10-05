@@ -112,7 +112,33 @@ async function pool(items, n, fn) {
   }));
 }
 
-(async () => {
+// After the switch (--after-switch=<ISO time of the switch>): what still reached Firebase since.
+// A tab that stayed open on the old version keeps writing there until it reloads — those
+// documents are listed, to be carried over by hand (a blind copy could undo newer edits made
+// in Yandex). Telegram messages that came in around the switch are copied over if missing.
+async function afterSwitch(since) {
+  const late = [];
+  for (const coll of COLLECTIONS) {
+    for (const d of await listCollection(coll)) {
+      const path = d.name.split('/documents/')[1];
+      if (d.updateTime > since) late.push({ path, d });
+    }
+  }
+  let added = 0, had = 0;
+  const appLate = [];
+  for (const { path, d } of late) {
+    if (!path.startsWith('telegram_messages/')) { appLate.push(path + '  (saved ' + d.updateTime + ')'); continue; }
+    const r = await api('PATCH', 'v1/documents/' + path + '?currentDocument.exists=false', { fields: d.fields || {} });
+    if (r.status === 200) added++; else if (r.status === 409) had++; else throw new Error('copy ' + path + ' → ' + r.status);
+  }
+  console.log(`telegram messages since ${since}: ${added} copied over, ${had} already in Yandex`);
+  console.log(appLate.length ? `app documents saved to Firebase after the switch (${appLate.length}):\n   ` + appLate.join('\n   ') : 'app documents saved to Firebase after the switch: none');
+}
+
+const afterArg = process.argv.find(a => a.startsWith('--after-switch='));
+if (afterArg) {
+  afterSwitch(afterArg.split('=')[1]).catch(e => { console.error('FAILED: ' + (e && e.message || e)); process.exit(1); });
+} else (async () => {
   const started = Date.now();
   const health = await api('GET', 'v1/health');
   if (health.status !== 200 || JSON.parse(health.text).role !== 'service') throw new Error('the data API does not accept the service key');
@@ -148,17 +174,17 @@ async function pool(items, n, fn) {
     const obj = FIREBASE_FILE.exec(url)[1];
     const id = decodeURIComponent(obj).replace(/^files\//, '');
     if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) { extraGone++; continue; }
-    const there = await fetch(YANDEX_FILES + id, { method: 'HEAD' });
+    const there = await retrying('HEAD ' + id, () => fetch(YANDEX_FILES + id, { method: 'HEAD' }));
     if (there.ok) { map.set(obj, id); extraThere++; continue; }
-    const src = await fetch(url);
+    const src = await retrying('GET ' + id, () => fetch(url));
     if (!src.ok) { extraGone++; continue; }
     const type = String(src.headers.get('content-type') || 'application/octet-stream');
-    const buf = Buffer.from(await src.arrayBuffer());
+    const buf = Buffer.from(await retrying('read ' + id, () => src.arrayBuffer()));
     const pr = await api('POST', 'v1/admin:presignCopy', { id, type });
     if (pr.status !== 200) throw new Error('presignCopy ' + id + ' → ' + pr.status);
     const p = JSON.parse(pr.text);
-    const put = await fetch(p.uploadUrl, { method: 'PUT', headers: p.headers || { 'Content-Type': type }, body: buf });
-    const check = put.ok ? await fetch(YANDEX_FILES + id, { method: 'HEAD' }) : null;
+    const put = await retrying('PUT ' + id, () => fetch(p.uploadUrl, { method: 'PUT', headers: p.headers || { 'Content-Type': type }, body: buf }));
+    const check = put.ok ? await retrying('HEAD ' + id, () => fetch(YANDEX_FILES + id, { method: 'HEAD' })) : null;
     if (!check || !check.ok || Number(check.headers.get('content-length')) !== buf.length) throw new Error('copy of ' + id + ' did not land');
     map.set(obj, id);
     extraCopied++;

@@ -3,10 +3,12 @@
 #   powershell -ExecutionPolicy Bypass -File deploy\migrate-data-to-yandex.ps1 [-Force] [-Node <path to node.exe>]
 #
 # -Force: the switch itself - the passwords in use on Firebase replace any set in Yandex since.
+# -AfterSwitch <ISO time>: after the switch - lists what still reached Firebase since then and
+#   copies over Telegram messages missing in Yandex (see migrate-data-to-yandex.js).
 # Run copy-files-to-yandex.ps1 first, so every file the data points at is already there.
 # The service key goes from Lockbox to the copy's environment, in memory only.
 
-param([switch]$Force, [string]$Node = 'node')
+param([switch]$Force, [string]$AfterSwitch = '', [string]$Node = 'node')
 
 $ErrorActionPreference = 'Stop'
 $env:YC_CLI_INITIALIZATION_SILENCE = 'true'
@@ -20,6 +22,7 @@ if (-not $env:SERVICE_KEY) { throw 'SERVICE_KEY not found in Lockbox' }
 $script = Join-Path $PSScriptRoot 'migrate-data-to-yandex.js'
 $args2 = @($script)
 if ($Force) { $args2 += '--force' }
+if ($AfterSwitch) { $args2 += ('--after-switch=' + $AfterSwitch) }
 try {
   & $Node @args2
   $code = $LASTEXITCODE

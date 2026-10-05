@@ -11,9 +11,9 @@
 
 // Where the data is — the same place the app reads it (DATA_BACKEND in service-manager.html).
 // 'yandex': the data API in Yandex Cloud (yandex/data-api), the same REST shapes as Firestore,
-// called with the service key — Vercel environment variable SERVICE_KEY. DATA_BACKEND may
-// override the default below; the move to Yandex flips the default.
-const BACKEND = process.env.DATA_BACKEND || 'firebase';
+// called with the service key — Vercel environment variable SERVICE_KEY. On Yandex since the
+// move of 2026-10-06; the Vercel variable DATA_BACKEND=firebase would take it back.
+const BACKEND = process.env.DATA_BACKEND || 'yandex';
 const YANDEX = BACKEND === 'yandex';
 const DATA_API = String(process.env.DATA_API_URL || 'https://d5do4n0o23evidqovr16.jki8ffxa.apigw.yandexcloud.net/db').replace(/\/+$/, '');
 const DOCS = YANDEX ? DATA_API + '/v1/documents'

@@ -42,7 +42,9 @@ const STATE_CRED_FIELDS = ACCOUNTS.map(a => a.user).concat(ACCOUNTS.map(a => a.p
 
 const CRED_PATH = '_auth/credentials';
 const THROTTLE_PATH = '_auth/throttle';
-const MAX_FAILS = 8;
+// Counted per address, and a whole office shares one: generous enough that a morning of everyone
+// signing in again (and mistyping) does not shut the office out, still far from a brute force.
+const MAX_FAILS = 20;
 const WINDOW_MS = 15 * 60 * 1000;
 const TOKEN_DAYS = 30;
 

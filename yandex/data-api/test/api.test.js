@@ -152,9 +152,9 @@ test('the budget roles stay shut until the budget is published', async () => {
   assert.strictEqual((await login(t, 'buh', 'buh-secret')).status, 200);
 });
 
-test('eight wrong tries lock that caller out for 15 minutes; others are not affected', async () => {
+test('twenty wrong tries lock that caller out for 15 minutes; others are not affected', async () => {
   const t = await imported();
-  for (let i = 0; i < 8; i++) assert.strictEqual((await login(t, 'admin', 'nope', '1.1.1.1')).status, 401);
+  for (let i = 0; i < 20; i++) assert.strictEqual((await login(t, 'admin', 'nope', '1.1.1.1')).status, 401);
   assert.strictEqual((await login(t, 'admin', 'adm-secret', '1.1.1.1')).status, 429, 'even the right password');
   assert.strictEqual((await login(t, 'admin', 'adm-secret', '2.2.2.2')).status, 200, 'another caller');
   clockMs += 16 * 60 * 1000;
