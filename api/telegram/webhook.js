@@ -16,9 +16,10 @@
 // also nudges build-drafts after each captured message, which is what gets a worker their
 // follow-up question within minutes on a plan whose crons may only run once a day.
 //
-// One-time setup after this is deployed (done once, not on every request):
+// One-time setup after this is deployed (done once, not on every request; POST
+// /api/telegram/status does the same without needing the token at hand):
 //   curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
-//     -d "url=https://sad-budushego.ru/api/telegram/webhook" \
+//     -d "url=https://api.sad-budushego.ru/api/telegram/webhook" \
 //     -d "secret_token=<TELEGRAM_WEBHOOK_SECRET>"
 //
 // Required Vercel environment variables: TELEGRAM_WEBHOOK_SECRET (Telegram echoes it
