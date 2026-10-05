@@ -1,0 +1,41 @@
+// Is Telegram managing to deliver the group's messages to the webhook? Telegram's own answer
+// (getWebhookInfo), reduced to what says so and nothing secret: where it delivers, how many
+// messages are waiting because delivery failed, and the last error it got. Without this the
+// only sign of a broken webhook is silence — indistinguishable from a quiet day.
+//
+//   GET /api/telegram/status
+//
+// Answers are cached for half a minute, so the URL can't be used to hammer Telegram's API.
+
+let cached = { at: 0, body: null };
+
+module.exports = async (req, res) => {
+  if (req.method !== 'GET') { res.status(405).json({ error: 'method not allowed' }); return; }
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) { res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN not configured' }); return; }
+  if (!cached.body || Date.now() - cached.at > 30000) {
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
+      const j = await r.json();
+      if (!j.ok) { res.status(502).json({ error: 'Telegram: ' + String(j.description || r.status) }); return; }
+      const w = j.result || {};
+      const at = s => (s ? new Date(s * 1000).toISOString() : null);
+      cached = {
+        at: Date.now(),
+        body: {
+          url: w.url || '',
+          pendingUpdates: w.pending_update_count || 0,
+          lastErrorAt: at(w.last_error_date),
+          lastError: w.last_error_message || null,
+          lastSyncErrorAt: at(w.last_synchronization_error_date),
+          checkedAt: new Date().toISOString(),
+        },
+      };
+    } catch (e) {
+      res.status(502).json({ error: 'Telegram unreachable: ' + String(e && e.message || e) });
+      return;
+    }
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).json(cached.body);
+};
