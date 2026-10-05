@@ -23,7 +23,7 @@ $secret = Invoke-RestMethod -Uri "https://lockbox.api.cloud.yandex.net/lockbox/v
 $secretVersion = $secret.currentVersion.id
 
 $zip = Join-Path ([IO.Path]::GetTempPath()) ("data-api-" + [Guid]::NewGuid().ToString('N') + ".zip")
-$files = 'index.js','api.js','core.js','store-ydb.js','files.js','auth.js','package.json' | ForEach-Object { Join-Path $src $_ }
+$files = 'index.js','api.js','core.js','store-ydb.js','files.js','auth.js','accounts.js','package.json' | ForEach-Object { Join-Path $src $_ }
 Compress-Archive -Path $files -DestinationPath $zip
 $content = [Convert]::ToBase64String([IO.File]::ReadAllBytes($zip))
 [IO.File]::Delete($zip)

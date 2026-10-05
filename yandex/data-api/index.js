@@ -8,8 +8,10 @@ const { createApi } = require('./api');
 const store = require('./store-ydb');
 const files = require('./files');
 const auth = require('./auth');
+const { createAccounts } = require('./accounts');
 
-const api = createApi({ store, auth, files });
+const accounts = createAccounts({ store, auth });
+const api = createApi({ store, auth, files, accounts });
 
 module.exports.handler = async function (event) {
   const params = event.params || event.pathParams || {};
@@ -17,6 +19,10 @@ module.exports.handler = async function (event) {
   if (rest == null) rest = String(event.url || event.path || '').split('?')[0].replace(/^.*?\/db\//, '');
   const query = event.multiValueQueryStringParameters || event.queryStringParameters || {};
   const body = event.isBase64Encoded && event.body ? Buffer.from(event.body, 'base64').toString('utf8') : (event.body || '');
-  const res = await api.handle({ method: event.httpMethod, rest, query, headers: event.headers || {}, body });
+  // Who is calling, for counting failed sign-ins: the client's address as the gateway saw it.
+  const h = event.headers || {};
+  const ip = (event.requestContext && event.requestContext.identity && event.requestContext.identity.sourceIp)
+    || String(h['X-Forwarded-For'] || h['x-forwarded-for'] || '').split(',')[0].trim() || h['X-Real-Ip'] || null;
+  const res = await api.handle({ method: event.httpMethod, rest, query, headers: h, body, ip });
   return { statusCode: res.status, headers: res.headers, body: res.body, isBase64Encoded: false };
 };

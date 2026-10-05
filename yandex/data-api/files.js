@@ -34,12 +34,17 @@ function s3() {
 const newId = () => Date.now().toString(36) + crypto.randomBytes(10).toString('hex');
 
 // `id` only for the copy from Firebase (admin:presignCopy, service only), which keeps ids.
-async function presignUpload({ type, id: keepId }) {
+// With a `name` the file opens in the browser under that name rather than downloading (as
+// the app's Firebase uploads did). Both headers are part of the signature, so the PUT must
+// send `headers` exactly as returned.
+async function presignUpload({ type, name, id: keepId }) {
   const id = keepId || newId();
   const key = 'files/' + id;
-  const contentType = type || 'application/octet-stream';
-  const uploadUrl = await getSignedUrl(s3(), new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType }), { expiresIn: 900 });
-  return { id, uploadUrl, contentType, url: PUBLIC_BASE + key };
+  const headers = { 'Content-Type': type || 'application/octet-stream' };
+  if (name) headers['Content-Disposition'] = "inline; filename*=UTF-8''" + encodeURIComponent(String(name).slice(0, 200));
+  const cmd = new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: headers['Content-Type'], ContentDisposition: headers['Content-Disposition'] });
+  const uploadUrl = await getSignedUrl(s3(), cmd, { expiresIn: 900 });
+  return { id, uploadUrl, headers, contentType: headers['Content-Type'], url: PUBLIC_BASE + key };
 }
 
 async function remove(id) {

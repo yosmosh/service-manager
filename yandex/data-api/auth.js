@@ -2,7 +2,8 @@
 //   • the server functions (Vercel: the Telegram bot, the reminders, the AI) — header
 //     X-Service-Key, a shared secret;
 //   • a person signed in to the app — Authorization: Bearer u1.<payload>.<signature>, a token
-//     this service signs at sign-in (HMAC-SHA256 with AUTH_SECRET), carrying their role.
+//     this service signs at sign-in (HMAC-SHA256 with AUTH_SECRET, accounts.js), carrying
+//     their role (r), account (s) and the password generation it was issued under (g).
 // Anyone else is anonymous. Both secrets come from Lockbox through the function's environment.
 
 'use strict';
@@ -35,14 +36,18 @@ function verify(token) {
   return p;
 }
 
-function identify(headers) {
+// The caller's role, or null. tokenCurrent(payload), when given, also turns away a token
+// issued before its account's password was last changed.
+async function identify(headers, tokenCurrent) {
   const h = {};
   for (const k of Object.keys(headers || {})) h[k.toLowerCase()] = headers[k];
   const sk = h['x-service-key'];
   if (sk && process.env.SERVICE_KEY && sameText(sk, process.env.SERVICE_KEY)) return 'service';
   const m = /^Bearer\s+(\S+)$/.exec(h['authorization'] || '');
   const p = m ? verify(m[1]) : null;
-  return p ? p.r : null;
+  if (!p) return null;
+  if (tokenCurrent && !(await tokenCurrent(p))) return null;
+  return p.r;
 }
 
 module.exports = { sign, verify, identify };

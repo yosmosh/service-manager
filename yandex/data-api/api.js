@@ -8,8 +8,12 @@
 //   POST   v1/documents:runQuery            (date ≥ since on one collection — the one query in use)
 //   POST   v1/files:presign                 → where to PUT a new file, and its address
 //   DELETE v1/files/{id}
+//   POST   v1/auth:login                    → a token for the app (accounts.js)
+//   GET    v1/auth:accounts                 the account names, for the settings screen
+//   POST   v1/auth:setAccount               a new name and/or password for one account
 //   GET    v1/health
 //   POST   v1/admin:setup                   (service only — creates the tables)
+//   POST   v1/admin:importCredentials       (service only — the move: passwords out of state)
 //
 // Store: meta(path), read(path, names|null), transact(path, fn), query(...), setup().
 // Field values travel through the store as JSON text, so a big document is passed on as it
@@ -39,7 +43,7 @@ function docJson(path, meta, fieldTexts) {
   return s + ',"createTime":' + JSON.stringify(meta.createTime) + ',"updateTime":' + JSON.stringify(meta.updateTime) + '}';
 }
 
-function createApi({ store, auth, files, now }) {
+function createApi({ store, auth, files, accounts, now }) {
   const clock = now || (() => Date.now());
 
   async function getDoc(path, query) {
@@ -119,7 +123,7 @@ function createApi({ store, auth, files, now }) {
       const method = String(req.method || 'GET').toUpperCase();
       const rest = String(req.rest || '').replace(/^\/+/, '');
       const query = req.query || {};
-      const role = await auth.identify(req.headers || {});
+      const role = await auth.identify(req.headers || {}, accounts ? accounts.tokenCurrent : null);
 
       if (method === 'GET' && rest === 'v1/health') return json(200, { ok: true, role: role || null });
 
@@ -137,6 +141,25 @@ function createApi({ store, auth, files, now }) {
         try { b = JSON.parse(req.body || '{}'); } catch (e) { /* checked below */ }
         if (!/^[A-Za-z0-9_-]{6,80}$/.test(String(b.id || ''))) throw new HttpError(400, 'INVALID_ARGUMENT', 'A file id is required');
         return json(200, await files.presignUpload({ type: String(b.type || 'application/octet-stream'), id: String(b.id) }));
+      }
+
+      if (accounts && rest.startsWith('v1/auth:')) {
+        let b = {};
+        if (method === 'POST') { try { b = JSON.parse(req.body || '{}'); } catch (e) { throw new HttpError(400, 'INVALID_ARGUMENT', 'Body is not JSON'); } }
+        const signIn = { status: 401, body: { error: 'Войдите в систему' } };
+        let r = null;
+        if (rest === 'v1/auth:login' && method === 'POST') r = await accounts.login({ username: b.username, password: b.password, ip: req.ip });
+        else if (rest === 'v1/auth:accounts' && method === 'GET') r = role ? await accounts.list(role) : signIn;
+        else if (rest === 'v1/auth:setAccount' && method === 'POST') r = role ? await accounts.setAccount(role, b) : signIn;
+        if (r) return json(r.status, r.body);
+      }
+
+      if (accounts && rest === 'v1/admin:importCredentials' && method === 'POST') {
+        if (role !== 'service') throw new HttpError(403, 'PERMISSION_DENIED', 'Not allowed');
+        let b = {};
+        try { b = JSON.parse(req.body || '{}'); } catch (e) { /* defaults */ }
+        const r = await accounts.importFromState({ force: !!b.force });
+        return json(r.status, r.body);
       }
 
       if (rest === 'v1/documents:runQuery' && method === 'POST') return await runQuery(role, req.body);
