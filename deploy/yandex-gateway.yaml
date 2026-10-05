@@ -15,7 +15,7 @@ x-yc-apigateway:
       description: >
         Where /api/* is passed on to — a custom domain of the Vercel project. Not *.vercel.app:
         those addresses do not connect from Russia (Yandex's own servers included), and are
-        behind Vercel's login besides. Once www moves to this gateway: api.sad-budushego.ru.
+        behind Vercel's login besides. Not www either: that is this gateway now.
 
 paths:
   /:
@@ -63,6 +63,16 @@ paths:
         type: cloud_functions
         function_id: d4e7okpot0k25pk5b8em
         service_account_id: ajep053p13thhsapa7r6
+
+  # Temporary, for the switch-over: answers 401 once Yandex's own DNS resolves
+  # api.sad-budushego.ru (503 ENOTFOUND until then). Remove after the switch.
+  /zz-api-probe:
+    get:
+      x-yc-apigateway-integration:
+        type: http
+        url: https://api.sad-budushego.ru/api/cron/sos-reminder
+        headers:
+          Host: api.sad-budushego.ru
 
   /{file+}:
     get:

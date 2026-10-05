@@ -33,8 +33,9 @@ function s3() {
 // The same id shape the app has always used for files (time, then random).
 const newId = () => Date.now().toString(36) + crypto.randomBytes(10).toString('hex');
 
-async function presignUpload({ type }) {
-  const id = newId();
+// `id` only for the copy from Firebase (admin:presignCopy, service only), which keeps ids.
+async function presignUpload({ type, id: keepId }) {
+  const id = keepId || newId();
   const key = 'files/' + id;
   const contentType = type || 'application/octet-stream';
   const uploadUrl = await getSignedUrl(s3(), new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType }), { expiresIn: 900 });

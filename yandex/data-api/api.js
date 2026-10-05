@@ -129,6 +129,16 @@ function createApi({ store, auth, files, now }) {
         return json(200, { ok: true });
       }
 
+      // The move from Firebase: a PUT for a file that keeps the id it already has, so the
+      // registry's entries stay valid. Service only — nobody else chooses a file's id.
+      if (rest === 'v1/admin:presignCopy' && method === 'POST') {
+        if (role !== 'service') throw new HttpError(403, 'PERMISSION_DENIED', 'Not allowed');
+        let b = {};
+        try { b = JSON.parse(req.body || '{}'); } catch (e) { /* checked below */ }
+        if (!/^[A-Za-z0-9_-]{6,80}$/.test(String(b.id || ''))) throw new HttpError(400, 'INVALID_ARGUMENT', 'A file id is required');
+        return json(200, await files.presignUpload({ type: String(b.type || 'application/octet-stream'), id: String(b.id) }));
+      }
+
       if (rest === 'v1/documents:runQuery' && method === 'POST') return await runQuery(role, req.body);
 
       if (rest === 'v1/files:presign' && method === 'POST') {

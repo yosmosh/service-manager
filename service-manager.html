@@ -2,6 +2,12 @@
 <html dir="ltr" lang="ru">
 <head>
 <meta charset="UTF-8">
+<script>
+// sad-budushego.ru without www opens the app at www, as it always has: one address means one
+// sign-in, one set of saved settings and one notification subscription. Vercel used to send
+// this redirect; the Yandex gateway serves both names with the same page, so the page does.
+if (location.hostname === 'sad-budushego.ru') location.replace('https://www.sad-budushego.ru' + location.pathname + location.search + location.hash);
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Управление поставщиками услуг</title>
 <style>
