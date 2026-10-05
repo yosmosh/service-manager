@@ -13,8 +13,9 @@ x-yc-apigateway:
     backendHost:
       default: "www.sad-budushego.ru"
       description: >
-        Where /api/* is passed on to — a public domain of the Vercel project (its *.vercel.app
-        addresses are behind Vercel's login).
+        Where /api/* is passed on to — a custom domain of the Vercel project. Not *.vercel.app:
+        those addresses do not connect from Russia (Yandex's own servers included), and are
+        behind Vercel's login besides. Once www moves to this gateway: api.sad-budushego.ru.
 
 paths:
   /:
