@@ -49,6 +49,21 @@ paths:
           connect: 10
           read: 120
 
+  # The app's data — the Cloud Function «data-api» (yandex/data-api): Firestore-shaped REST
+  # over YDB and the files bucket. Called through the gateway so it is on our own address.
+  /db/{rest+}:
+    x-yc-apigateway-any-method:
+      parameters:
+        - name: rest
+          in: path
+          required: true
+          schema:
+            type: string
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4e7okpot0k25pk5b8em
+        service_account_id: ajep053p13thhsapa7r6
+
   /{file+}:
     get:
       parameters:
