@@ -11,11 +11,19 @@ info:
 x-yc-apigateway:
   variables:
     backendHost:
-      default: "www.sad-budushego.ru"
+      default: "api.sad-budushego.ru"
       description: >
-        Where /api/* is passed on to — a custom domain of the Vercel project. Not *.vercel.app:
-        those addresses do not connect from Russia (Yandex's own servers included), and are
-        behind Vercel's login besides. Not www either: that is this gateway now.
+        The Vercel project's own domain for /api/* — what the request says it is for (Host), so
+        Vercel knows the project. Not *.vercel.app: those addresses do not connect from Russia
+        (Yandex's own servers included), and are behind Vercel's login besides. Not www either:
+        that is this gateway now.
+    backendAddress:
+      default: "9e8f911dea7b4d7b.vercel-dns-017.com"
+      description: >
+        Where the connection for /api/* goes — the name Vercel gave for the project's domains
+        (api.sad-budushego.ru is a CNAME to it). Connecting to it directly keeps /api working
+        whatever Yandex's own resolvers think of our zone, which were slow to pick it up after
+        it moved to Yandex DNS.
 
 paths:
   /:
@@ -39,7 +47,7 @@ paths:
       # that must be the backend's own, or the TLS connection to it fails.
       x-yc-apigateway-integration:
         type: http
-        url: https://${var.backendHost}/api/{path}
+        url: https://${var.backendAddress}/api/{path}
         headers:
           '*': '*'
           Host: ${var.backendHost}
@@ -63,16 +71,6 @@ paths:
         type: cloud_functions
         function_id: d4e7okpot0k25pk5b8em
         service_account_id: ajep053p13thhsapa7r6
-
-  # Temporary, for the switch-over: answers 401 once Yandex's own DNS resolves
-  # api.sad-budushego.ru (503 ENOTFOUND until then). Remove after the switch.
-  /zz-api-probe:
-    get:
-      x-yc-apigateway-integration:
-        type: http
-        url: https://api.sad-budushego.ru/api/cron/sos-reminder
-        headers:
-          Host: api.sad-budushego.ru
 
   /{file+}:
     get:
