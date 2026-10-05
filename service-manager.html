@@ -1553,6 +1553,7 @@ function saveNotifyConfig() {
 }
 
 async function testNotifyEmail() {
+  if (REHEARSAL) { alert('Тестовая копия: письма отсюда не отправляются'); return; }
   saveNotifyConfig();
   const cfg = getNotifyCfg();
   if (!cfg.emailjs_key || !cfg.emailjs_service || !cfg.emailjs_template) {
@@ -1762,6 +1763,10 @@ const FIREBASE_CONFIG = {
 // (deploy/yandex-site.ps1 -Rehearsal); the move itself is flipping this line.
 const DATA_BACKEND = 'firebase';
 const _YDB = DATA_BACKEND === 'yandex';
+// The rehearsal copy (yandex-site.ps1 -Rehearsal sets this): it works on a copy of the data, so
+// nothing done in it may reach anyone — no notification emails, no Telegram check — and it
+// says on every screen what it is.
+const REHEARSAL = false;
 
 // _useFirebase has always meant "the data is shared, on a server" (as opposed to the
 // browser's own storage); on Yandex it is that too. Firebase itself is then needed only
@@ -2898,6 +2903,7 @@ function _telegramRefreshButton() {
 }
 
 async function refreshTelegramDrafts() {
+  if (REHEARSAL) { _showToast('Тестовая копия: проверка Telegram отключена', false); return; }
   const btn = document.getElementById('tg-refresh-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⧗ Проверяем…'; }
   try {
@@ -3057,6 +3063,7 @@ async function _initFCM() {
 // Shared by every _notify* below — a browser notification (best-effort) plus an email to
 // one specific address via EmailJS, if both are configured.
 async function _notifyEmail(toEmail, eventType, fromName, details) {
+  if (REHEARSAL) return;
   const cfg = getNotifyCfg();
 
   // Browser notification (works when app is open or in background)
@@ -9965,6 +9972,12 @@ function renderSharePage(d) {
 // ИНИЦИАЛИЗАЦИЯ
 // ==============================
 async function init() {
+  if (REHEARSAL) {
+    const tag = document.createElement('div');
+    tag.textContent = '🧪 Тестовая копия на Яндексе — изменения здесь не попадут в рабочую систему';
+    tag.style.cssText = 'position:fixed;top:0;left:50%;transform:translateX(-50%);z-index:99998;background:#7c3aed;color:#fff;font-size:11px;font-weight:700;padding:3px 12px;border-radius:0 0 8px 8px;pointer-events:none;max-width:calc(100vw - 32px);text-align:center';
+    document.body.appendChild(tag);
+  }
   const shareToken = new URLSearchParams(window.location.search).get('share');
   if (shareToken) {
     await loadSharePage(shareToken);
