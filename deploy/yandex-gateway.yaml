@@ -85,3 +85,17 @@ paths:
         bucket: sad-budushego-site
         object: '{file}'
         service_account_id: ajep053p13thhsapa7r6
+    # An open tab asks HEAD /service-manager.html every few minutes to notice a new deploy
+    # (_pageEtag); without this the gateway answered 405 and tabs never picked one up.
+    head:
+      parameters:
+        - name: file
+          in: path
+          required: true
+          schema:
+            type: string
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: sad-budushego-site
+        object: '{file}'
+        service_account_id: ajep053p13thhsapa7r6

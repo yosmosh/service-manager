@@ -2477,10 +2477,12 @@ function _setupSync() {
 let _bootEtag = null;
 let _newVersionSeen = false;
 
+// Vercel answers with an ETag; Yandex's gateway passes on only Last-Modified, which the
+// deploy script moves forward with every upload — either one changes when a deploy lands.
 async function _pageEtag() {
   try {
     const r = await fetch('/service-manager.html', { method: 'HEAD', cache: 'no-store' });
-    return r.ok ? (r.headers.get('etag') || null) : null;
+    return r.ok ? (r.headers.get('etag') || r.headers.get('last-modified') || null) : null;
   } catch (e) { return null; }
 }
 
