@@ -1,5 +1,6 @@
-importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');
+// Served from the site itself, like every library the page uses (see vendor/ in service-manager.html).
+importScripts('/vendor/firebase-10.12.2/firebase-app-compat.js');
+importScripts('/vendor/firebase-10.12.2/firebase-messaging-compat.js');
 
 firebase.initializeApp({
   apiKey: "AIzaSyAol7Oz5JSdqweqz1y1qVKkyXuj8Kq8alw",

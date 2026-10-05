@@ -321,7 +321,10 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
   .jthumb-wrap img,.jthumb-wrap>div{width:72px !important;height:72px !important}
 }
 </style>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<!-- Every library is served from the site itself (vendor/), not from Google or jsDelivr:
+     those are slowed or cut off on many Russian networks, and one script that never arrives
+     keeps the whole page from opening. -->
+<link rel="stylesheet" href="vendor/flatpickr-4.6.13/flatpickr.min.css">
 <style>
 /* flatpickr Russian overrides */
 .flatpickr-calendar { font-family: 'Segoe UI', Arial, sans-serif; direction: ltr; }
@@ -510,14 +513,16 @@ img{max-width:100%;height:auto}
   </div>
 </div>
 
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ru.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+<script src="vendor/firebase-10.12.2/firebase-app-compat.js"></script>
+<script src="vendor/firebase-10.12.2/firebase-storage-compat.js"></script>
+<script src="vendor/flatpickr-4.6.13/flatpickr.min.js"></script>
+<script src="vendor/flatpickr-4.6.13/ru.js"></script>
+<script src="vendor/emailjs-4.4.1/email.min.js"></script>
+<script src="vendor/firebase-10.12.2/firebase-messaging-compat.js"></script>
+<!-- heic2any (1.3 MB) is fetched only when an iPhone HEIC photo is picked — _loadHeic2any. -->
+<!-- The Firestore SDK isn't loaded: the database is read and written over REST (_fsGetDoc,
+     _flushState); _firestoreDB below only marks that Firebase is configured. -->
+
 <script>
 const APP_VERSION = 'v2026-06-21a';
 
@@ -1651,7 +1656,9 @@ let _firestoreDB = null, _storageRoot = null, _useFirebase = false;
 if (FIREBASE_CONFIG) {
   try {
     firebase.initializeApp(FIREBASE_CONFIG);
-    _firestoreDB = firebase.firestore();
+    // A marker only — every read and write goes over Firestore's REST API, so its SDK (a
+    // third of a megabyte on every page load) isn't loaded at all.
+    _firestoreDB = { rest: true };
     _useFirebase = true;
     try { _storageRoot = firebase.storage().ref(); } catch(se) { console.warn('Storage init failed:', se); }
   } catch(e) { console.error('Firebase init error:', e); _firestoreDB = null; _useFirebase = false; }
@@ -3985,11 +3992,30 @@ function _fileFP(data, size) {
   return size + ':' + b64.length + ':' + h1.toString(36) + h2.toString(36);
 }
 
+// heic2any (1.3 MB) is needed only for an iPhone HEIC/HEIF photo, so it is fetched the first
+// time one is picked rather than with every page. If it can't be fetched, the photo goes on
+// as it is — what happened before when the library hadn't loaded.
+const _isHeicFile = file => file.type === 'image/heic' || file.type === 'image/heif' || /\.(heic|heif)$/i.test(file.name || '');
+let _heicLoading = null;
+function _loadHeic2any() {
+  if (typeof heic2any !== 'undefined') return Promise.resolve(true);
+  if (!_heicLoading) _heicLoading = new Promise(res => {
+    const s = document.createElement('script');
+    s.src = 'vendor/heic2any-0.0.4/heic2any.min.js';
+    s.onload = () => res(true);
+    s.onerror = () => { _heicLoading = null; res(false); };
+    document.head.appendChild(s);
+  });
+  return _heicLoading;
+}
+
 function _compressImage(file) {
+  return _isHeicFile(file) ? _loadHeic2any().then(() => _compressImageNow(file)) : _compressImageNow(file);
+}
+function _compressImageNow(file) {
   return new Promise(function(resolve) {
     // Convert HEIC/HEIF (iPhone format) → JPEG before processing
-    const isHeic = file.type === 'image/heic' || file.type === 'image/heif' ||
-                   /\.(heic|heif)$/i.test(file.name || '');
+    const isHeic = _isHeicFile(file);
     if (isHeic && typeof heic2any !== 'undefined') {
       heic2any({ blob: file, toType: 'image/jpeg', quality: 0.85 })
         .then(function(blob) {
@@ -4038,9 +4064,11 @@ function _compressImage(file) {
 // receipt/invoice text and digits need more resolution and less JPEG compression to be
 // read reliably by the AI scanner. Used only for the API request payload, never stored.
 function _compressForAI(file) {
+  return _isHeicFile(file) ? _loadHeic2any().then(() => _compressForAINow(file)) : _compressForAINow(file);
+}
+function _compressForAINow(file) {
   return new Promise(function(resolve) {
-    const isHeic = file.type === 'image/heic' || file.type === 'image/heif' ||
-                   /\.(heic|heif)$/i.test(file.name || '');
+    const isHeic = _isHeicFile(file);
     if (isHeic && typeof heic2any !== 'undefined') {
       heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 })
         .then(function(blob) {
@@ -5422,7 +5450,7 @@ function _buildReportHTML() {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Отчёт — ${moName} ${yr}</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="${location.origin}/vendor/inter-5.2.8/inter.css" rel="stylesheet">
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 html{overflow-x:hidden}
@@ -8210,7 +8238,7 @@ function _whLoadQr() {
   return new Promise((resolve, reject) => {
     if (window.qrcode) return resolve();
     const sc = document.createElement('script');
-    sc.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
+    sc.src = 'vendor/qrcode-generator-1.4.4/qrcode.js';
     sc.onload = () => resolve(); sc.onerror = () => reject(new Error('QR library failed to load'));
     document.head.appendChild(sc);
   });
