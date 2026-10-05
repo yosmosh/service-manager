@@ -3489,6 +3489,13 @@ function render() {
     title.textContent = '💰 Бюджет';
     content.innerHTML = renderBudget();
   }
+  // The owner's tool for moving records to another section — at the top of each page whose
+  // records it moves (opening on that page's own), and of the dashboard.
+  if (currentUser === 'owner' && !(view === 'maint' && maintShowTelegram)) {
+    const mvFrom = { dashboard: 'maint', sos: 'sos', maint: 'maint', journal: 'journal', provider: 'journal', budget: 'b:' + budgetLedger }[view];
+    if (mvFrom) actions.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;align-items:center">
+      <button class="btn btn-outline" onclick="openMoveTool('${mvFrom}')" title="Перенести записи в другой раздел">🔀<span class="wh-tb-txt"> Перенос</span></button>${actions.innerHTML}</div>`;
+  }
 }
 
 function renderPage() {
@@ -5873,7 +5880,6 @@ function renderMaintenance() {
         <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
           <button class="btn btn-outline" style="font-size:11px;padding:4px 10px" onclick="openMaintModal('${w.id}')">✏️ Редактировать</button>
           <button style="font-size:11px;padding:4px 10px;background:#fee2e2;color:#dc2626;border:none;cursor:pointer;border-radius:6px;font-family:inherit" onclick="delMaint('${w.id}')">🗑️ Удалить</button>
-          ${_moveDeptButton('maint', w.id)}
         </div>` : ''}
       </div>
     </div>`;
@@ -6159,91 +6165,289 @@ function delMaint(id) {
 }
 
 // ==============================
-// ПЕРЕНОС МЕЖДУ РАЗДЕЛАМИ (владелец)
+// ПЕРЕНОС ЗАПИСЕЙ МЕЖДУ РАЗДЕЛАМИ (владелец)
 // ==============================
-// A work logged in the wrong section — a routine job entered as an emergency, or an emergency
-// filed under Обслуживание территории — moves to the other one as the same record: same id,
-// photos, author and dates, and the Telegram message ids, so the bot's «после» photo still
-// finds it. What only the target section has is asked for on the way (an emergency's
-// priority, a work's category); what only the source had stays on the record, so moving it
-// back loses nothing. Owner only.
-const _MOVE_DEPTS = {
-  maint: { key: 'maint_works', label: '🏗️ Обслуживание территории', list: () => getMaintWorks() },
-  sos:   { key: 'sos_items',   label: '🚨 Экстренное ТО (SOS)',      list: () => getSOS() },
-};
-// The same stage of the work in the other section's terms, keyed by the section it goes TO.
-const _MOVE_STATUS = {
-  sos:   { planned: 'pending', in_progress: 'in_progress', done: 'resolved' },
-  maint: { pending: 'planned', in_progress: 'in_progress', resolved: 'done' },
-};
-const _otherDept = from => from === 'maint' ? 'sos' : 'maint';
+// One tool, opened from the top of the pages whose records it moves and from the dashboard
+// (🔀 Перенос) — not a button on every record. A record logged in the wrong place moves to
+// where it belongs, as itself:
+//  • works — Экстренное ТО, Обслуживание территории and any provider's visit journal — keep
+//    their title, description, date, photos, author and Telegram message ids. What only the
+//    target has is asked for on the way (an emergency's priority, a work's category, which
+//    provider); what only the source had stays on the record — inside a visit, in its
+//    _origin — so moving it back loses nothing;
+//  • budget operations move between Кухня, ТО и зарплаты and Личный бюджет with their
+//    approvals, payment, documents and month; one going into a ledger with funds needs one.
+// Stock, kitchen and purchase records are different kinds of things and aren't offered.
+const _MV_WORKS = ['sos', 'maint', 'journal'];
+const _MV_WORK_LABEL = { sos: '🚨 Экстренное ТО (SOS)', maint: '🏗️ Обслуживание территории', journal: '📋 Журнал визитов поставщика' };
+const _mvIsBudget = k => String(k || '').startsWith('b:');
+const _mvBudgetKeys = () => Object.keys(FINANCE_LEDGERS).map(l => 'b:' + l);
+const _mvLabel = k => _mvIsBudget(k) ? '💰 Бюджет: ' + FINANCE_LEDGERS[k.slice(2)].label : _MV_WORK_LABEL[k];
+// The same stage of a work in each section's terms, through a common one.
+const _MV_STAGE_IN  = { sos: { pending: 'open', in_progress: 'in_progress', resolved: 'done' }, maint: { planned: 'open', in_progress: 'in_progress', done: 'done' } };
+const _MV_STAGE_OUT = { sos: { open: 'pending', in_progress: 'in_progress', done: 'resolved' }, maint: { open: 'planned', in_progress: 'in_progress', done: 'done' } };
+const _mvPad = n => String(n).padStart(2, '0');
+const _mvOpt = (list, cur) => list.map(([v, l]) => `<option value="${_escHtml(v)}" ${cur === v ? 'selected' : ''}>${_escHtml(l)}</option>`).join('');
 
-function _moveDeptButton(from, id) {
-  if (currentUser !== 'owner') return '';
-  return `<button class="btn btn-outline" style="font-size:11px;padding:4px 10px" onclick="openMoveDept('${from}','${id}')">🔀 В ${from === 'maint' ? 'Экстренное ТО' : 'Обслуживание'}</button>`;
-}
+let _mv = null; // the open tool: { from, month, q, picked }
 
-function openMoveDept(from, id) {
-  if (currentUser !== 'owner' || !_MOVE_DEPTS[from]) return;
-  const r = _MOVE_DEPTS[from].list().find(x => x.id === id);
-  if (!r) { _showToast('Запись не найдена', false); return; }
-  const to = _otherDept(from);
-  const opt = (list, cur) => list.map(([v, l]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('');
-  const status = _MOVE_STATUS[to][r.status] || (to === 'sos' ? 'pending' : 'planned');
-  const fields = to === 'sos'
-    ? `<div class="form-group"><label>Приоритет</label><select class="form-control" id="mvd-pri">${opt([['high', '🔴 Высокий'], ['medium', '🟡 Средний'], ['low', '🟢 Низкий']], r.priority || 'medium')}</select></div>
-       <div class="form-group"><label>Статус</label><select class="form-control" id="mvd-status">${opt([['pending', '⚠️ Ожидает'], ['in_progress', '🔄 В работе'], ['resolved', '✅ Выполнено']], status)}</select></div>`
-    : `<div class="form-group"><label>Категория</label><select class="form-control" id="mvd-cat">${opt(MAINT_CATS.map(c => [c.id, c.label]), MAINT_CATS.some(c => c.id === r.category) ? r.category : 'other')}</select></div>
-       <div class="form-group"><label>Статус</label><select class="form-control" id="mvd-status">${opt([['planned', '📋 Запланировано'], ['in_progress', '🔄 В работе'], ['done', '✅ Выполнено']], status)}</select></div>`;
-  document.getElementById('modal-title').textContent = '🔀 Перенести в другой раздел';
-  document.getElementById('modal-body').innerHTML = `
-    <div style="font-size:14px;font-weight:700">${_escHtml(r.title || '')}</div>
-    <div style="font-size:12px;color:#6b7280;margin:2px 0 12px">📅 ${fmtDate(r.date)}${(r.fileIds || []).length ? ' · 📎 ' + r.fileIds.length : ''}</div>
-    <div style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;flex-wrap:wrap">
-      <span class="badge badge-gray">${_MOVE_DEPTS[from].label}</span> → <span class="badge" style="background:#dbeafe;color:#1e40af">${_MOVE_DEPTS[to].label}</span></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">${fields}</div>
-    <div style="font-size:12px;color:#6b7280">Название, описание, дата, фото и автор переносятся как есть.</div>`;
-  document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
-    <button class="btn btn-primary" onclick="moveToDept('${from}','${id}')">🔀 Перенести</button>`;
-  document.getElementById('modal-overlay').classList.remove('hidden');
-}
-
-async function moveToDept(from, id) { return _onceAtATime('deptMove', () => _moveToDeptInner(from, id)); }
-async function _moveToDeptInner(from, id) {
-  if (currentUser !== 'owner' || !_MOVE_DEPTS[from]) return;
-  const to = _otherDept(from);
-  const v = k => (document.getElementById(k) || {}).value || '';
-  const status = v('mvd-status'), pri = v('mvd-pri'), cat = v('mvd-cat');
-  // Moved as it is now, not as it was when the window opened — and only once, even if two
-  // tabs try it: a record already gone from its section is not moved again.
-  await _syncBeforeDecision();
-  const src = _MOVE_DEPTS[from].list();
-  const r = src.find(x => x.id === id);
-  if (!r) { closeModal(); alert('Эту запись тем временем перенесли или удалили.'); render(); return; }
-  const now = new Date().toISOString();
-  const moved = Object.assign({}, r, {
-    status: status || _MOVE_STATUS[to][r.status] || (to === 'sos' ? 'pending' : 'planned'),
-    deptMoves: (r.deptMoves || []).concat([{ from, to, at: now }]),
-  });
-  if (to === 'sos') {
-    moved.priority = pri || r.priority || 'medium';
-    // The reminder bot counts an emergency's waiting time from here, not from when the work
-    // was first written down somewhere else (api/cron/sos-reminder.js).
-    moved.sosSince = now;
-    delete moved.telegramNotifyLevel;
-  } else {
-    moved.category = cat || r.category || 'other';
+// What a section offers to move: { ref, title, sub, mk (month it is shown under), sort }.
+function _mvRecords(from) {
+  if (from === 'sos' || from === 'maint') {
+    return (from === 'sos' ? getSOS() : getMaintWorks()).map(r => ({
+      ref: r.id, title: r.title || '(без названия)', mk: String(r.date || '').slice(0, 7), sort: r.date || '',
+      sub: fmtDate(r.date) + (r.description ? ' · ' + String(r.description).slice(0, 80) : ''),
+    }));
   }
-  setLS(_MOVE_DEPTS[from].key, src.filter(x => x.id !== id));
-  setLS(_MOVE_DEPTS[to].key, _MOVE_DEPTS[to].list().filter(x => x.id !== id).concat([moved]));
-  addActivity(to, _getFromName(), moved.title || '', `🔀 Перенесено: ${_MOVE_DEPTS[from].label} → ${_MOVE_DEPTS[to].label}`);
+  if (from === 'journal') {
+    const out = [], all = getRecords();
+    Object.keys(all).forEach(key => {
+      const m = /^(.+)_(\d{4})_(\d{1,2})$/.exec(key);
+      if (!m || !Array.isArray((all[key] || {}).visits)) return;
+      const [, pid, yr, mo] = m;
+      const p = PROVIDERS.find(x => x.id === pid);
+      all[key].visits.forEach((v, vi) => {
+        if (!v || !(v.completed || String(v.notes || '').trim() || (v.fileIds || []).length)) return; // an empty slot
+        const date = v.completedDate || `${yr}-${_mvPad(mo)}-01`;
+        out.push({ ref: `${pid}|${yr}|${Number(mo)}|${vi}`, title: p ? `${p.emoji} ${p.name}` : pid, mk: `${yr}-${_mvPad(mo)}`, sort: date,
+          sub: fmtDate(date) + (v.completed ? ' · ✅ выполнено' : '') + (v.notes ? ' · ' + String(v.notes).slice(0, 80) : '') });
+      });
+    });
+    return out;
+  }
+  return getBudgetTx(from.slice(2)).map(t => ({
+    ref: t.id, mk: _budgetTxMonthKey(t), sort: t.date || '',
+    title: `${t.vendor || (t.type === 'income' ? 'Приход' : '—')} · ₽${(Number(t.amount) || 0).toLocaleString('ru-RU')}`,
+    sub: `${fmtDate(t.date)} · ${t.type === 'income' ? 'Приход' : t.type === 'refund' ? 'Возврат' : 'Расход'}${t.notes ? ' · ' + String(t.notes).slice(0, 60) : ''}`,
+  }));
+}
+
+function openMoveTool(from) {
+  if (currentUser !== 'owner') return;
+  _mv = { from: _MV_WORKS.includes(from) || (_mvIsBudget(from) && FINANCE_LEDGERS[from.slice(2)]) ? from : 'maint', month: _currentMonthKey(), q: '', picked: new Set() };
+  _modalGen++;
+  const cur = _currentMonthKey(), months = [];
+  for (let k = 1; k >= -12; k--) months.push(_monthAdd(cur, k));
+  const sections = `<optgroup label="Работы">${_MV_WORKS.map(k => `<option value="${k}" ${k === _mv.from ? 'selected' : ''}>${_escHtml(_mvLabel(k))}</option>`).join('')}</optgroup>
+    <optgroup label="Бюджет">${_mvBudgetKeys().map(k => `<option value="${k}" ${k === _mv.from ? 'selected' : ''}>${_escHtml(_mvLabel(k))}</option>`).join('')}</optgroup>`;
+  document.getElementById('modal-title').textContent = '🔀 Перенос записей в другой раздел';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Откуда</label><select class="form-control" id="mv-from" onchange="_mvSet('from', this.value)">${sections}</select></div>
+      <div class="form-group"><label>Месяц</label><select class="form-control" id="mv-month" onchange="_mvSet('month', this.value)">${_mvOpt([['', 'Все месяцы']].concat(months.map(mk => [mk, _monthLabel(mk)])), _mv.month)}</select></div>
+    </div>
+    <input class="form-control" id="mv-q" placeholder="🔍 Поиск по названию, поставщику, описанию" oninput="_mvSet('q', this.value)" style="margin-bottom:8px">
+    <div id="mv-list" style="max-height:290px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:12px"></div>
+    <div class="form-group"><label>Куда</label><select class="form-control" id="mv-to" onchange="_mvRenderTarget()"></select></div>
+    <div id="mv-target"></div>`;
+  document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" id="mv-go" onclick="runMoveTool()">🔀 Перенести</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  _mvRenderList(); _mvRenderTo();
+}
+
+function _mvSet(k, val) {
+  if (!_mv) return;
+  _mv[k] = val;
+  if (k === 'from' || k === 'month') _mv.picked = new Set();
+  _mvRenderList();
+  if (k === 'from') _mvRenderTo();
+}
+
+function _mvRenderList() {
+  const box = document.getElementById('mv-list');
+  if (!box || !_mv) return;
+  const q = String(_mv.q || '').trim().toLowerCase();
+  const rows = _mvRecords(_mv.from)
+    .filter(r => (!_mv.month || r.mk === _mv.month) && (!q || (r.title + ' ' + r.sub).toLowerCase().includes(q)))
+    .sort((a, b) => String(b.sort).localeCompare(String(a.sort)));
+  box.innerHTML = rows.length ? rows.map(r => `<label style="display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border-bottom:1px solid #f1f5f9;cursor:pointer;font-size:13px">
+      <input type="checkbox" class="mv-cb" value="${_escHtml(r.ref)}" ${_mv.picked.has(r.ref) ? 'checked' : ''} onchange="_mvPick(this)" style="margin-top:3px;flex-shrink:0">
+      <span style="min-width:0"><b>${_escHtml(r.title)}</b><span style="display:block;font-size:11px;color:#6b7280;overflow-wrap:anywhere">${_escHtml(r.sub)}</span></span></label>`).join('')
+    : `<div style="padding:24px;text-align:center;color:#94a3b8;font-size:13px">Нет записей${_mv.month ? ' за ' + _monthLabel(_mv.month) : ''}</div>`;
+  _mvUpdateGo();
+}
+function _mvPick(cb) {
+  if (!_mv) return;
+  if (cb.checked) _mv.picked.add(cb.value); else _mv.picked.delete(cb.value);
+  _mvUpdateGo();
+}
+function _mvUpdateGo() {
+  const b = document.getElementById('mv-go');
+  if (b && _mv) b.textContent = `🔀 Перенести${_mv.picked.size ? ' (' + _mv.picked.size + ')' : ''}`;
+}
+
+// Where these can go: works among works, budget operations among ledgers. A visit can go to
+// another provider's journal.
+function _mvRenderTo() {
+  const sel = document.getElementById('mv-to');
+  if (!sel || !_mv) return;
+  const group = _mvIsBudget(_mv.from) ? _mvBudgetKeys() : _MV_WORKS;
+  sel.innerHTML = `<option value="">— выберите —</option>` + group.filter(k => k !== _mv.from || k === 'journal')
+    .map(k => `<option value="${k}">${_escHtml(k === 'journal' && _mv.from === 'journal' ? '📋 Журнал другого поставщика' : _mvLabel(k))}</option>`).join('');
+  _mvRenderTarget();
+}
+
+function _mvRenderTarget() {
+  const box = document.getElementById('mv-target');
+  if (!box) return;
+  const to = (document.getElementById('mv-to') || {}).value || '';
+  const asWas = '— как было (по смыслу) —';
+  const two = (a, b) => `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">${a}${b}</div>`;
+  const field = (label, id, opts) => `<div class="form-group"><label>${label}</label><select class="form-control" id="${id}">${_mvOpt(opts, '')}</select></div>`;
+  const note = t => `<div style="font-size:11px;color:#6b7280;margin:-2px 0 8px">${t}</div>`;
+  let html = '';
+  if (to === 'sos') html = two(field('Приоритет', 'mv-pri', [['', '— как было / средний —'], ['high', '🔴 Высокий'], ['medium', '🟡 Средний'], ['low', '🟢 Низкий']]),
+    field('Статус', 'mv-status', [['', asWas], ['pending', '⚠️ Ожидает'], ['in_progress', '🔄 В работе'], ['resolved', '✅ Выполнено']]));
+  else if (to === 'maint') html = two(field('Категория', 'mv-cat', [['', '— как было / Прочее —']].concat(MAINT_CATS.map(c => [c.id, c.label]))),
+    field('Статус', 'mv-status', [['', asWas], ['planned', '📋 Запланировано'], ['in_progress', '🔄 В работе'], ['done', '✅ Выполнено']]));
+  else if (to === 'journal') html = two(field('Поставщик *', 'mv-prov', [['', '— выберите —']].concat(PROVIDERS.map(p => [p.id, `${p.emoji} ${p.name}`]))),
+    field('Визит выполнен', 'mv-done', [['', asWas], ['yes', '✅ Да'], ['no', 'Нет']]))
+    + note('Визит попадёт в журнал поставщика за месяц своей даты. Невыполненный визит виден на странице поставщика, но не в «Журнале визитов».');
+  else if (_mvIsBudget(to) && FINANCE_LEDGERS[to.slice(2)].useFunds) html = field('Фонд *', 'mv-fund', [['', '— выберите —']].concat(getBudgetFunds().map(f => [f.name, f.name])));
+  if (_mvIsBudget(to)) html += note('Согласования, оплата, документы и месяц учёта переносятся вместе с операцией. Закрытый месяц сначала откройте.');
+  else if (to) html += note('Название, описание, дата, фото и автор переносятся как есть.');
+  box.innerHTML = html;
+}
+
+async function runMoveTool() { return _onceAtATime('moveTool', _runMoveToolInner); }
+async function _runMoveToolInner() {
+  if (currentUser !== 'owner' || !_mv) return;
+  const v = id => (document.getElementById(id) || {}).value || '';
+  const from = _mv.from, refs = Array.from(_mv.picked), to = v('mv-to');
+  const opts = { pri: v('mv-pri'), status: v('mv-status'), cat: v('mv-cat'), prov: v('mv-prov'), done: v('mv-done'), fund: v('mv-fund') };
+  if (!refs.length) { alert('Отметьте записи, которые нужно перенести'); return; }
+  if (!to) { alert('Выберите, куда перенести'); return; }
+  if (to === 'journal' && !opts.prov) { alert('Выберите поставщика'); return; }
+  if (_mvIsBudget(to) && FINANCE_LEDGERS[to.slice(2)].useFunds && !opts.fund) { alert('Выберите фонд'); return; }
+  // Decided on what is there now: another tab may have moved, changed or deleted these.
+  await _syncBeforeDecision();
+  const res = _mvIsBudget(from) ? _mvMoveBudget(from.slice(2), to.slice(2), refs, opts) : _mvMoveWorks(from, to, refs, opts);
+  if (res.error) { alert(res.error); return; }
+  if (!res.moved.length) { alert(res.missing ? 'Эти записи тем временем перенесли или удалили.' : 'Записи уже там.'); closeModal(); render(); return; }
+  const where = _mvLabel(to) + (to === 'journal' ? ' — ' + ((PROVIDERS.find(p => p.id === opts.prov) || {}).name || opts.prov) : '');
+  addActivity(_mvIsBudget(to) ? 'budget' : to === 'journal' ? 'visit' : to, _getFromName(), `🔀 Перенос (${res.moved.length})`,
+    `${_mvLabel(from)} → ${where}: ${res.moved.join(', ')}`.slice(0, 300));
   closeModal();
+  _mv = null;
   if (_useFirebase) {
     clearTimeout(_saveTimer);
     if (!(await _flushState())) { _whRetryFlushSoon(); alert('⚠️ Нет связи с сервером. Перенос сохранён на этом устройстве и будет отправлен автоматически, как только связь появится. Не повторяйте его.'); render(); return; }
   }
-  _showToast(`🔀 Перенесено в ${_MOVE_DEPTS[to].label}`, true);
+  _showToast(`🔀 Перенесено: ${res.moved.length} → ${where}` + (res.missing ? ` (ещё ${res.missing} уже не было на месте)` : ''), true);
   render();
+}
+
+// Works: each taken out of its section into a common form, then put into the target.
+function _mvMoveWorks(from, to, refs, opts) {
+  const now = new Date().toISOString();
+  let sos = getSOS().slice(), maint = getMaintWorks().slice();
+  const recs = JSON.parse(JSON.stringify(getRecords()));
+  let missing = 0;
+  const taken = [];
+  refs.forEach(ref => {
+    if (from === 'sos' || from === 'maint') {
+      const r = (from === 'sos' ? sos : maint).find(x => x.id === ref);
+      if (!r) { missing++; return; }
+      taken.push({ rec: Object.assign({}, r), stage: _MV_STAGE_IN[from][r.status] || 'open' });
+      return;
+    }
+    const [pid, yr, mo, vi] = ref.split('|');
+    const key = `${pid}_${yr}_${mo}`;
+    const vis = recs[key] && recs[key].visits && recs[key].visits[Number(vi)];
+    if (!vis) { missing++; return; }
+    if (to === 'journal' && opts.prov === pid) return; // already that provider's
+    const o = vis._origin || {};
+    const lines = String(vis.notes || '').split('\n');
+    const p = PROVIDERS.find(x => x.id === pid);
+    const rec = Object.assign({}, o, {
+      id: vis._movedId || vis._maintWorkId || _newTxId(),
+      title: (lines[0] || '').trim() || o.title || `Визит: ${p ? p.name : pid}`,
+      description: lines.slice(1).join('\n').trim(),
+      date: vis.completedDate || o.date || `${yr}-${_mvPad(mo)}-01`,
+      fileIds: (vis.fileIds || []).slice(), fileNames: (vis.fileNames || []).slice(), fileTypes: (vis.fileTypes || []).slice(),
+      createdBy: o.createdBy || pid, createdAt: o.createdAt || now,
+    });
+    const wasStage = _MV_STAGE_IN.sos[o.status] || _MV_STAGE_IN.maint[o.status];
+    taken.push({ rec, stage: vis.completed ? 'done' : wasStage === 'in_progress' ? 'in_progress' : 'open', visit: { key, vi: Number(vi), pid } });
+  });
+  // Out of where they were. Visits by position, the highest first so the others stay put.
+  const outIds = new Set(taken.filter(c => !c.visit).map(c => c.rec.id));
+  if (from === 'sos') sos = sos.filter(x => !outIds.has(x.id));
+  if (from === 'maint') maint = maint.filter(x => !outIds.has(x.id));
+  taken.filter(c => c.visit).sort((a, b) => b.visit.vi - a.visit.vi).forEach(c => recs[c.visit.key].visits.splice(c.visit.vi, 1));
+  // Into the target.
+  const moved = [];
+  taken.forEach(c => {
+    const r = c.rec;
+    const hist = (r.deptMoves || []).concat([{ from: c.visit ? 'journal:' + c.visit.pid : from, to: to === 'journal' ? 'journal:' + opts.prov : to, at: now }]);
+    if (to === 'sos' || to === 'maint') {
+      const out = Object.assign({}, r, { status: opts.status || _MV_STAGE_OUT[to][c.stage], deptMoves: hist });
+      if (to === 'sos') {
+        out.priority = opts.pri || r.priority || 'medium';
+        // The reminder bot counts an emergency's waiting time from here, not from when the work
+        // was first written down somewhere else (api/cron/sos-reminder.js).
+        out.sosSince = now;
+        delete out.telegramNotifyLevel;
+        sos = sos.filter(x => x.id !== out.id).concat([out]);
+      } else {
+        out.category = opts.cat || (MAINT_CATS.some(m => m.id === r.category) ? r.category : 'other');
+        maint = maint.filter(x => x.id !== out.id).concat([out]);
+      }
+    } else {
+      const d = r.date || _todayLocal();
+      const key = `${opts.prov}_${Number(d.slice(0, 4))}_${Number(d.slice(5, 7))}`;
+      const { fileIds, fileNames, fileTypes, ...rest } = r;
+      const visit = {
+        completed: opts.done ? opts.done === 'yes' : c.stage === 'done', completedDate: d,
+        notes: [r.title, r.description].filter(Boolean).join('\n'),
+        fileIds: fileIds || [], fileNames: fileNames || [], fileTypes: fileTypes || [],
+        _movedId: r.id, _origin: Object.assign({}, rest, { deptMoves: hist }),
+      };
+      const cur = recs[key] || {};
+      // A month kept in the old single-visit form becomes a list, as the journal itself does.
+      recs[key] = Array.isArray(cur.visits) ? Object.assign({}, cur, { visits: cur.visits.concat([visit]) })
+        : { visits: (cur.completed !== undefined ? [Object.assign({}, cur, { _legacy: true })] : []).concat([visit]) };
+    }
+    moved.push(r.title || '(без названия)');
+  });
+  if (!moved.length) return { moved, missing };
+  if (from === 'sos' || to === 'sos') setLS('sos_items', sos);
+  if (from === 'maint' || to === 'maint') setLS('maint_works', maint);
+  if (from === 'journal' || to === 'journal') setLS('svc_records', recs);
+  return { moved, missing };
+}
+
+// Budget operations: all or nothing — one that can't go stops the whole move, with the reason.
+function _mvMoveBudget(fromL, toL, refs, opts) {
+  if (!FINANCE_LEDGERS[toL] || fromL === toL) return { error: 'Выберите другой раздел бюджета' };
+  const now = new Date().toISOString();
+  const src = getBudgetTx(fromL), dst = getBudgetTx(toL);
+  const problems = [], picked = [];
+  refs.forEach(id => {
+    const t = src.find(x => x.id === id);
+    if (!t) { problems.push('• одну из записей тем временем перенесли или удалили'); return; }
+    const name = `«${t.vendor || 'Приход'}» ₽${(Number(t.amount) || 0).toLocaleString('ru-RU')} от ${fmtDate(t.date)}`;
+    if (t.imported) { problems.push(`• ${name}: запись из импортированной истории — не переносится`); return; }
+    const mk = _budgetTxMonthKey(t);
+    if (_monthClosedToOwner(fromL, mk) || _monthClosedToOwner(toL, mk)) { problems.push(`• ${name}: ${_monthLabel(mk)} закрыт — сначала откройте его`); return; }
+    picked.push(t);
+  });
+  if (problems.length) return { error: 'Ничего не перенесено:\n' + problems.join('\n') };
+  const ids = new Set(picked.map(t => t.id));
+  const useFunds = FINANCE_LEDGERS[toL].useFunds;
+  const movedTx = picked.map(t => Object.assign({}, t, {
+    fund: useFunds ? opts.fund : null,
+    ledgerMoves: (t.ledgerMoves || []).concat([{ from: fromL, to: toL, at: now, fund: t.fund || null }]),
+  }));
+  setBudgetTx(fromL, src.filter(x => !ids.has(x.id)));
+  setBudgetTx(toL, dst.filter(x => !ids.has(x.id)).concat(movedTx));
+  // A warehouse receipt made from one of these invoices follows it.
+  const docs = getWhDocs();
+  if (docs.some(d => d.budgetRef && ids.has(d.budgetRef.txId))) {
+    setLS('wh_docs', docs.map(d => d.budgetRef && ids.has(d.budgetRef.txId) ? Object.assign({}, d, { budgetRef: Object.assign({}, d.budgetRef, { ledger: toL }) }) : d));
+  }
+  return { moved: movedTx.map(t => t.vendor || 'Приход'), missing: 0 };
 }
 
 // SOS
@@ -6335,7 +6539,6 @@ function renderSOS() {
         ${canEdit ? `<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
           <button class="btn btn-outline" style="font-size:11px;padding:4px 10px" onclick="openSosModal('${s.id}')">✏️ Редактировать</button>
           <button style="font-size:11px;padding:4px 10px;background:#fee2e2;color:#dc2626;border:none;cursor:pointer;border-radius:6px;font-family:inherit" onclick="delSOS('${s.id}')">🗑️ Удалить</button>
-          ${_moveDeptButton('sos', s.id)}
         </div>` : ''}
       </div>
     </div>`;
@@ -9308,7 +9511,7 @@ async function renderSharePageCustomReport(d) {
         else if (prefixedId.startsWith('visit:'))  { type='visit';  rawId=prefixedId.slice(6); }
         else                                       { type='maint';  rawId=prefixedId; } // backwards compat
         // A record moved to the other section since the report was shared keeps its id —
-        // shown where it lives now (openMoveDept).
+        // shown where it lives now (openMoveTool).
         if (type==='maint' && !allWorks.some(x => x.id===rawId) && allSOS.some(x => x.id===rawId)) type='sos';
         else if (type==='sos' && !allSOS.some(x => x.id===rawId) && allWorks.some(x => x.id===rawId)) type='maint';
         if (type==='maint') {
