@@ -1,0 +1,63 @@
+openapi: 3.0.0
+info:
+  title: sad-budushego-site
+  version: 1.0.0
+  description: >
+    sad-budushego.ru as served in Russia. The page and its libraries come from Object Storage
+    (bucket sad-budushego-site, published by deploy/yandex-site.ps1); /api/* — the AI invoice
+    reader, the Telegram drafts — is passed on to the Vercel functions, which stay outside
+    Russia because the Anthropic API doesn't accept requests from there.
+
+x-yc-apigateway:
+  variables:
+    backendHost:
+      default: "www.sad-budushego.ru"
+      description: >
+        Where /api/* is passed on to — a public domain of the Vercel project (its *.vercel.app
+        addresses are behind Vercel's login).
+
+paths:
+  /:
+    get:
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: sad-budushego-site
+        object: service-manager.html
+        service_account_id: ajep053p13thhsapa7r6
+
+  /api/{path+}:
+    x-yc-apigateway-any-method:
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      # Every header and query parameter goes on as it came (by default the gateway passes
+      # neither — Content-Type, the Telegram secret and ?force=1 were all lost), except Host:
+      # that must be the backend's own, or the TLS connection to it fails.
+      x-yc-apigateway-integration:
+        type: http
+        url: https://${var.backendHost}/api/{path}
+        headers:
+          '*': '*'
+          Host: ${var.backendHost}
+        query:
+          '*': '*'
+        timeouts:
+          connect: 10
+          read: 120
+
+  /{file+}:
+    get:
+      parameters:
+        - name: file
+          in: path
+          required: true
+          schema:
+            type: string
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: sad-budushego-site
+        object: '{file}'
+        service_account_id: ajep053p13thhsapa7r6
