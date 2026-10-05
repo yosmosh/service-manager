@@ -127,10 +127,47 @@ async function pool(items, n, fn) {
   const map = registryMap(reg);
   console.log(`files registry: ${map.size} Firebase addresses to rewrite`);
 
+  // Files the data points at that are no longer in the registry — in practice photos in old
+  // shared reports (share_*), deleted from the app since. Those still in Firebase are copied
+  // too (under their own name, as the registry's files were), so the old links keep working
+  // once Firebase is gone; those already gone from Firebase are left as they are.
+  const outside = new Set();
+  for (const d of all) {
+    const scan = v => {
+      if (!v || typeof v !== 'object') return;
+      if (Array.isArray(v)) { v.forEach(scan); return; }
+      for (const k of Object.keys(v)) {
+        if (k === 'stringValue' && typeof v[k] === 'string') { const m = FIREBASE_FILE.exec(v[k]); if (m && !map.has(m[1])) outside.add(v[k]); }
+        else scan(v[k]);
+      }
+    };
+    scan(d.fields);
+  }
+  let extraCopied = 0, extraThere = 0, extraGone = 0;
+  for (const url of outside) {
+    const obj = FIREBASE_FILE.exec(url)[1];
+    const id = decodeURIComponent(obj).replace(/^files\//, '');
+    if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) { extraGone++; continue; }
+    const there = await fetch(YANDEX_FILES + id, { method: 'HEAD' });
+    if (there.ok) { map.set(obj, id); extraThere++; continue; }
+    const src = await fetch(url);
+    if (!src.ok) { extraGone++; continue; }
+    const type = String(src.headers.get('content-type') || 'application/octet-stream');
+    const buf = Buffer.from(await src.arrayBuffer());
+    const pr = await api('POST', 'v1/admin:presignCopy', { id, type });
+    if (pr.status !== 200) throw new Error('presignCopy ' + id + ' → ' + pr.status);
+    const p = JSON.parse(pr.text);
+    const put = await fetch(p.uploadUrl, { method: 'PUT', headers: p.headers || { 'Content-Type': type }, body: buf });
+    const check = put.ok ? await fetch(YANDEX_FILES + id, { method: 'HEAD' }) : null;
+    if (!check || !check.ok || Number(check.headers.get('content-length')) !== buf.length) throw new Error('copy of ' + id + ' did not land');
+    map.set(obj, id);
+    extraCopied++;
+  }
+  if (outside.size) console.log(`files outside the registry: ${outside.size} — copied now ${extraCopied}, already in Yandex ${extraThere}, gone from Firebase ${extraGone}`);
+
   const stats = { rewritten: 0, unmapped: new Set() };
   for (const d of all) d.out = rewrite(d.fields, map, stats);
-  console.log(`file addresses rewritten: ${stats.rewritten}; left as they were (not in the registry): ${stats.unmapped.size}`);
-  for (const u of [...stats.unmapped].slice(0, 20)) console.log('   not in registry: ' + u);
+  console.log(`file addresses rewritten: ${stats.rewritten}; left as they were (gone from Firebase): ${stats.unmapped.size}`);
 
   // Write: the big appdata documents one by one, the messages several at a time.
   let written = 0;

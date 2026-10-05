@@ -111,8 +111,9 @@ async function transact(path, fn) {
   });
 }
 
+// Messages from the same second come in document-name order, as Firestore returns them.
 const Q_QUERY = `DECLARE $coll AS Utf8; DECLARE $since AS Utf8;
-SELECT path, create_time, update_time, qdate FROM doc_meta WHERE collection = $coll AND qdate >= $since ORDER BY qdate LIMIT 1000;`;
+SELECT path, create_time, update_time, qdate FROM doc_meta WHERE collection = $coll AND qdate >= $since ORDER BY qdate, path LIMIT 1000;`;
 const Q_MANY_FIELDS = `DECLARE $paths AS List<Utf8>;
 SELECT path, field, value FROM doc_fields WHERE path IN $paths AND value IS NOT NULL;`;
 
