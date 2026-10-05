@@ -5870,9 +5870,10 @@ function renderMaintenance() {
         ${w.description ? `<div style="font-size:12px;color:#374151;margin-bottom:8px;background:#f8fafc;border-radius:6px;padding:7px 10px;border-left:3px solid #2563eb">${w.description}</div>` : ''}
         ${filesHtml ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">${filesHtml}</div>` : ''}
         ${canEdit ? `
-        <div style="display:flex;gap:6px;margin-top:6px">
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
           <button class="btn btn-outline" style="font-size:11px;padding:4px 10px" onclick="openMaintModal('${w.id}')">✏️ Редактировать</button>
           <button style="font-size:11px;padding:4px 10px;background:#fee2e2;color:#dc2626;border:none;cursor:pointer;border-radius:6px;font-family:inherit" onclick="delMaint('${w.id}')">🗑️ Удалить</button>
+          ${_moveDeptButton('maint', w.id)}
         </div>` : ''}
       </div>
     </div>`;
@@ -6157,6 +6158,94 @@ function delMaint(id) {
   render();
 }
 
+// ==============================
+// ПЕРЕНОС МЕЖДУ РАЗДЕЛАМИ (владелец)
+// ==============================
+// A work logged in the wrong section — a routine job entered as an emergency, or an emergency
+// filed under Обслуживание территории — moves to the other one as the same record: same id,
+// photos, author and dates, and the Telegram message ids, so the bot's «после» photo still
+// finds it. What only the target section has is asked for on the way (an emergency's
+// priority, a work's category); what only the source had stays on the record, so moving it
+// back loses nothing. Owner only.
+const _MOVE_DEPTS = {
+  maint: { key: 'maint_works', label: '🏗️ Обслуживание территории', list: () => getMaintWorks() },
+  sos:   { key: 'sos_items',   label: '🚨 Экстренное ТО (SOS)',      list: () => getSOS() },
+};
+// The same stage of the work in the other section's terms, keyed by the section it goes TO.
+const _MOVE_STATUS = {
+  sos:   { planned: 'pending', in_progress: 'in_progress', done: 'resolved' },
+  maint: { pending: 'planned', in_progress: 'in_progress', resolved: 'done' },
+};
+const _otherDept = from => from === 'maint' ? 'sos' : 'maint';
+
+function _moveDeptButton(from, id) {
+  if (currentUser !== 'owner') return '';
+  return `<button class="btn btn-outline" style="font-size:11px;padding:4px 10px" onclick="openMoveDept('${from}','${id}')">🔀 В ${from === 'maint' ? 'Экстренное ТО' : 'Обслуживание'}</button>`;
+}
+
+function openMoveDept(from, id) {
+  if (currentUser !== 'owner' || !_MOVE_DEPTS[from]) return;
+  const r = _MOVE_DEPTS[from].list().find(x => x.id === id);
+  if (!r) { _showToast('Запись не найдена', false); return; }
+  const to = _otherDept(from);
+  const opt = (list, cur) => list.map(([v, l]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('');
+  const status = _MOVE_STATUS[to][r.status] || (to === 'sos' ? 'pending' : 'planned');
+  const fields = to === 'sos'
+    ? `<div class="form-group"><label>Приоритет</label><select class="form-control" id="mvd-pri">${opt([['high', '🔴 Высокий'], ['medium', '🟡 Средний'], ['low', '🟢 Низкий']], r.priority || 'medium')}</select></div>
+       <div class="form-group"><label>Статус</label><select class="form-control" id="mvd-status">${opt([['pending', '⚠️ Ожидает'], ['in_progress', '🔄 В работе'], ['resolved', '✅ Выполнено']], status)}</select></div>`
+    : `<div class="form-group"><label>Категория</label><select class="form-control" id="mvd-cat">${opt(MAINT_CATS.map(c => [c.id, c.label]), MAINT_CATS.some(c => c.id === r.category) ? r.category : 'other')}</select></div>
+       <div class="form-group"><label>Статус</label><select class="form-control" id="mvd-status">${opt([['planned', '📋 Запланировано'], ['in_progress', '🔄 В работе'], ['done', '✅ Выполнено']], status)}</select></div>`;
+  document.getElementById('modal-title').textContent = '🔀 Перенести в другой раздел';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-size:14px;font-weight:700">${_escHtml(r.title || '')}</div>
+    <div style="font-size:12px;color:#6b7280;margin:2px 0 12px">📅 ${fmtDate(r.date)}${(r.fileIds || []).length ? ' · 📎 ' + r.fileIds.length : ''}</div>
+    <div style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;flex-wrap:wrap">
+      <span class="badge badge-gray">${_MOVE_DEPTS[from].label}</span> → <span class="badge" style="background:#dbeafe;color:#1e40af">${_MOVE_DEPTS[to].label}</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">${fields}</div>
+    <div style="font-size:12px;color:#6b7280">Название, описание, дата, фото и автор переносятся как есть.</div>`;
+  document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="moveToDept('${from}','${id}')">🔀 Перенести</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+async function moveToDept(from, id) { return _onceAtATime('deptMove', () => _moveToDeptInner(from, id)); }
+async function _moveToDeptInner(from, id) {
+  if (currentUser !== 'owner' || !_MOVE_DEPTS[from]) return;
+  const to = _otherDept(from);
+  const v = k => (document.getElementById(k) || {}).value || '';
+  const status = v('mvd-status'), pri = v('mvd-pri'), cat = v('mvd-cat');
+  // Moved as it is now, not as it was when the window opened — and only once, even if two
+  // tabs try it: a record already gone from its section is not moved again.
+  await _syncBeforeDecision();
+  const src = _MOVE_DEPTS[from].list();
+  const r = src.find(x => x.id === id);
+  if (!r) { closeModal(); alert('Эту запись тем временем перенесли или удалили.'); render(); return; }
+  const now = new Date().toISOString();
+  const moved = Object.assign({}, r, {
+    status: status || _MOVE_STATUS[to][r.status] || (to === 'sos' ? 'pending' : 'planned'),
+    deptMoves: (r.deptMoves || []).concat([{ from, to, at: now }]),
+  });
+  if (to === 'sos') {
+    moved.priority = pri || r.priority || 'medium';
+    // The reminder bot counts an emergency's waiting time from here, not from when the work
+    // was first written down somewhere else (api/cron/sos-reminder.js).
+    moved.sosSince = now;
+    delete moved.telegramNotifyLevel;
+  } else {
+    moved.category = cat || r.category || 'other';
+  }
+  setLS(_MOVE_DEPTS[from].key, src.filter(x => x.id !== id));
+  setLS(_MOVE_DEPTS[to].key, _MOVE_DEPTS[to].list().filter(x => x.id !== id).concat([moved]));
+  addActivity(to, _getFromName(), moved.title || '', `🔀 Перенесено: ${_MOVE_DEPTS[from].label} → ${_MOVE_DEPTS[to].label}`);
+  closeModal();
+  if (_useFirebase) {
+    clearTimeout(_saveTimer);
+    if (!(await _flushState())) { _whRetryFlushSoon(); alert('⚠️ Нет связи с сервером. Перенос сохранён на этом устройстве и будет отправлен автоматически, как только связь появится. Не повторяйте его.'); render(); return; }
+  }
+  _showToast(`🔀 Перенесено в ${_MOVE_DEPTS[to].label}`, true);
+  render();
+}
+
 // SOS
 // ==============================
 function setSosFilter(f) { sosFilter = f; render(); }
@@ -6243,9 +6332,10 @@ function renderSOS() {
         <div style="font-size:11px;color:#6b7280">📅 ${fmtDate(s.date)} · Приоритет: ${s.priority==='high'?'Высокий':s.priority==='medium'?'Средний':'Низкий'}${s.createdBy?` · ✍️ ${_roleDisplayName(s.createdBy)}`:''}</div>
         ${s.description ? `<div style="font-size:12px;color:#374151;margin-top:6px">${s.description}</div>` : ''}
         ${filesHtml}
-        ${canEdit ? `<div style="display:flex;gap:6px;margin-top:10px">
+        ${canEdit ? `<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
           <button class="btn btn-outline" style="font-size:11px;padding:4px 10px" onclick="openSosModal('${s.id}')">✏️ Редактировать</button>
           <button style="font-size:11px;padding:4px 10px;background:#fee2e2;color:#dc2626;border:none;cursor:pointer;border-radius:6px;font-family:inherit" onclick="delSOS('${s.id}')">🗑️ Удалить</button>
+          ${_moveDeptButton('sos', s.id)}
         </div>` : ''}
       </div>
     </div>`;
@@ -9217,6 +9307,10 @@ async function renderSharePageCustomReport(d) {
         else if (prefixedId.startsWith('sos:'))    { type='sos';    rawId=prefixedId.slice(4); }
         else if (prefixedId.startsWith('visit:'))  { type='visit';  rawId=prefixedId.slice(6); }
         else                                       { type='maint';  rawId=prefixedId; } // backwards compat
+        // A record moved to the other section since the report was shared keeps its id —
+        // shown where it lives now (openMoveDept).
+        if (type==='maint' && !allWorks.some(x => x.id===rawId) && allSOS.some(x => x.id===rawId)) type='sos';
+        else if (type==='sos' && !allSOS.some(x => x.id===rawId) && allWorks.some(x => x.id===rawId)) type='maint';
         if (type==='maint') {
           const w = allWorks.find(x => x.id===rawId); if (!w) return;
           const files={};

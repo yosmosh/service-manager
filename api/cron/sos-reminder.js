@@ -114,7 +114,10 @@ module.exports = async (req, res) => {
     for (const rawItem of rawList) {
       const it = fromFsMap(rawItem);
       if (it.status !== 'pending') continue;
-      const refTime = it.createdAt ? new Date(it.createdAt).getTime() : new Date(it.date).getTime();
+      // An item moved here from Обслуживание территории has waited as an emergency only since
+      // it was moved (sosSince), not since it was first written down.
+      const since = it.sosSince || it.createdAt;
+      const refTime = since ? new Date(since).getTime() : new Date(it.date).getTime();
       if (!refTime || isNaN(refTime)) continue;
       const elapsedHours = (now - refTime) / 3600000;
       const level = it.telegramNotifyLevel || 0;
