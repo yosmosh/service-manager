@@ -6133,11 +6133,43 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
 // the app again, signed out. Each now has a bar on top with "← Назад в систему", which closes
 // the tab (a browser allows that for a tab a page opened itself) and, if it won't close,
 // brings the app up in it instead. Hidden when printing.
+//
+// These pages have bars of their own pinned to the top — the report's, with its print button,
+// and the share link's, added after it — which used to lie on top of one another. The script
+// below stacks every bar pinned to the top under this one, each under the last, and pushes the
+// page down by this bar (plus any bar marked data-stack-pad, which the page itself leaves no
+// room for), so none hides another or the text beneath.
 function _withBackBar(html) {
   const appUrl = location.origin + location.pathname;
-  const bar = `<style>@media print{#app-back-bar{display:none!important}}</style>
-<div id="app-back-bar" style="position:sticky;top:0;left:0;right:0;z-index:2147483647;display:flex;align-items:center;gap:10px;padding:8px 12px;background:#0f172a;box-shadow:0 2px 8px rgba(0,0,0,.25);font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
-<button onclick="try{if(window.opener&&!window.opener.closed)window.opener.focus();}catch(e){}window.close();setTimeout(function(){location.href=${_escHtml(JSON.stringify(appUrl))};},400);" style="background:#fff;color:#0f172a;border:none;border-radius:8px;padding:9px 16px;font-size:15px;font-weight:700;cursor:pointer">← Назад в систему</button></div>`;
+  const bar = `<style>@media print{#app-back-bar{display:none!important}body{padding-top:0!important}}</style>
+<div id="app-back-bar" style="position:fixed;top:0;left:0;right:0;z-index:2147483647;display:flex;align-items:center;gap:10px;padding:8px 12px;background:#0f172a;box-shadow:0 2px 8px rgba(0,0,0,.25);font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;box-sizing:border-box">
+<button onclick="try{if(window.opener&&!window.opener.closed)window.opener.focus();}catch(e){}window.close();setTimeout(function(){location.href=${_escHtml(JSON.stringify(appUrl))};},400);" style="background:#fff;color:#0f172a;border:none;border-radius:8px;padding:9px 16px;font-size:15px;font-weight:700;cursor:pointer">← Назад в систему</button></div>
+<script>(function(){
+  function stack(){
+    var bar=document.getElementById('app-back-bar');
+    if(!bar||!document.body)return;
+    var y=bar.offsetHeight,pad=bar.offsetHeight,kids=document.body.children;
+    for(var i=0;i<kids.length;i++){
+      var el=kids[i];
+      if(el===bar)continue;
+      var cs=getComputedStyle(el);
+      if(cs.position!=='fixed'||cs.display==='none'||!el.offsetHeight)continue;
+      if(!el.hasAttribute('data-top0')){
+        if(parseFloat(cs.top)!==0||el.offsetHeight>window.innerHeight*0.6)continue;
+        el.setAttribute('data-top0','1');
+      }
+      el.style.top=y+'px';
+      y+=el.offsetHeight;
+      if(el.hasAttribute('data-stack-pad'))pad+=el.offsetHeight;
+    }
+    document.body.style.paddingTop=pad+'px';
+  }
+  stack();
+  document.addEventListener('DOMContentLoaded',stack);
+  window.addEventListener('load',stack);
+  window.addEventListener('resize',stack);
+  try{new MutationObserver(function(){setTimeout(stack,0);}).observe(document.documentElement,{childList:true,subtree:true});}catch(e){}
+})();<\/script>`;
   return /<body[^>]*>/i.test(html) ? html.replace(/<body[^>]*>/i, m => m + bar) : bar + html;
 }
 function _writeAppWindow(win, html) {
@@ -9877,8 +9909,9 @@ async function _qeSaveAndShareInner() {
       try {
         const bar = win.document.createElement('div');
         bar.id = '_qe_bar';
-        bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c8d600;color:#000;padding:10px 14px;display:flex;align-items:center;gap:10px;font-family:sans-serif;box-shadow:0 2px 16px rgba(0,0,0,0.5)';
-        bar.innerHTML = `<span style="font-size:12px;font-weight:700;white-space:nowrap">🔗 Ссылка на отчёт:</span><span id="_qe_url" style="font-size:10px;flex:1;font-family:monospace;word-break:break-all;line-height:1.4;user-select:all">${shareUrl}</span><button id="_qe_copy" style="background:#000;color:#c8d600;border:none;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">📋 Скопировать</button><button onclick="document.getElementById('_qe_bar').remove()" style="background:rgba(0,0,0,0.12);border:none;width:28px;height:28px;border-radius:6px;font-size:14px;cursor:pointer">✕</button>`;
+        bar.setAttribute('data-stack-pad', '1'); // the page leaves no room for it: the back bar's script does (_withBackBar)
+        bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c8d600;color:#000;padding:10px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;font-family:sans-serif;box-shadow:0 2px 16px rgba(0,0,0,0.5)';
+        bar.innerHTML = `<span style="font-size:12px;font-weight:700;white-space:nowrap">🔗 Ссылка на отчёт:</span><span id="_qe_url" style="font-size:10px;flex:1 1 220px;min-width:0;font-family:monospace;word-break:break-all;line-height:1.4;user-select:all">${shareUrl}</span><button id="_qe_copy" style="background:#000;color:#c8d600;border:none;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">📋 Скопировать</button><button onclick="document.getElementById('_qe_bar').remove()" style="background:rgba(0,0,0,0.12);border:none;width:28px;height:28px;border-radius:6px;font-size:14px;cursor:pointer">✕</button>`;
         win.document.body.appendChild(bar);
         win.document.getElementById('_qe_copy').onclick = function() {
           const me = this;
@@ -9951,8 +9984,9 @@ async function shareMonthlyReport() {
       try {
         const bar = win.document.createElement('div');
         bar.id = '_mr_bar';
-        bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c8d600;color:#000;padding:10px 14px;display:flex;align-items:center;gap:10px;font-family:sans-serif;box-shadow:0 2px 16px rgba(0,0,0,0.5)';
-        bar.innerHTML = `<span style="font-size:12px;font-weight:700;white-space:nowrap">🔗 Ссылка на отчёт:</span><span id="_mr_url" style="font-size:10px;flex:1;font-family:monospace;word-break:break-all;line-height:1.4;user-select:all">${shareUrl}</span><button id="_mr_copy" style="background:#000;color:#c8d600;border:none;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">📋 Скопировать</button><button onclick="document.getElementById('_mr_bar').remove()" style="background:rgba(0,0,0,0.12);border:none;width:28px;height:28px;border-radius:6px;font-size:14px;cursor:pointer">✕</button>`;
+        bar.setAttribute('data-stack-pad', '1'); // the page leaves no room for it: the back bar's script does (_withBackBar)
+        bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c8d600;color:#000;padding:10px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;font-family:sans-serif;box-shadow:0 2px 16px rgba(0,0,0,0.5)';
+        bar.innerHTML = `<span style="font-size:12px;font-weight:700;white-space:nowrap">🔗 Ссылка на отчёт:</span><span id="_mr_url" style="font-size:10px;flex:1 1 220px;min-width:0;font-family:monospace;word-break:break-all;line-height:1.4;user-select:all">${shareUrl}</span><button id="_mr_copy" style="background:#000;color:#c8d600;border:none;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">📋 Скопировать</button><button onclick="document.getElementById('_mr_bar').remove()" style="background:rgba(0,0,0,0.12);border:none;width:28px;height:28px;border-radius:6px;font-size:14px;cursor:pointer">✕</button>`;
         win.document.body.appendChild(bar);
         win.document.getElementById('_mr_copy').onclick = function() {
           const me = this;
