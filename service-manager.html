@@ -74,7 +74,7 @@ body{font-family:'Segoe UI',Arial,sans-serif;direction:ltr;background:#f8fafc;co
 .btn-outline:hover{background:#f8fafc}
 /* MODAL */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px}
-.modal{background:white;border-radius:16px;width:100%;max-width:580px;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal{background:white;border-radius:16px;width:100%;max-width:580px;max-height:88vh;max-height:88dvh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)}
 .modal-header{padding:18px 22px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:white;z-index:1}
 .modal-header h3{font-size:15px;font-weight:700}
 .modal-body{padding:18px 22px}
@@ -251,6 +251,9 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 .dashboard-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:8px;flex-wrap:wrap}
 /* MOBILE */
 #mobile-menu-btn{display:none;background:none;border:none;cursor:pointer;color:#1e293b;font-size:22px;padding:2px 6px;line-height:1;flex-shrink:0}
+/* The phone's back step (see "Going back"): shown once there is a screen to go back to */
+#mobile-back-btn{display:none;background:#f1f5f9;border:none;cursor:pointer;color:#1e293b;font-size:26px;font-weight:700;width:36px;height:36px;border-radius:10px;line-height:1;flex-shrink:0;padding:0 0 3px}
+[data-theme="dark"] #mobile-back-btn{background:#1e293b;color:#e2e8f0}
 .sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:98}
 .sidebar-overlay.active{display:block}
 @media(max-width:768px){
@@ -258,6 +261,7 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
   body{display:block;overflow-x:hidden;overflow-y:auto;height:auto;min-height:100vh;width:100%}
   .main{width:100%;min-width:0;overflow-x:hidden}
   #mobile-menu-btn{display:block}
+  #mobile-back-btn.show{display:block}
   .sidebar{position:fixed;left:0;top:0;bottom:0;height:100vh;z-index:99;transform:translateX(-280px);transition:transform .25s ease}
   .sidebar.mobile-open{transform:translateX(0)}
   /* Topbar */
@@ -303,7 +307,7 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
   .sos-item{padding:10px 12px;gap:10px}
   /* Modal — bottom sheet on mobile */
   .modal-overlay{padding:0;align-items:flex-end}
-  .modal{border-radius:20px 20px 0 0;max-height:92vh;max-width:100%;border-bottom-left-radius:0;border-bottom-right-radius:0}
+  .modal{border-radius:20px 20px 0 0;max-height:92vh;max-height:92dvh;max-width:100%;border-bottom-left-radius:0;border-bottom-right-radius:0}
   .modal-header{padding:14px 16px}
   .modal-body{padding:14px 16px}
   .modal-footer{padding:12px 16px;gap:10px}
@@ -541,6 +545,7 @@ img{max-width:100%;height:auto}
 
 <div class="main">
   <div class="topbar">
+    <button id="mobile-back-btn" onclick="history.back()" title="Назад">‹</button>
     <button id="mobile-menu-btn" onclick="toggleMobileSidebar()">☰</button>
     <h2 id="page-title">Панель управления</h2>
     <div style="display:flex;align-items:center;gap:8px">
@@ -877,6 +882,7 @@ function _enterAs(role) {
   currentUser = role;
   document.getElementById('login-screen').style.display = 'none';
   applyUserLayout();
+  _navStart();
   if (_LANDING[role]) showView(_LANDING[role]);
   else showView('provider', role);
   if (role === 'owner') setTimeout(showOwnerNewsFeed, 400);
@@ -1006,6 +1012,7 @@ function logout() {
   if (!confirm('Выйти из системы?')) return;
   currentUser = null;
   _authToken = null;
+  _navDepth = 0; _updateBackBtn();
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('login-username').value = '';
   document.getElementById('login-pwd').value = '';
@@ -1114,6 +1121,9 @@ function applyUserLayout() {
     lbl.title = 'Перейти на главную страницу';
     lbl.onclick = () => showView('provider', currentUser);
   }
+  // No menu to open (providers, the accountant, the kitchen worker): no ☰ that does nothing.
+  const menuBtn = document.getElementById('mobile-menu-btn');
+  if (menuBtn) menuBtn.style.display = sidebar.style.display === 'none' ? 'none' : '';
   updateRequestBadge();
   // Arrived by scanning a warehouse label: go to that item once signed in.
   _whOpenFromLink();
@@ -2731,6 +2741,7 @@ function _resumeAfterUpdate() {
   if (s.by) budgetYear = s.by;
   document.getElementById('login-screen').style.display = 'none';
   applyUserLayout();
+  _navStart();
   // quiet: an update isn't a fresh arrival at Бюджет, so no approval-queue popup.
   showView(s.v || 'dashboard', s.p || undefined, { quiet: true });
   return true;
@@ -3633,11 +3644,94 @@ function closeMobileSidebar() {
   document.getElementById('sidebar-overlay').classList.remove('active');
 }
 
+// ---------- Going back ----------
+// The phone's own Back — the button on Android, the swipe on an iPhone — used to leave the app
+// altogether, and since a fresh load signs out, that meant signing in again. Now every change
+// of screen is a step in the browser's history: Back first closes whatever is open on top (a
+// form, the gallery, the menu), otherwise returns to the previous screen, and on the first
+// screen asks for a second press before leaving. A "‹" in the phone's top bar does the same.
+let _navFromHistory = false; // showView called by Back: no new step
+let _navLastKey = null;      // the screen the newest step is for
+let _navDepth = 0;           // screens this tab can go back through
+let _navExitArmedAt = 0;
+const _navKey = (v, p) => v + '|' + (p || '');
+
+// On entering the app (sign-in, the post-deploy resume): this entry becomes the floor that
+// Back stops at; the first screen is the step above it.
+function _navStart() {
+  _navLastKey = null;
+  _navDepth = 0;
+  try { history.replaceState({ app: 1, root: 1 }, ''); } catch (e) { /* history unavailable */ }
+  _updateBackBtn();
+}
+function _navPush(v, p) {
+  _navLastKey = _navKey(v, p);
+  _navDepth++;
+  try { history.pushState({ app: 1, v, p: p || null, d: _navDepth }, ''); } catch (e) { /* history unavailable */ }
+  _updateBackBtn();
+}
+function _updateBackBtn() {
+  const b = document.getElementById('mobile-back-btn');
+  if (b) b.classList.toggle('show', _navDepth > 1 && !!currentUser);
+}
+
+// Whatever is open on top of the screen, closed — the topmost first. Returns whether
+// something was.
+function _closeTopLayer() {
+  if (document.getElementById('file-preview-overlay')) { _galClose(); return true; }
+  for (const id of ['qe-share-result', 'qe-add-panel', 'owner-news-ov', 'quarterly-editor-overlay', 'crp-ov']) {
+    const el = document.getElementById(id);
+    if (el) { el.remove(); return true; }
+  }
+  if (_modalIsOpen()) {
+    // A swipe from the screen's edge is easy to make by accident: a form something was typed
+    // or chosen in, or a photo added to, asks first.
+    if (!(_modalTouched || pendingFiles.length > 0) || confirm('Закрыть окно? Введённое не сохранится.')) closeModal();
+    return true;
+  }
+  if (document.getElementById('sidebar').classList.contains('mobile-open')) { closeMobileSidebar(); return true; }
+  return false;
+}
+
+// Whether anything was typed or chosen in the open window — what the form's code fills in
+// itself as it opens (today's date, a default) fires no input event, so it doesn't count.
+let _modalTouched = false;
+['input', 'change'].forEach(type => document.addEventListener(type, e => {
+  if (e.target && e.target.closest && e.target.closest('#modal-overlay')) _modalTouched = true;
+}, true));
+
+window.addEventListener('popstate', e => {
+  if (!currentUser) return; // signed out: Back works as on any page
+  if (_closeTopLayer()) {
+    // The step Back took belonged to a screen, not to what was closed: put it back.
+    try { history.pushState({ app: 1, v: view, p: activeProvider || null, d: _navDepth }, ''); } catch (err) { /* ignore */ }
+    return;
+  }
+  const s = e.state || {};
+  if (s.app && !s.root && s.v) {
+    _navFromHistory = true;
+    try {
+      _navDepth = s.d || 1;
+      _navLastKey = _navKey(s.v, s.p);
+      showView(s.v, s.p || undefined, { quiet: true });
+    } finally { _navFromHistory = false; }
+    _updateBackBtn();
+    return;
+  }
+  // Back from the first screen: a second press within a moment leaves the app.
+  if (Date.now() - _navExitArmedAt < 2500) { history.back(); return; }
+  _navExitArmedAt = Date.now();
+  try { history.pushState({ app: 1, v: view, p: activeProvider || null, d: _navDepth }, ''); } catch (err) { /* ignore */ }
+  _showToast('Нажмите «Назад» ещё раз, чтобы выйти из системы', true);
+});
+
 function showView(v, pid, opts) {
   // Coming to Обслуживание территории from elsewhere lands on its list of works, not on the
   // Telegram drafts view someone left open last time.
   if (v === 'maint' && view !== 'maint') maintShowTelegram = false;
   view = v; activeProvider = pid || null;
+  // A new screen is a step Back can return from (see "Going back").
+  if (!_navFromHistory && currentUser && _navKey(v, pid) !== _navLastKey) _navPush(v, pid);
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   const navEl = document.getElementById(v === 'provider' ? `nav-${pid}` : `nav-${v}`);
   if (navEl) navEl.classList.add('active');
@@ -3726,7 +3820,9 @@ function render() {
       title.textContent = '📦 Заявки на закупку — Все';
     } else {
       title.textContent = '📦 Мои заявки на закупку';
-      actions.innerHTML = `<button class="btn btn-primary" onclick="openRequestModal()">+ Новая заявка</button>`;
+      // A provider has no menu: this is the way back to their own page (the name in the top
+      // bar, which also leads there, isn't shown on a phone).
+      actions.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">${PROVIDERS.some(x => x.id === currentUser) ? `<button class="btn btn-outline" onclick="showView('provider','${currentUser}')">← Моя страница</button>` : ''}<button class="btn btn-primary" onclick="openRequestModal()">+ Новая заявка</button></div>`;
     }
     content.innerHTML = renderRequests();
   } else if (view === 'contacts') {
@@ -4607,7 +4703,10 @@ async function _galShow(index) {
     document.body.appendChild(ov);
   }
 
-  ov.innerHTML = `<div style="color:white;font-size:28px;flex:1;display:flex;align-items:center;justify-content:center">⏳</div>`;
+  // A ✕ while it loads too: on a slow connection the ⏳ filled the whole screen, and a tap on
+  // it isn't a tap "outside", so there was no way out but to wait.
+  ov.innerHTML = `<div style="flex-shrink:0;display:flex;justify-content:flex-end;padding:10px 12px"><button onclick="event.stopPropagation();_galClose()" style="color:white;background:rgba(255,255,255,.18);border:none;padding:7px 14px;border-radius:6px;font-size:16px;cursor:pointer">✕</button></div>
+    <div style="color:white;font-size:28px;flex:1;display:flex;align-items:center;justify-content:center">⏳</div>`;
 
   const f = await dbGet(id);
   if (!f) { _galClose(); alert('Файл не найден'); return; }
@@ -6029,12 +6128,29 @@ ${(maintWorks.length||sosEvts.length)?`<!-- ══ 05. EXTRA WORKS SUMMARY ═�
   return html;
 }
 
+// A page this app opens in a new tab — a report, an act or labels to print. On a phone a new
+// tab doesn't look like one, and these pages had no way back: people closed them and opened
+// the app again, signed out. Each now has a bar on top with "← Назад в систему", which closes
+// the tab (a browser allows that for a tab a page opened itself) and, if it won't close,
+// brings the app up in it instead. Hidden when printing.
+function _withBackBar(html) {
+  const appUrl = location.origin + location.pathname;
+  const bar = `<style>@media print{#app-back-bar{display:none!important}}</style>
+<div id="app-back-bar" style="position:sticky;top:0;left:0;right:0;z-index:2147483647;display:flex;align-items:center;gap:10px;padding:8px 12px;background:#0f172a;box-shadow:0 2px 8px rgba(0,0,0,.25);font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+<button onclick="try{if(window.opener&&!window.opener.closed)window.opener.focus();}catch(e){}window.close();setTimeout(function(){location.href=${_escHtml(JSON.stringify(appUrl))};},400);" style="background:#fff;color:#0f172a;border:none;border-radius:8px;padding:9px 16px;font-size:15px;font-weight:700;cursor:pointer">← Назад в систему</button></div>`;
+  return /<body[^>]*>/i.test(html) ? html.replace(/<body[^>]*>/i, m => m + bar) : bar + html;
+}
+function _writeAppWindow(win, html) {
+  win.document.open();
+  win.document.write(_withBackBar(html));
+  win.document.close();
+}
+
 function generateReport() {
   const html = _buildReportHTML();
   const win = window.open('', '_blank');
   if (!win) { _showToast('❌ Разрешите всплывающие окна в браузере', false); return; }
-  win.document.write(html);
-  win.document.close();
+  _writeAppWindow(win, html);
 }
 
 // ==============================
@@ -8677,7 +8793,7 @@ function _whDocHTML(d) {
 
 function _whOpenPrint(html, fileBase) {
   const w = window.open('', '_blank');
-  if (w) { w.document.open(); w.document.write(html); w.document.close(); return w; }
+  if (w) { _writeAppWindow(w, html); return w; }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
   a.download = fileBase + '.html'; document.body.appendChild(a); a.click(); a.remove();
@@ -8769,7 +8885,7 @@ async function _printWhLabels(ids) {
     .tx { min-width: 0; } .inv { font-size: 15pt; font-weight: 700; } .nm { font-size: 8.5pt; line-height: 1.2; max-height: 3.6em; overflow: hidden; } .org { font-size: 7pt; color: #475569; margin-top: 1mm; }
     @media print { .bar { display: none; } .grid { padding: 0; } }
   </style></head><body><div class="bar"><span>Наклеек: ${ids.length}</span><button onclick="window.print()">🖨️ Печать</button></div><div class="grid">${labels}</div></body></html>`;
-  if (w) { w.document.open(); w.document.write(html); w.document.close(); }
+  if (w) _writeAppWindow(w, html);
   else _whOpenPrint(html, 'Наклейки_склада');
   if (_modalIsOpen()) closeModal();
 }
@@ -8870,6 +8986,7 @@ function closeModal(bySave) {
   }
   document.getElementById('modal-overlay').classList.add('hidden');
   pendingFiles = [];
+  _modalTouched = false;
   _modalGen++;
   // A form opened by «Одобрить» on a Telegram draft and then closed without saving must
   // let go of that draft — otherwise the NEXT unrelated SOS/maintenance record saved took
@@ -9617,7 +9734,7 @@ function qeShowAddWork() {
   const panel = document.createElement('div');
   panel.id = 'qe-add-panel';
   panel.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;padding:16px';
-  panel.innerHTML = `<div style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.08);border-radius:16px;width:100%;max-width:660px;max-height:92vh;display:flex;flex-direction:column;overflow:hidden">
+  panel.innerHTML = `<div style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.08);border-radius:16px;width:100%;max-width:660px;max-height:92vh;max-height:92dvh;display:flex;flex-direction:column;overflow:hidden">
     <div style="padding:14px 16px 0;display:flex;align-items:center;gap:12px">
       <div style="flex:1"><div style="font-size:14px;font-weight:700;color:#f8fafc">➕ Добавить из системы</div>
         <div style="font-size:10px;color:rgba(248,250,252,0.35);margin-top:1px">нажмите на строку — увидите описание и фото</div>
@@ -9749,7 +9866,7 @@ async function _qeSaveAndShareInner() {
 
   // Open preview window synchronously (must stay before any await to avoid popup blocker)
   const win = window.open('', '_blank');
-  if (win) { win.document.write(html); win.document.close(); }
+  if (win) _writeAppWindow(win, html);
 
   _showToast('⧗ Сохраняем отчёт в облаке…', true);
   try {
@@ -9825,7 +9942,7 @@ async function shareMonthlyReport() {
   const shareUrl = location.origin + location.pathname + '?share=' + token;
   // Open preview synchronously before any await (popup blocker requires user-gesture)
   const win = window.open('', '_blank');
-  if (win) { win.document.write(html); win.document.close(); }
+  if (win) _writeAppWindow(win, html);
   else { _showToast('❌ Разрешите всплывающие окна в браузере', false); }
   try {
     await _fsSetDoc('appdata/share_' + token, { type: 'monthly_report', html, createdAt: Date.now() });
@@ -10647,12 +10764,12 @@ function printReport() {
     + document.getElementById('content').innerHTML;
   var win = window.open('', '_blank');
   if (!win) return;
-  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Отчёт '+displayYear+'</title>'
+  win.document.write(_withBackBar('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Отчёт '+displayYear+'</title>'
     + '<style>body{font-family:Arial,sans-serif;padding:20px;color:#1e293b;font-size:12px}'
     + 'table{width:100%;border-collapse:collapse}th,td{padding:7px 10px;border:1px solid #e2e8f0}'
     + 'th{background:#f8fafc;font-weight:700}.stat-card{display:inline-block;padding:10px 16px;border:1px solid #e2e8f0;margin:6px;border-radius:8px}'
     + '.btn,.year-btn,.year-nav{display:none !important}'
-    + '</style></head><body>'+content+'</body></html>');
+    + '</style></head><body>'+content+'</body></html>'));
   win.document.close();
   setTimeout(function(){win.print();}, 500);
 }
@@ -10775,16 +10892,17 @@ function showOwnerNewsFeed() {
         </div>
         <div style="font-size:11px;color:#2563eb;font-weight:600;margin-bottom:2px">${typeLabel[e.type]||e.type}</div>
         ${e.detail ? `<div style="font-size:12px;color:#374151">${e.detail}</div>` : ''}
-        <div style="font-size:11px;color:#6b7280;margin-top:2px">מאת: ${e.actor}</div>
+        <div style="font-size:11px;color:#6b7280;margin-top:2px">От: ${e.actor}</div>
       </div>
     </div>`).join('');
 
   const lastStr = lastLogin ? _fmtTs(lastLogin) : '';
 
   const ov = document.createElement('div');
+  ov.id = 'owner-news-ov';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px';
   ov.innerHTML = `
-    <div style="background:white;border-radius:18px;width:100%;max-width:560px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden">
+    <div style="background:white;border-radius:18px;width:100%;max-width:560px;max-height:80vh;max-height:80dvh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden">
       <div style="padding:20px 24px 14px;border-bottom:1px solid #e2e8f0;flex-shrink:0">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
           <div style="font-size:18px;font-weight:800;color:#1e293b">🔔 Новые обновления</div>
@@ -12941,7 +13059,7 @@ function _runBudgetReport() {
   closeModal();
   // Opened synchronously, inside the click, so pop-up blockers let it through.
   const w = window.open('', '_blank');
-  if (w) { w.document.open(); w.document.write(html); w.document.close(); return; }
+  if (w) { _writeAppWindow(w, html); return; }
   // Blocked anyway: hand it over as a file — it opens in any browser and prints the same.
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
