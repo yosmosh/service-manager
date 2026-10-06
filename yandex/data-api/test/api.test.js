@@ -94,7 +94,7 @@ test('the import hashes every account and leaves no credential in appdata/state'
   const r = await t.call('POST', 'v1/admin:importCredentials', { service: true });
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.roles, 8);
-  assert.strictEqual(r.body.providers, 9);
+  assert.strictEqual(r.body.providers, 18);
   const state = t.store.docs.get('appdata/state').fields;
   for (const n of Object.keys(state)) assert.ok(!/_pwd$|_username$|^provider_pins$|^provider_usernames$/.test(n), 'left in state: ' + n);
   assert.ok(state.sos_items && state.budget_released, 'other fields kept');
@@ -254,6 +254,39 @@ test('who may change what', async () => {
   const dup = await t.call('POST', 'v1/auth:setAccount', { token: owner, body: { kind: 'role', id: 'admin', user: 'ENERGO' } });
   assert.strictEqual(dup.status, 409, 'a name another account uses');
   assert.strictEqual((await login(t, 'admin', 'adm-secret')).status, 200, 'unchanged after the refusal');
+});
+
+test('every provider of the app can sign in: the server knows the same list as the page', async () => {
+  const fs = require('fs'), path = require('path');
+  const page = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'service-manager.html'), 'utf8');
+  const start = page.indexOf('const PROVIDERS = [');
+  const block = page.slice(start, page.indexOf('\n];', start));
+  const ids = [...block.matchAll(/\{\s*id:\s*'([^']+)'/g)].map(m => m[1]);
+  assert.ok(ids.length >= 18, 'found ' + ids.length + ' providers in the page');
+  assert.deepStrictEqual([...require('../accounts').PROVIDER_IDS].sort(), [...ids].sort());
+});
+
+test('a provider added to the app later is added on re-import; everyone else is kept', async () => {
+  const t = await imported();
+  const owner = (await login(t, 'Yosmosh', 'own-secret')).body.token;
+  await t.call('POST', 'v1/auth:setAccount', { token: owner, body: { kind: 'role', id: 'admin', user: 'admin', password: 'changed' } });
+  // As after the move: the credentials hold only some providers; state brings the rest.
+  const doc = t.store.docs.get('_auth/credentials');
+  const prov = JSON.parse(doc.fields.providers);
+  delete prov.mapValue.fields.evstratov;
+  doc.fields.providers = JSON.stringify(prov);
+  await t.seedState(Object.assign({}, LIVE_LIKE, {
+    provider_usernames: { mapValue: { fields: { evstratov: S('Evstratov') } } },
+    provider_pins: { mapValue: { fields: { evstratov: S('4321') } } },
+  }));
+  assert.strictEqual((await login(t, 'evstratov', '4321')).status, 401, 'missing before');
+  const r = await t.call('POST', 'v1/admin:importCredentials', { service: true });
+  assert.deepStrictEqual([r.status, r.body.kept, r.body.added], [200, true, 1]);
+  const ev = await login(t, 'Evstratov', '4321');
+  assert.deepStrictEqual([ev.status, ev.body.providerId], [200, 'evstratov']);
+  assert.strictEqual((await login(t, 'admin', 'changed')).status, 200, 'changed password kept');
+  assert.strictEqual((await login(t, 'admin', 'adm-secret')).status, 401);
+  assert.ok(!('provider_pins' in t.store.docs.get('appdata/state').fields), 'state cleaned');
 });
 
 test('a re-import keeps passwords changed since, unless forced; state is cleaned either way', async () => {

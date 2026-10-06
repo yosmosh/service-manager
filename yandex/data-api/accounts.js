@@ -34,7 +34,11 @@ const ACCOUNTS = [
 ];
 // PROVIDERS in the app. Each signs in with its own id unless a name was set for it, and with
 // the pin 1234 until one was set.
-const PROVIDER_IDS = ['mosoblgaz', 'rosseti', 'energiya', 'aquavita', 'ruskhem', 'ekoregion', 'ruzoperator', 'asspb', 'algorithm'];
+// Must list every id of PROVIDERS in service-manager.html — a provider missing here cannot sign
+// in at all (on 2026-10-06 the last nine added to the app were missing, and were told their
+// password was wrong). test/api.test.js compares the two lists.
+const PROVIDER_IDS = ['mosoblgaz', 'rosseti', 'energiya', 'aquavita', 'ruskhem', 'ekoregion', 'ruzoperator', 'asspb', 'algorithm',
+  'vdpo', 'cigie', 'istranet', 'remkhold', 'leshtaev', 'byrdin', 'security', 'oscar', 'evstratov'];
 const PROVIDER_DEFAULT_PIN = '1234';
 
 // Where the credentials sat in appdata/state on Firebase. importFromState() moves them out.
@@ -316,28 +320,33 @@ function createAccounts({ store, auth, now }) {
   // them from it. Run by the move, after each copy of the data (service only). The passwords
   // never leave this service: they are read, hashed and dropped here. Credentials already
   // here are kept unless `force` — the final copy before the switch forces, so that what
-  // counts is what was in use on Firebase up to that moment. Either way, none stay behind in
+  // counts is what was in use on Firebase up to that moment; without it only accounts not here
+  // yet are added (a provider added to the app since). Either way, none stay behind in
   // appdata/state, where every signed-in user can read it.
   async function importFromState({ force } = {}) {
     const doc = await store.read('appdata/state', STATE_CRED_FIELDS);
     const f = doc ? parseFields(doc.fields) : {};
     const present = STATE_CRED_FIELDS.filter(n => f[n] !== undefined);
-    if (!force && (await readCredentials())) {
-      if (present.length) await writeFields('appdata/state', {}, present);
-      return { status: 200, body: { ok: true, kept: true, removedFromState: present.length } };
-    }
+    const existing = force ? null : await readCredentials();
     const roles = {}, providers = {};
+    let added = 0;
     for (const a of ACCOUNTS) {
+      if (existing && existing.roles[a.role]) { roles[a.role] = existing.roles[a.role]; continue; }
       roles[a.role] = { user: str(f[a.user]) || a.defUser, hash: await hashPassword(str(f[a.pwd]) || a.defPwd), gen: 0 };
+      added++;
     }
     const names = mapFields(f.provider_usernames), pins = mapFields(f.provider_pins);
     for (const pid of PROVIDER_IDS) {
+      if (existing && existing.providers[pid]) { providers[pid] = existing.providers[pid]; continue; }
       providers[pid] = { user: str(names[pid]) || pid, hash: await hashPassword(str(pins[pid]) || PROVIDER_DEFAULT_PIN), gen: 0 };
+      added++;
     }
-    await writeFields(CRED_PATH, { roles: kindValue(roles), providers: kindValue(providers) });
+    if (!existing || added) await writeFields(CRED_PATH, { roles: kindValue(roles), providers: kindValue(providers) });
     if (present.length) await writeFields('appdata/state', {}, present);
     genCache.gens = null;
-    return { status: 200, body: { ok: true, roles: Object.keys(roles).length, providers: Object.keys(providers).length, removedFromState: present.length } };
+    return { status: 200, body: existing
+      ? { ok: true, kept: true, added, removedFromState: present.length }
+      : { ok: true, roles: Object.keys(roles).length, providers: Object.keys(providers).length, removedFromState: present.length } };
   }
 
   return { login, list, setAccount, importFromState, tokenCurrent, callerKey };
