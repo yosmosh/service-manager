@@ -50,6 +50,23 @@ paths:
         object: service-manager.html
         service_account_id: ajep053p13thhsapa7r6
 
+  # Only tabs still running a version from before the move to Yandex ask HEAD of this — the
+  # current page asks /app-version. They read nothing but an ETag, which the bucket doesn't
+  # send, so the data API function answers them with one that keeps changing: they reload
+  # into the current page (yandex/data-api/index.js). GET is the page, as everywhere else.
+  /service-manager.html:
+    get:
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: sad-budushego-site
+        object: service-manager.html
+        service_account_id: ajep053p13thhsapa7r6
+    head:
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4e7okpot0k25pk5b8em
+        service_account_id: ajep053p13thhsapa7r6
+
   /api/{path+}:
     x-yc-apigateway-any-method:
       parameters:
