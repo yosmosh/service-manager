@@ -34,6 +34,22 @@ paths:
         object: service-manager.html
         service_account_id: ajep053p13thhsapa7r6
 
+  # The page under another name, for the open tabs' check for a new deploy (_pageEtag):
+  # HEAD answers with the page's Last-Modified, which every upload moves forward.
+  /app-version:
+    get:
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: sad-budushego-site
+        object: service-manager.html
+        service_account_id: ajep053p13thhsapa7r6
+    head:
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: sad-budushego-site
+        object: service-manager.html
+        service_account_id: ajep053p13thhsapa7r6
+
   /api/{path+}:
     x-yc-apigateway-any-method:
       parameters:

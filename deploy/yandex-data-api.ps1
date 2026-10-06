@@ -17,7 +17,12 @@ $functionId = 'd4e7okpot0k25pk5b8em'
 $serviceAccountId = 'ajediqo8e0399kg5966s'   # data-api: ydb.editor, storage.editor, Lockbox reader
 $secretId = 'e6qb5fo5urknt3m4ne3c'
 
-$token = (& $yc iam create-token 2>$null | Out-String).Trim()
+# yc may also print a sign-in notice; with ErrorActionPreference Stop that alone would abort
+# the script, so the token is picked out of its output with the notice tolerated.
+$eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+$token = ((& $yc iam create-token 2>$null | Out-String) -split "`r?`n" | Where-Object { $_ -match '^t1.' } | Select-Object -First 1)
+$ErrorActionPreference = $eap
+if (-not $token) { throw 'No IAM token from yc (run: yc iam create-token)' }
 $h = @{ Authorization = "Bearer $token" }
 $secret = Invoke-RestMethod -Uri "https://lockbox.api.cloud.yandex.net/lockbox/v1/secrets/$secretId" -Headers $h
 $secretVersion = $secret.currentVersion.id

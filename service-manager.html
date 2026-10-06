@@ -2614,9 +2614,13 @@ let _newVersionSeen = false;
 
 // Vercel answers with an ETag; Yandex's gateway passes on only Last-Modified, which the
 // deploy script moves forward with every upload — either one changes when a deploy lands.
+// Asked at /app-version (the page itself, under another name): HEAD /service-manager.html is
+// left to tabs still running a version from before the move to Yandex, which looked only at
+// an ETag and so never noticed a deploy there — the gateway answers them with one that keeps
+// changing, so they reload into this version (see yandex/data-api/index.js).
 async function _pageEtag() {
   try {
-    const r = await fetch('/service-manager.html', { method: 'HEAD', cache: 'no-store' });
+    const r = await fetch('/app-version', { method: 'HEAD', cache: 'no-store' });
     return r.ok ? (r.headers.get('etag') || r.headers.get('last-modified') || null) : null;
   } catch (e) { return null; }
 }

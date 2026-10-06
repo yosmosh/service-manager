@@ -13,7 +13,12 @@ param([switch]$Force, [string]$AfterSwitch = '', [string]$Node = 'node')
 $ErrorActionPreference = 'Stop'
 $env:YC_CLI_INITIALIZATION_SILENCE = 'true'
 $yc = "$env:USERPROFILE\yandex-cloud\bin\yc.exe"
-$token = (& $yc iam create-token 2>$null | Out-String).Trim()
+# yc may also print a sign-in notice; with ErrorActionPreference Stop that alone would abort
+# the script, so the token is picked out of its output with the notice tolerated.
+$eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+$token = ((& $yc iam create-token 2>$null | Out-String) -split "`r?`n" | Where-Object { $_ -match '^t1.' } | Select-Object -First 1)
+$ErrorActionPreference = $eap
+if (-not $token) { throw 'No IAM token from yc (run: yc iam create-token)' }
 $payload = Invoke-RestMethod -Uri 'https://payload.lockbox.api.cloud.yandex.net/lockbox/v1/secrets/e6qb5fo5urknt3m4ne3c/payload' -Headers @{ Authorization = "Bearer $token" }
 $env:SERVICE_KEY = ($payload.entries | Where-Object { $_.key -eq 'SERVICE_KEY' }).textValue
 $payload = $null

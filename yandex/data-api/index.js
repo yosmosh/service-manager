@@ -13,7 +13,18 @@ const { createAccounts } = require('./accounts');
 const accounts = createAccounts({ store, auth });
 const api = createApi({ store, auth, files, accounts });
 
+// HEAD /service-manager.html (routed here by the gateway): only tabs still running a version
+// from before the move ask this — the current page asks /app-version. Their version check
+// read nothing but an ETag, which Yandex's bucket doesn't pass on, so they never reloaded; and
+// since Firebase was locked they can't check a password either, telling everyone it's wrong.
+// An ETag that changes every four minutes (they check every three) makes them reload into
+// the current page within a few minutes of being looked at.
+const OLD_TAB_PATH = /\/service-manager\.html$/;
+
 module.exports.handler = async function (event) {
+  if (OLD_TAB_PATH.test(String(event.url || event.path || '').split('?')[0])) {
+    return { statusCode: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ETag: '"reload-' + Math.floor(Date.now() / 240000) + '"' }, body: '', isBase64Encoded: false };
+  }
   const params = event.params || event.pathParams || {};
   let rest = params.rest;
   if (rest == null) rest = String(event.url || event.path || '').split('?')[0].replace(/^.*?\/db\//, '');
