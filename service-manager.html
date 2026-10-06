@@ -349,6 +349,56 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 @media(max-width:768px){.ff-cell{width:80px;height:80px}.ff-del{width:28px;height:28px;font-size:14px}}
 /* Warehouse cards carry more buttons than fit in one row on a phone */
 .wh-foot{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;width:100%}
+/* Warehouse catalogue, laid out like a shop's */
+.wh-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+.wh-search{flex:1;min-width:200px;max-width:420px;font-size:15px;padding:10px 14px}
+.wh-segs{display:flex;background:#f1f5f9;border-radius:10px;padding:3px;gap:2px}
+.wh-seg{border:none;background:none;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;color:#475569;cursor:pointer;white-space:nowrap}
+.wh-seg.active{background:#fff;color:#0f172a;box-shadow:0 1px 3px rgba(15,23,42,.12)}
+.wh-chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;margin-bottom:6px;scrollbar-width:thin}
+.wh-chip{flex:0 0 auto;display:flex;align-items:center;gap:6px;border:1px solid #e2e8f0;background:#fff;border-radius:999px;padding:7px 12px;font-size:13px;cursor:pointer;white-space:nowrap;color:#334155}
+.wh-chip:hover{border-color:#94a3b8}
+.wh-chip.active{background:#1e3a8a;border-color:#1e3a8a;color:#fff}
+.wh-chip-n{font-size:11px;background:#f1f5f9;color:#475569;border-radius:999px;padding:0 7px;font-weight:700}
+.wh-chip.active .wh-chip-n{background:rgba(255,255,255,.2);color:#fff}
+.wh-photo-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:13px;color:#1e3a8a}
+.wh-sec{display:flex;align-items:center;gap:8px;margin:18px 0 8px;font-weight:800;font-size:16px;color:#0f172a}
+.wh-sec-n{font-size:12px;color:#64748b;font-weight:600;background:#f1f5f9;border-radius:999px;padding:1px 8px}
+.wh-sec-all{margin-left:auto;background:none;border:none;color:#2563eb;font-size:12px;cursor:pointer;font-weight:600}
+.wh-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.wh-card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;cursor:pointer;display:flex;flex-direction:column;transition:box-shadow .15s,transform .15s}
+.wh-card:hover{box-shadow:0 6px 18px rgba(15,23,42,.10);transform:translateY(-1px)}
+.wh-card.late{border-color:#fca5a5}
+.wh-card.gone{opacity:.55}
+.wh-pic{position:relative;aspect-ratio:1/1;background:#fff;border-bottom:1px solid #f1f5f9}
+.wh-pic img{width:100%;height:100%;object-fit:contain;padding:8px;box-sizing:border-box;display:block;max-width:none}
+.wh-nophoto{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f8fafc;color:#94a3b8;font-size:12px}
+.wh-nophoto div{font-size:46px;opacity:.55;margin-bottom:4px}
+.wh-badge{position:absolute;left:7px;top:7px;font-size:11px;font-weight:700;border-radius:6px;padding:2px 7px;max-width:calc(100% - 14px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wh-badge.ok{background:#dcfce7;color:#166534}
+.wh-badge.warn{background:#fef3c7;color:#92400e}
+.wh-badge.bad{background:#fee2e2;color:#b91c1c}
+.wh-badge.none{background:#f1f5f9;color:#64748b}
+.wh-addphoto{position:absolute;right:8px;bottom:8px;width:36px;height:36px;border-radius:50%;border:none;background:#1e3a8a;color:#fff;font-size:17px;cursor:pointer;box-shadow:0 2px 8px rgba(15,23,42,.3)}
+.wh-info{padding:8px 10px 10px}
+.wh-name{font-weight:700;font-size:13px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.6em}
+.wh-meta{font-size:11px;color:#64748b;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Photo search results (item form, photo assistant) */
+.wh-found{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px;margin-top:8px}
+.wh-found button{position:relative;aspect-ratio:1/1;border:2px solid #e2e8f0;border-radius:10px;background:#fff;padding:4px;cursor:pointer;overflow:hidden}
+.wh-found button:hover{border-color:#2563eb}
+.wh-found img{width:100%;height:100%;object-fit:contain;display:block;max-width:none}
+.wh-found button.busy{opacity:.5;cursor:wait}
+.wh-found button.picked{border-color:#16a34a}
+.wh-found button.picked::after{content:'✓';position:absolute;right:5px;top:3px;background:#16a34a;color:#fff;border-radius:50%;width:22px;height:22px;font-size:13px;line-height:22px;text-align:center}
+.wh-hero{width:100%;max-height:300px;object-fit:contain;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:8px;box-sizing:border-box;cursor:zoom-in;display:block}
+@media(max-width:640px){.wh-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.wh-search{min-width:0;max-width:none;flex-basis:100%}.wh-found{grid-template-columns:repeat(3,minmax(0,1fr))}}
+[data-theme="dark"] .wh-card,[data-theme="dark"] .wh-chip{background:#1e293b;border-color:#334155;color:#e2e8f0}
+[data-theme="dark"] .wh-sec{color:#e2e8f0}
+[data-theme="dark"] .wh-segs{background:#1e293b}
+[data-theme="dark"] .wh-seg.active{background:#334155;color:#fff}
+[data-theme="dark"] .wh-nophoto{background:#0f172a}
+[data-theme="dark"] .wh-photo-bar{background:#172554;border-color:#1e3a8a;color:#bfdbfe}
 /* Mobile thumbnail wrapper (maintenance) */
 [data-gids]{display:flex;flex-wrap:wrap;gap:8px}
 /* Ensure images never overflow on mobile */
@@ -4246,7 +4296,12 @@ function _compressImageNow(file) {
         }
         var canvas = document.createElement('canvas');
         canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        var ctx = canvas.getContext('2d');
+        // JPEG has no transparency: what was transparent in a PNG (product photos from shops
+        // usually are, around the product) would come out black — white instead.
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
         var compressed = canvas.toDataURL('image/jpeg', 0.78);
         resolve({data: compressed, size: Math.round(compressed.length * 0.75), type: 'image/jpeg'});
       };
@@ -7404,18 +7459,28 @@ function openProviderInfo(pid) {
 // Stored in appdata/warehouse (items, people, settings) and appdata/warehouse_docs (the
 // documents) — see SIDE_DOCS. Run by admin and owner (_WAREHOUSE_ROLES).
 
+// In the order the catalogue shows them. Ids are stored on items and returned by the AI
+// invoice reader (api/kitchen/scan-invoice.js, WAREHOUSE_PROMPT) — keep the two lists in step,
+// and never rename an id: items already carry it.
 const WH_CATS = [
+  { id: 'electrical',  label: '⚡ Электрика' },
+  { id: 'lighting',    label: '💡 Освещение' },
+  { id: 'fasteners',   label: '🔩 Крепёж' },
   { id: 'tools',       label: '🔨 Ручной инструмент' },
   { id: 'power',       label: '🔌 Электроинструмент' },
-  { id: 'garden',      label: '🌿 Садовая техника и инвентарь' },
-  { id: 'equipment',   label: '⚙️ Оборудование' },
-  { id: 'electronics', label: '💻 Электроника' },
-  { id: 'lighting',    label: '💡 Освещение и электрика' },
-  { id: 'plumbing',    label: '🚿 Сантехника' },
-  { id: 'chemicals',   label: '🧪 Химия (бассейн, уборка)' },
+  { id: 'paint',       label: '🎨 Краски и малярное' },
+  { id: 'adhesives',   label: '🧴 Клеи, герметики, пена' },
   { id: 'building',    label: '🧱 Стройматериалы' },
-  { id: 'fasteners',   label: '🔩 Крепёж и расходники' },
+  { id: 'plumbing',    label: '🚿 Сантехника' },
+  { id: 'hardware',    label: '🔑 Замки и фурнитура' },
+  { id: 'chemicals',   label: '🧪 Химия (бассейн, техническая)' },
+  { id: 'cleaning',    label: '🧽 Уборка и бытовая химия' },
+  { id: 'hygiene',     label: '🧻 Гигиена и хозтовары' },
+  { id: 'garden',      label: '🌿 Сад и территория' },
   { id: 'safety',      label: '🦺 Спецодежда и СИЗ' },
+  { id: 'equipment',   label: '⚙️ Оборудование' },
+  { id: 'electronics', label: '💻 Электроника и связь' },
+  { id: 'office',      label: '📎 Канцтовары' },
   { id: 'other',       label: '📦 Прочее' },
 ];
 const WH_UNITS = ['шт', 'компл', 'пар', 'м', 'м²', 'кг', 'л', 'уп', 'рул', 'мешок'];
@@ -7444,6 +7509,9 @@ const _whItem = id => getWhItems().find(i => i.id === id);
 const _whEmp = id => getWhEmployees().find(e => e.id === id);
 const _whCat = id => WH_CATS.find(c => c.id === id) || WH_CATS[WH_CATS.length - 1];
 const _whIcon = id => _whCat(id).label.split(' ')[0];
+const _whCatName = id => _whCat(id).label.split(' ').slice(1).join(' ');
+// The picture the catalogue shows for an item: its first image.
+const _whMainImg = it => (it.fileIds || []).find((f, k) => String((it.fileTypes || [])[k] || '').startsWith('image/')) || null;
 const _whIsAsset = it => !!it && it.kind !== 'consumable';
 // Quantities may be fractional (kg, l, m) — kept to 3 decimals so sums don't drift.
 const _whQ = v => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -7575,62 +7643,103 @@ function _whAlerts() {
   return html;
 }
 
+// The catalogue, laid out like a shop's: a row of categories to tap (with how many items each
+// holds), and the items as cards whose picture does most of the finding — with no category
+// picked and nothing searched, one section per category.
 function _whCatalogTab() {
-  const catOpts = `<option value="">Все категории</option>` + WH_CATS.map(c => `<option value="${c.id}" ${whCat === c.id ? 'selected' : ''}>${c.label}</option>`).join('');
+  const kindBtn = (v, l) => `<button class="wh-seg${whKind === v ? ' active' : ''}" onclick="whKind='${v}';document.querySelectorAll('.wh-seg').forEach(b=>b.classList.toggle('active',b===this));_whRefreshList()">${l}</button>`;
   return `${_whAlerts()}
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
-      <input class="form-control" style="flex:1;min-width:180px;max-width:320px" placeholder="🔍 Название, инв. номер, место…" value="${_escHtml(whSearch)}" oninput="whSearch=this.value;_whRefreshList()">
-      <select class="form-control" style="width:auto" onchange="whCat=this.value;_whRefreshList()">${catOpts}</select>
-      <select class="form-control" style="width:auto" onchange="whKind=this.value;_whRefreshList()">
-        <option value="" ${!whKind ? 'selected' : ''}>Всё</option>
-        <option value="asset" ${whKind === 'asset' ? 'selected' : ''}>🔧 Инструмент и оборудование</option>
-        <option value="consumable" ${whKind === 'consumable' ? 'selected' : ''}>📦 Материалы</option>
-      </select>
-      <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" ${whShowGone ? 'checked' : ''} onchange="whShowGone=this.checked;_whRefreshList()"> списанные</label>
+    <div class="wh-toolbar">
+      <input class="form-control wh-search" placeholder="🔍 Найти: название, инв. номер, место…" value="${_escHtml(whSearch)}" oninput="whSearch=this.value;_whRefreshList()">
+      <div class="wh-segs">${kindBtn('', 'Всё')}${kindBtn('asset', '🔧 Инструмент')}${kindBtn('consumable', '📦 Материалы')}</div>
+      <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap"><input type="checkbox" ${whShowGone ? 'checked' : ''} onchange="whShowGone=this.checked;_whRefreshList()"> списанные</label>
       <button class="btn btn-outline" style="font-size:12px;padding:6px 10px;margin-left:auto" onclick="openWhLabels()">🏷️ Наклейки QR</button>
     </div>
+    <div id="wh-chips">${_whCatChips()}</div>
+    <div id="wh-photo-bar">${_whPhotoBar()}</div>
     <div id="wh-list">${_whCatalogList()}</div>`;
 }
-function _whRefreshList() { const el = document.getElementById('wh-list'); if (el) { el.innerHTML = _whCatalogList(); loadWhImages(); } }
+function _whRefreshList() {
+  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  set('wh-chips', _whCatChips()); set('wh-photo-bar', _whPhotoBar()); set('wh-list', _whCatalogList());
+  loadWhImages();
+}
 
-function _whCatalogList() {
+// The items the search, the kind and "списанные" let through — the category too, unless asked
+// not to (the category row counts within everything else that's chosen).
+function _whFiltered(ignoreCat) {
   const stock = _whStockMap(), hold = _whHoldings();
   const q = whSearch.trim().toLowerCase();
   const items = getWhItems().filter(i => {
-    if (whCat && i.category !== whCat) return false;
+    if (!ignoreCat && whCat && i.category !== whCat) return false;
     if (whKind && (whKind === 'asset') !== _whIsAsset(i)) return false;
     if (!whShowGone && _whIsGone(i, stock, hold)) return false;
-    if (q && ![i.name, i.invNo, i.location, i.serial, i.notes].some(v => String(v || '').toLowerCase().includes(q))) return false;
+    if (q && ![i.name, i.invNo, i.location, i.serial, i.notes, i.supplier, _whCatName(i.category)].some(v => String(v || '').toLowerCase().includes(q))) return false;
     return true;
-  }).sort((a, b) => String(a.invNo || '').localeCompare(String(b.invNo || '')));
+  });
+  return { items, stock, hold };
+}
+
+function _whCatChips() {
+  if (!getWhItems().length) return '';
+  const { items } = _whFiltered(true);
+  const n = {};
+  items.forEach(i => { const c = _whCat(i.category).id; n[c] = (n[c] || 0) + 1; });
+  const chip = (id, icon, label, count) => `<button class="wh-chip${whCat === id ? ' active' : ''}" onclick="whCat='${id}';_whRefreshList()"><span>${icon}</span><span>${label}</span><span class="wh-chip-n">${count}</span></button>`;
+  return `<div class="wh-chips">${chip('', '🏪', 'Все', items.length)}${WH_CATS.filter(c => n[c.id] || whCat === c.id).map(c => chip(c.id, _whIcon(c.id), _whCatName(c.id), n[c.id] || 0)).join('')}</div>`;
+}
+
+// Items without a picture, and the way to give them one in a few taps.
+function _whPhotoBar() {
+  if (!_WAREHOUSE_ROLES.includes(currentUser)) return '';
+  const stock = _whStockMap(), hold = _whHoldings();
+  const n = getWhItems().filter(i => !_whMainImg(i) && !_whIsGone(i, stock, hold)).length;
+  if (!n) return '';
+  const word = n % 10 === 1 && n % 100 !== 11 ? 'позиция' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'позиции' : 'позиций';
+  return `<div class="wh-photo-bar"><span>📷 Без фото: <b>${n}</b> ${word} — с фото их легче найти</span>
+    <button class="btn btn-primary" style="font-size:12px;padding:6px 12px" onclick="openWhPhotoAssistant()">✨ Подобрать фото</button></div>`;
+}
+
+function _whCatalogList() {
+  const { items, stock, hold } = _whFiltered(false);
   if (!items.length) return `<div style="text-align:center;padding:50px;color:#6b7280">
     <div style="font-size:44px;margin-bottom:10px">🧰</div>
     <div style="font-size:15px;font-weight:600;margin-bottom:6px">${getWhItems().length ? 'Ничего не найдено' : 'Склад пока пуст'}</div>
     ${getWhItems().length ? '' : '<div style="font-size:13px">Нажмите «+ Позиция», чтобы внести первый инструмент или материал</div>'}</div>`;
-  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px">${items.map(i => {
-    const onShelf = stock[i.id] || 0;
-    const out = hold.filter(h => h.itemId === i.id).reduce((s, h) => s + h.qty, 0);
-    const late = hold.some(h => h.itemId === i.id && _whIsOverdue(h));
-    const low = i.kind === 'consumable' && Number(i.minQty) > 0 && onShelf <= Number(i.minQty);
-    const gone = _whIsGone(i, stock, hold);
-    const img = (i.fileIds || []).find((f, k) => String((i.fileTypes || [])[k] || '').startsWith('image/'));
-    const thumb = img ? `<img class="whthumb" data-fid="${img}" style="width:100%;height:120px;object-fit:cover;display:block;background:#e2e8f0">`
-      : `<div style="height:120px;display:flex;align-items:center;justify-content:center;font-size:44px;background:#f1f5f9">${_whIcon(i.category)}</div>`;
-    const qtyLine = _whIsAsset(i)
-      ? `На складе: <b>${_whFmtQ(onShelf)}</b>${out ? ` · выдано: <b style="color:${late ? '#b91c1c' : '#b45309'}">${_whFmtQ(out)}</b>` : ''} ${_escHtml(i.unit || 'шт')}`
-      : `Остаток: <b style="color:${low ? '#b45309' : '#0f172a'}">${_whFmtQ(onShelf)} ${_escHtml(i.unit || '')}</b>${low ? ' ⚠️' : ''}`;
-    return `<div onclick="openWhItem('${i.id}')" style="background:white;border:1px solid ${late ? '#fca5a5' : '#e2e8f0'};border-radius:12px;overflow:hidden;cursor:pointer;${gone ? 'opacity:.55' : ''}">
-      ${thumb}
-      <div style="padding:9px 11px">
-        <div style="display:flex;justify-content:space-between;gap:6px;align-items:center;margin-bottom:3px">
-          <span style="font-size:11px;font-weight:700;color:#1d4ed8;background:#eff6ff;border-radius:6px;padding:1px 6px">${_escHtml(i.invNo || '')}</span>
-          ${gone ? '<span style="font-size:10px;color:#64748b">списано</span>' : ''}
-        </div>
-        <div style="font-weight:700;font-size:13px;line-height:1.3;margin-bottom:2px">${_escHtml(i.name)}</div>
-        <div style="font-size:11px;color:#6b7280;margin-bottom:5px">${_whCat(i.category).label}${i.location ? ' · 📍 ' + _escHtml(i.location) : ''}</div>
-        <div style="font-size:12px">${qtyLine}</div>
-      </div></div>`;
-  }).join('')}</div>`;
+  const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ru');
+  const grid = list => `<div class="wh-grid">${list.slice().sort(byName).map(i => _whCard(i, stock, hold)).join('')}</div>`;
+  if (whCat || whSearch.trim()) return grid(items);
+  return WH_CATS.map(c => {
+    const list = items.filter(i => _whCat(i.category).id === c.id);
+    return list.length ? `<div class="wh-sec"><span>${_whIcon(c.id)} ${_whCatName(c.id)}</span><span class="wh-sec-n">${list.length}</span>
+      <button class="wh-sec-all" onclick="whCat='${c.id}';_whRefreshList();window.scrollTo({top:0,behavior:'smooth'})">только эти →</button></div>${grid(list)}` : '';
+  }).join('');
+}
+
+function _whCard(i, stock, hold) {
+  const unit = _escHtml(i.unit || 'шт');
+  const onShelf = stock[i.id] || 0;
+  const out = hold.filter(h => h.itemId === i.id).reduce((s, h) => s + h.qty, 0);
+  const late = hold.some(h => h.itemId === i.id && _whIsOverdue(h));
+  const low = i.kind === 'consumable' && Number(i.minQty) > 0 && onShelf <= Number(i.minQty);
+  const gone = _whIsGone(i, stock, hold);
+  let badge = _whIsAsset(i)
+    ? (onShelf > 0 ? ['ok', `В наличии: ${_whFmtQ(onShelf)} ${unit}`] : out > 0 ? ['warn', 'Всё выдано'] : ['none', 'Нет на складе'])
+    : (onShelf <= 0 ? ['bad', 'Нет в наличии'] : low ? ['warn', `Мало: ${_whFmtQ(onShelf)} ${unit}`] : ['ok', `${_whFmtQ(onShelf)} ${unit}`]);
+  if (late) badge = ['bad', '⏰ Не вернули в срок'];
+  if (gone) badge = ['none', 'Списано'];
+  const img = _whMainImg(i);
+  const pic = img ? `<img class="whthumb" data-fid="${img}" alt="">`
+    : `<div class="wh-nophoto"><div>${_whIcon(i.category)}</div><span>Нет фото</span></div>`;
+  const addPhoto = !img && _WAREHOUSE_ROLES.includes(currentUser)
+    ? `<button class="wh-addphoto" title="Добавить фото" onclick="event.stopPropagation();openWhPhotoAssistant('${i.id}')">📷</button>` : '';
+  return `<div class="wh-card${gone ? ' gone' : ''}${late ? ' late' : ''}" onclick="openWhItem('${i.id}')">
+    <div class="wh-pic">${pic}<span class="wh-badge ${badge[0]}">${badge[1]}</span>${addPhoto}</div>
+    <div class="wh-info">
+      <div class="wh-name">${_escHtml(i.name)}</div>
+      <div class="wh-meta">${_escHtml(i.invNo || '')}${i.location ? ' · 📍 ' + _escHtml(i.location) : ''}</div>
+      ${_whIsAsset(i) && out ? `<div class="wh-meta" style="color:${late ? '#b91c1c' : '#b45309'};font-weight:600">👷 выдано: ${_whFmtQ(out)} ${unit}</div>` : ''}
+    </div></div>`;
 }
 
 // ---------- an item ----------
@@ -7639,14 +7748,19 @@ function openWhItem(id) {
   if (!it) { _showToast('Позиция не найдена', false); return; }
   const stock = _whStockMap()[id] || 0, hold = _whHoldings().filter(h => h.itemId === id);
   const imgs = (it.fileIds || []).map((f, k) => ({ id: f, type: (it.fileTypes || [])[k] || '', name: (it.fileNames || [])[k] || 'Файл' }));
+  // The main picture large, as a shop shows a product; the rest of the files small below it.
+  const mainId = _whMainImg(it);
   const gallery = imgs.length ? `<div data-gids='${JSON.stringify(imgs.map(x => x.id)).replace(/'/g, '&#39;')}' data-gtypes='${JSON.stringify(imgs.map(x => x.type)).replace(/'/g, '&#39;')}' data-gnames='${JSON.stringify(imgs.map(x => x.name)).replace(/'/g, '&#39;')}' style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-    ${imgs.map((x, k) => x.type.startsWith('image/') ? `<img class="whthumb" data-fid="${x.id}" onclick="openGalleryEl(this,${k})" style="width:96px;height:96px;object-fit:cover;border-radius:10px;cursor:pointer;background:#e2e8f0">`
-      : `<div onclick="openGalleryEl(this,${k})" style="width:96px;height:96px;border-radius:10px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:30px;cursor:pointer">${fileEmoji(x.type)}</div>`).join('')}</div>` : '';
+    ${imgs.map((x, k) => x.id === mainId ? `<img class="whthumb wh-hero" data-fid="${x.id}" onclick="openGalleryEl(this,${k})" style="flex-basis:100%">`
+      : x.type.startsWith('image/') ? `<img class="whthumb" data-fid="${x.id}" onclick="openGalleryEl(this,${k})" style="width:72px;height:72px;object-fit:contain;border:1px solid #e2e8f0;border-radius:10px;cursor:pointer;background:#fff">`
+      : `<div onclick="openGalleryEl(this,${k})" style="width:72px;height:72px;border-radius:10px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:26px;cursor:pointer">${fileEmoji(x.type)}</div>`).join('')}</div>` : '';
+  const noPhoto = !mainId ? `<div class="wh-nophoto" style="height:150px;border-radius:12px;margin-bottom:12px;gap:8px"><div style="margin:0">${_whIcon(it.category)}</div>
+    <button class="btn btn-primary" style="font-size:12px;padding:6px 12px" onclick="openWhPhotoAssistant('${id}')">📷 Добавить фото</button></div>` : '';
   const row = (k, v) => v ? `<div style="display:flex;gap:8px;font-size:13px;padding:3px 0"><span style="color:#6b7280;min-width:130px">${k}</span><span>${v}</span></div>` : '';
   const history = getWhDocs().filter(d => (d.lines || []).some(l => l.itemId === id))
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
   document.getElementById('modal-title').textContent = `${_whIcon(it.category)} ${it.invNo} · ${it.name}`;
-  document.getElementById('modal-body').innerHTML = `${gallery}
+  document.getElementById('modal-body').innerHTML = `${gallery}${noPhoto}
     <div style="display:grid;grid-template-columns:repeat(${_whIsAsset(it) ? 2 : 1},1fr);gap:8px;margin-bottom:12px">
       <div class="stat-card"><div class="stat-value" style="font-size:20px">${_whFmtQ(stock)} ${_escHtml(it.unit || '')}</div><div class="stat-label">${_whIsAsset(it) ? 'На складе' : 'Остаток'}</div></div>
       ${_whIsAsset(it) ? `<div class="stat-card"><div class="stat-value" style="font-size:20px">${_whFmtQ(hold.reduce((s, h) => s + h.qty, 0))} ${_escHtml(it.unit || '')}</div><div class="stat-label">Выдано на руки</div></div>` : ''}
@@ -7686,6 +7800,16 @@ function openWhItemForm(id) {
   document.getElementById('modal-title').textContent = it ? `✏️ ${it.invNo} — изменить` : '➕ Новая позиция склада';
   document.getElementById('modal-body').innerHTML = `
     <div class="form-group"><label>Название *</label><input class="form-control" id="wh-name" value="${_escHtml(it ? it.name : '')}" placeholder="Например: Дрель-шуруповёрт Bosch GSR 18V"></div>
+    <div class="form-group"><label>Фото товара * <span style="font-weight:400;color:#64748b">— первое фото показывается в каталоге</span></label>${existing}
+      <div class="file-list" id="pending-list"></div>
+      <div id="wh-drop" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+        <button type="button" class="btn btn-primary" onclick="_whFinderFromForm()">✨ Найти в интернете</button>
+        <button type="button" class="btn btn-outline" onclick="document.getElementById('wh-cam').click()">📷 Сфотографировать</button>
+        <button type="button" class="btn btn-outline" onclick="document.getElementById('wh-fi').click()">🖼 Из файла</button>
+        <input type="file" id="wh-cam" accept="image/*" capture="environment" style="display:none" onchange="onFilePick(event)">
+        <input type="file" id="wh-fi" multiple accept="image/*,application/pdf" style="display:none" onchange="onFilePick(event)">
+      </div>
+      <div id="wh-finder"></div></div>
     <div class="form-group"><label>Учёт</label>
       <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:6px;cursor:pointer"><input type="radio" name="wh-kind" value="asset" ${kind === 'asset' ? 'checked' : ''} ${it ? 'disabled' : ''} onchange="_whKindChanged()"> <span><b>🔧 Инструмент / оборудование</b> — выдаётся сотруднику и возвращается</span></label>
       <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer"><input type="radio" name="wh-kind" value="consumable" ${kind === 'consumable' ? 'checked' : ''} ${it ? 'disabled' : ''} onchange="_whKindChanged()"> <span><b>📦 Материал</b> — выдаётся в расход (химия, лампы, крепёж)</span></label>
@@ -7711,11 +7835,7 @@ function openWhItemForm(id) {
       <div class="form-group"><label>Дата покупки</label><input type="date" class="form-control" id="wh-pdate" value="${it ? it.purchaseDate || '' : ''}"></div>
       <div class="form-group"><label>Инв. номер</label><input class="form-control" value="${it ? it.invNo : '(присвоится при сохранении)'}" disabled></div>
     </div>
-    <div class="form-group"><label>Примечание</label><textarea class="form-control" id="wh-notes">${_escHtml(it ? it.notes || '' : '')}</textarea></div>
-    <div class="form-group"><label>Фото</label>${existing}
-      <div class="upload-zone" onclick="document.getElementById('wh-fi').click()" id="wh-drop">📷 Добавить фото
-        <input type="file" id="wh-fi" multiple accept="image/*,application/pdf" style="display:none" onchange="onFilePick(event)"></div>
-      <div class="file-list" id="pending-list"></div></div>`;
+    <div class="form-group"><label>Примечание</label><textarea class="form-control" id="wh-notes">${_escHtml(it ? it.notes || '' : '')}</textarea></div>`;
   document.getElementById('modal-footer').innerHTML = `
     <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
     <button class="btn btn-primary" id="wh-item-save" onclick="saveWhItem('${id || ''}')">💾 Сохранить</button>`;
@@ -7729,6 +7849,166 @@ function _whKindChanged() {
   show('wh-min-wrap', k === 'consumable'); show('wh-cond-wrap', k === 'asset');
 }
 
+// ---------- product photos from the internet ----------
+// Yandex's image search for an item's name (yandex/data-api/images.js). The pictures offered
+// are Yandex's own thumbnails; the one tapped is fetched through the data API at full size,
+// and from there goes the way of any photo taken or chosen here (compressed, uploaded).
+const _whFinders = {}; // element id → { query, page, results, picked, busy, error, more, onPick }
+
+async function _whImgSearch(query, page) {
+  if (!_YDB) throw new Error('поиск фото работает только в версии на Яндексе');
+  const r = await _authApi('POST', 'images:search', { query, page: page || 0 });
+  if (!r.ok) throw new Error((r.body.error && (r.body.error.message || r.body.error)) || ('ошибка ' + r.status));
+  return r.body.results || [];
+}
+async function _whImgFile(found, name) {
+  const r = await _authApi('POST', 'images:fetch', { url: found.url, thumb: found.thumb, sig: found.sig });
+  if (!r.ok || !r.body.data) throw new Error((r.body.error && (r.body.error.message || r.body.error)) || 'не удалось загрузить фото');
+  const bin = atob(r.body.data);
+  const bytes = new Uint8Array(bin.length);
+  for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+  const ext = { 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }[r.body.type] || 'jpg';
+  const base = String(name || '').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) || 'фото';
+  return new File([bytes], base + '.' + ext, { type: r.body.type });
+}
+
+function _whFinderRender(elId) {
+  const el = document.getElementById(elId), f = _whFinders[elId];
+  if (!el || !f) return;
+  const head = `<div style="display:flex;gap:6px;margin-top:8px"><input class="form-control" id="${elId}-q" value="${_escHtml(f.query || '')}" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();_whFind('${elId}',this.value)}">
+    <button type="button" class="btn btn-outline" onclick="_whFind('${elId}',document.getElementById('${elId}-q').value)">🔍 Искать</button></div>`;
+  let body;
+  if (f.error) body = `<div style="color:#b91c1c;font-size:12px;margin-top:6px">⚠️ ${_escHtml(f.error)}</div>`;
+  else if (!f.results.length && f.busy) body = `<div style="font-size:12px;color:#64748b;margin-top:8px">⏳ Ищем фото «${_escHtml(f.query)}»…</div>`;
+  else if (!f.results.length) body = `<div style="font-size:12px;color:#64748b;margin-top:8px">Ничего не нашлось — попробуйте написать короче или иначе</div>`;
+  else body = `<div style="font-size:12px;color:#64748b;margin-top:6px">Нажмите на подходящее фото:</div>
+    <div class="wh-found">${f.results.map((x, k) => `<button type="button" id="${elId}-r${k}" class="${(f.picked || []).includes(k) ? 'picked' : ''}" onclick="_whFinderPick('${elId}',${k})" title="${_escHtml(x.source || '')}"><img src="${_escHtml(x.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join('')}</div>
+    ${f.more ? `<button type="button" class="btn btn-outline" style="margin-top:8px;font-size:12px" ${f.busy ? 'disabled' : ''} onclick="_whFind('${elId}',null,true)">${f.busy ? '⏳ Ищем…' : 'Ещё фото'}</button>` : ''}`;
+  el.innerHTML = head + body;
+}
+
+async function _whFind(elId, query, more) {
+  const prev = _whFinders[elId] || {};
+  const f = more ? prev : (_whFinders[elId] = { query: String(query || '').trim(), page: 0, results: [], picked: [], onPick: prev.onPick });
+  if (!f.query || f.busy) return;
+  if (more) f.page++;
+  f.busy = true; f.error = '';
+  _whFinderRender(elId);
+  try {
+    const got = await _whImgSearch(f.query, f.page);
+    if (_whFinders[elId] !== f) return; // a newer search took over
+    f.results = f.results.concat(got);
+    f.more = got.length >= 12 && f.page < 4;
+  } catch (e) { f.error = 'Поиск не удался: ' + e.message; }
+  f.busy = false;
+  _whFinderRender(elId);
+}
+
+async function _whFinderPick(elId, k) {
+  const f = _whFinders[elId];
+  const btn = document.getElementById(elId + '-r' + k);
+  if (!f || !f.onPick || !btn || f.picking) return;
+  f.picking = true;
+  btn.classList.add('busy');
+  try {
+    await f.onPick(f.results[k]);
+    (f.picked = f.picked || []).push(k);
+    btn.classList.add('picked');
+  } catch (e) { _showToast('⚠️ ' + e.message, false); }
+  finally { f.picking = false; btn.classList.remove('busy'); }
+}
+
+// From the item form: the picture joins the form's photos, as if taken right here.
+function _whFinderFromForm() {
+  const nameEl = document.getElementById('wh-name');
+  const name = ((nameEl || {}).value || '').trim();
+  if (!name) { alert('Сначала напишите название — фото ищется по нему'); if (nameEl) nameEl.focus(); return; }
+  _whFinders['wh-finder'] = { onPick: async found => {
+    readFiles([await _whImgFile(found, ((document.getElementById('wh-name') || {}).value || name).trim())]);
+    _showToast('✅ Фото добавлено — сохраните позицию', true);
+  } };
+  _whFind('wh-finder', name);
+}
+
+// ---------- the photo assistant ----------
+// Items without a picture, one after another: the search runs on each one's name, and one tap
+// on the right picture saves it to the item and goes on to the next. Or a photo taken or
+// chosen instead, or "skip". With an id: that one item only.
+let _whPA = null;
+function openWhPhotoAssistant(onlyId) {
+  if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
+  const stock = _whStockMap(), hold = _whHoldings();
+  const order = c => WH_CATS.indexOf(_whCat(c));
+  const queue = onlyId ? [onlyId] : getWhItems().filter(i => !_whMainImg(i) && !_whIsGone(i, stock, hold))
+    .sort((a, b) => order(a.category) - order(b.category) || String(a.name).localeCompare(String(b.name), 'ru')).map(i => i.id);
+  if (!queue.length) { _showToast('✅ У всех позиций уже есть фото', true); return; }
+  _whPA = { queue, idx: 0, added: 0 };
+  _whPAShow();
+}
+function _whPAShow() {
+  const pa = _whPA;
+  if (!pa) return;
+  while (pa.idx < pa.queue.length && !_whItem(pa.queue[pa.idx])) pa.idx++;
+  if (pa.idx >= pa.queue.length) { _whPAClose(); return; }
+  const it = _whItem(pa.queue[pa.idx]);
+  const many = pa.queue.length > 1;
+  _modalGen++;
+  document.getElementById('modal-title').textContent = '📸 Фото для склада' + (many ? ` — ${pa.idx + 1} из ${pa.queue.length}` : '');
+  document.getElementById('modal-body').innerHTML = `
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:4px">
+      <div style="font-size:34px">${_whIcon(it.category)}</div>
+      <div><div style="font-weight:800;font-size:15px">${_escHtml(it.name)}</div>
+        <div style="font-size:12px;color:#64748b">${_escHtml(it.invNo || '')} · ${_escHtml(_whCatName(it.category))}${_whMainImg(it) ? ' · новое фото станет главным' : ''}</div></div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">
+      <button type="button" class="btn btn-outline" onclick="document.getElementById('wh-pa-cam').click()">📷 Сфотографировать</button>
+      <button type="button" class="btn btn-outline" onclick="document.getElementById('wh-pa-fi').click()">🖼 Из файла</button>
+      <input type="file" id="wh-pa-cam" accept="image/*" capture="environment" style="display:none" onchange="_whPAFile(event)">
+      <input type="file" id="wh-pa-fi" accept="image/*" style="display:none" onchange="_whPAFile(event)">
+    </div>
+    <div id="wh-pa-finder"></div>`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
+    <button class="btn btn-outline" onclick="_whPAClose()">Закрыть</button>
+    ${many ? `<button class="btn btn-outline" onclick="_whPANext()">Пропустить →</button>` : ''}</div>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  const itemId = it.id, name = it.name;
+  _whFinders['wh-pa-finder'] = { onPick: async found => _whPAAttach(itemId, await _whImgFile(found, name)) };
+  if (_YDB) _whFind('wh-pa-finder', name);
+}
+// Saves the picture to the item as its main one (first), then moves on.
+async function _whPAAttach(itemId, file) {
+  const pa = _whPA;
+  if (pa && pa.saving) return;
+  if (pa) pa.saving = true;
+  try {
+    const res = await _compressImage(file);
+    const fid = await dbSave({ name: file.name, type: res.type, size: res.size, data: res.data }, 1, 1);
+    const items = getWhItems();
+    if (!items.some(i => i.id === itemId)) throw new Error('позицию тем временем удалили');
+    setLS('wh_items', items.map(i => i.id !== itemId ? i : Object.assign({}, i, {
+      fileIds: [fid].concat(i.fileIds || []), fileNames: [file.name].concat(i.fileNames || []), fileTypes: [res.type].concat(i.fileTypes || []),
+    })));
+    if (!(await _whCommit())) alert(_WH_NOT_SENT);
+    else _showToast('✅ Фото сохранено', true);
+  } finally { if (pa) pa.saving = false; }
+  if (pa && _whPA === pa) { pa.added++; _whPANext(); }
+}
+async function _whPAFile(e) {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  const it = _whPA && _whItem(_whPA.queue[_whPA.idx]);
+  if (!f || !it) return;
+  try { await _whPAAttach(it.id, f); } catch (err) { _showToast('⚠️ ' + err.message, false); }
+}
+function _whPANext() { if (!_whPA) return; _whPA.idx++; _whPAShow(); }
+function _whPAClose() {
+  const n = _whPA ? _whPA.added : 0;
+  _whPA = null;
+  closeModal(true);
+  render();
+  if (n > 1) _showToast(`✅ Готово: фото добавлено к ${n} позициям`, true);
+}
+
 async function saveWhItem(id) { return _onceAtATime('whItem', () => _saveWhItemInner(id)); }
 async function _saveWhItemInner(id) {
   if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
@@ -7740,6 +8020,15 @@ async function _saveWhItemInner(id) {
   const qty = id ? 0 : _whQ(v('wh-qty'));
   if (qty < 0) { alert('Количество не может быть отрицательным'); return; }
   const formGen = _modalGen, picked = pendingFiles.slice(), removed = id ? _ffRemoved('wh') : [];
+  // Every item has a picture — the catalogue is found by its pictures.
+  const prevForPhoto = id ? _whItem(id) : null;
+  const keptImages = prevForPhoto ? (prevForPhoto.fileIds || []).filter((f, k) => !removed.includes(f) && String((prevForPhoto.fileTypes || [])[k] || '').startsWith('image/')).length : 0;
+  if (!keptImages && !picked.some(f => String(f.type || '').startsWith('image/'))) {
+    alert('📷 Добавьте фото товара: найдите его в интернете (✨), сфотографируйте или выберите файл.');
+    const zone = document.getElementById('wh-drop');
+    if (zone) zone.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
   const btn = document.getElementById('wh-item-save');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Сохраняем…'; }
   const fileIds = [], fileNames = [], fileTypes = [];
