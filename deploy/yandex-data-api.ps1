@@ -14,7 +14,7 @@ $yc = "$env:USERPROFILE\yandex-cloud\bin\yc.exe"
 $root = Split-Path -Parent $PSScriptRoot
 $src = Join-Path $root 'yandex\data-api'
 $functionId = 'd4e7okpot0k25pk5b8em'
-$serviceAccountId = 'ajediqo8e0399kg5966s'   # data-api: ydb.editor, storage.editor, Lockbox reader
+$serviceAccountId = 'ajediqo8e0399kg5966s'   # data-api: ydb.editor, storage.editor, Lockbox reader, search-api.webSearch.user
 $secretId = 'e6qb5fo5urknt3m4ne3c'
 
 # yc may also print a sign-in notice; with ErrorActionPreference Stop that alone would abort
@@ -28,7 +28,7 @@ $secret = Invoke-RestMethod -Uri "https://lockbox.api.cloud.yandex.net/lockbox/v
 $secretVersion = $secret.currentVersion.id
 
 $zip = Join-Path ([IO.Path]::GetTempPath()) ("data-api-" + [Guid]::NewGuid().ToString('N') + ".zip")
-$files = 'index.js','api.js','core.js','store-ydb.js','files.js','auth.js','accounts.js','package.json' | ForEach-Object { Join-Path $src $_ }
+$files = 'index.js','api.js','core.js','store-ydb.js','files.js','auth.js','accounts.js','images.js','package.json' | ForEach-Object { Join-Path $src $_ }
 Compress-Archive -Path $files -DestinationPath $zip
 $content = [Convert]::ToBase64String([IO.File]::ReadAllBytes($zip))
 [IO.File]::Delete($zip)

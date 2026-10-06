@@ -55,12 +55,16 @@ function setup() {
   const accounts = createAccounts({ store, auth, now });
   const presigned = [];
   const files = { presignUpload: async o => { presigned.push(o); return { id: 'x', uploadUrl: 'u', headers: {}, url: 'p' }; }, remove: async () => {} };
-  const api = createApi({ store, auth, files, accounts, now });
+  const images = {
+    search: async (query, page, iamToken) => [{ url: 'https://shop.example/a.jpg', thumb: 'https://avatars.mds.yandex.net/i?id=a', sig: 'good', query, iamToken }],
+    fetchImage: async ({ sig }) => (sig === 'good' ? { type: 'image/jpeg', data: 'AA==', from: 'original' } : sig === 'gone' ? null : { error: 'bad signature' }),
+  };
+  const api = createApi({ store, auth, files, accounts, images, now });
   const call = async (method, rest, { body, token, service, query, ip } = {}) => {
     const headers = {};
     if (token) headers.Authorization = 'Bearer ' + token;
     if (service) headers['X-Service-Key'] = process.env.SERVICE_KEY;
-    const res = await api.handle({ method, rest, query: query || {}, headers, body: body === undefined ? '' : JSON.stringify(body), ip: ip || '10.0.0.1' });
+    const res = await api.handle({ method, rest, query: query || {}, headers, body: body === undefined ? '' : JSON.stringify(body), ip: ip || '10.0.0.1', iamToken: 'fn-iam' });
     return { status: res.status, body: JSON.parse(res.body) };
   };
   const seedState = async fields => call('PATCH', 'v1/documents/appdata/state', { service: true, body: { fields } });
@@ -313,6 +317,24 @@ test('an upload keeps the file name for opening in the browser', async () => {
   assert.strictEqual(r.status, 200);
   assert.deepStrictEqual(t.presigned[0], { name: 'Счёт №5.pdf', type: 'application/pdf' });
   assert.strictEqual((await t.call('POST', 'v1/files:presign', { body: { name: 'a' } })).status, 401);
+});
+
+test('product photos: only the warehouse roles search and fetch', async () => {
+  const t = await imported();
+  const admin = (await login(t, 'admin', 'adm-secret')).body.token;
+  const owner = (await login(t, 'Yosmosh', 'own-secret')).body.token;
+  const kitchen = (await login(t, 'kitchen', 'kitchen123')).body.token;
+  const s = await t.call('POST', 'v1/images:search', { token: admin, body: { query: 'Дрель' } });
+  assert.strictEqual(s.status, 200);
+  assert.deepStrictEqual([s.body.results[0].query, s.body.results[0].iamToken], ['Дрель', 'fn-iam'], 'searches as the function');
+  assert.strictEqual((await t.call('POST', 'v1/images:search', { token: owner, body: { query: 'x' } })).status, 200);
+  assert.strictEqual((await t.call('POST', 'v1/images:search', { token: kitchen, body: { query: 'x' } })).status, 403);
+  assert.strictEqual((await t.call('POST', 'v1/images:search', { body: { query: 'x' } })).status, 401);
+  const f = await t.call('POST', 'v1/images:fetch', { token: admin, body: { url: 'u', thumb: 't', sig: 'good' } });
+  assert.deepStrictEqual([f.status, f.body.type, f.body.data], [200, 'image/jpeg', 'AA==']);
+  assert.strictEqual((await t.call('POST', 'v1/images:fetch', { token: admin, body: { url: 'u', thumb: 't', sig: 'forged' } })).status, 400);
+  const gone = await t.call('POST', 'v1/images:fetch', { token: admin, body: { url: 'u', thumb: 't', sig: 'gone' } });
+  assert.deepStrictEqual([gone.status, gone.body.error], [422, 'Это фото не удалось загрузить — выберите другое']);
 });
 
 test('hashes: salted, and checked exactly', async () => {
