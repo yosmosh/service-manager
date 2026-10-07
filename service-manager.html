@@ -6163,6 +6163,12 @@ function _withBackBar(html) {
       if(el.hasAttribute('data-stack-pad'))pad+=el.offsetHeight;
     }
     document.body.style.paddingTop=pad+'px';
+    for(var j=0;j<kids.length;j++){
+      var k=kids[j];
+      if(k===bar)continue;
+      var ks=getComputedStyle(k);
+      if(ks.position==='sticky'&&(k.hasAttribute('data-top0')||parseFloat(ks.top)===0)){k.setAttribute('data-top0','1');k.style.top=y+'px';}
+    }
   }
   stack();
   document.addEventListener('DOMContentLoaded',stack);
@@ -13163,25 +13169,36 @@ function _buildBudgetReportHTML(y, m, ledgerKeys, detailed) {
   const generated = `${fmtDate(_todayLocal())}, ${now.toTimeString().slice(0, 5)}`;
   const num = (n, cls) => `<td class="num ${cls || ''}">${_repRub(n)}</td>`;
   const signCls = n => _repR2(n) < 0 ? 'neg' : '';
+  // A refund ("Возврат") is money spent earlier coming back, not new money: it counts towards
+  // the balances — the ledger matches the bank account that way — but not as Приход. The
+  // report shows the two apart; "Всего поступило" is both, the figure the bank statement has.
+  data.forEach(d => {
+    d.refundTx = d.income.filter(t => t.type === 'refund');
+    d.incomeTx = d.income.filter(t => t.type !== 'refund');
+    d.realIncome = _repSum(d.incomeTx);
+    d.refunds = _repSum(d.refundTx);
+  });
+  const anyRefunds = data.some(d => d.refunds);
+  const refundCol = v => anyRefunds ? num(v, v ? 'pos' : 'muted') : '';
 
   // ---- the summary across the ledgers ----
-  const tot = { inc: 0, paid: 0, all: 0, prelim: 0, actual: 0 };
+  const tot = { inc: 0, ref: 0, paid: 0, all: 0, prelim: 0, actual: 0 };
   const summaryRows = data.map(d => {
-    tot.inc += d.bal.thisIncome; tot.paid += d.bal.thisExpensePaid; tot.all += d.bal.thisExpenseAll;
+    tot.inc += d.realIncome; tot.ref += d.refunds; tot.paid += d.bal.thisExpensePaid; tot.all += d.bal.thisExpenseAll;
     tot.prelim += d.bal.prelimBalance; tot.actual += d.bal.actualBalance;
     const st = _budgetReportMonthState(d.ledgerKey, mk);
     return `<tr>
       <td class="first"><b>${esc(d.cfg.label)}</b><div class="small ${st.cls}">${esc(st.short)}</div></td>
-      ${num(d.bal.thisIncome, 'pos')}${num(d.bal.thisExpensePaid)}${num(d.bal.thisExpenseAll, 'muted')}
+      ${num(d.realIncome, 'pos')}${refundCol(d.refunds)}${num(d.bal.thisExpensePaid)}${num(d.bal.thisExpenseAll, 'muted')}
       ${num(d.bal.prelimBalance, signCls(d.bal.prelimBalance))}${num(d.bal.actualBalance, signCls(d.bal.actualBalance))}
     </tr>`;
   }).join('');
   const summary = `
     <h2>Сводка по бюджетам</h2>
     <table>
-      <thead><tr><th>Бюджет</th><th class="num">Приход</th><th class="num">Расход (оплачено)</th><th class="num">Начислено за месяц</th><th class="num">Предварительный остаток</th><th class="num">Фактический остаток</th></tr></thead>
+      <thead><tr><th>Бюджет</th><th class="num">Приход</th>${anyRefunds ? '<th class="num">Возвраты</th>' : ''}<th class="num">Расход (оплачено)</th><th class="num">Начислено за месяц</th><th class="num">Предварительный остаток</th><th class="num">Фактический остаток</th></tr></thead>
       <tbody>${summaryRows}</tbody>
-      ${data.length > 1 ? `<tfoot><tr class="total"><td>Итого</td>${num(tot.inc)}${num(tot.paid)}${num(tot.all)}${num(tot.prelim, signCls(tot.prelim))}${num(tot.actual, signCls(tot.actual))}</tr></tfoot>` : ''}
+      ${data.length > 1 ? `<tfoot><tr class="total"><td>Итого</td>${num(tot.inc)}${anyRefunds ? num(tot.ref) : ''}${num(tot.paid)}${num(tot.all)}${num(tot.prelim, signCls(tot.prelim))}${num(tot.actual, signCls(tot.actual))}</tr></tfoot>` : ''}
     </table>`;
 
   // ---- each ledger ----
@@ -13189,7 +13206,7 @@ function _buildBudgetReportHTML(y, m, ledgerKeys, detailed) {
     const st = _budgetReportMonthState(d.ledgerKey, mk);
     const b = d.bal;
     const kpis = `<div class="kpis">
-      <div class="kpi"><div class="v pos">${_repRub(b.thisIncome)}</div><div class="l">Приход за месяц</div></div>
+      <div class="kpi"><div class="v pos">${_repRub(d.realIncome)}</div><div class="l">Приход за месяц</div>${d.refunds ? `<div class="l" style="color:#15803d;font-weight:600;margin-top:4px">+ возвраты ${_repRub(d.refunds)}</div>` : ''}</div>
       <div class="kpi"><div class="v">${_repRub(b.thisExpensePaid)}</div><div class="l">Расход за месяц (оплачено)</div></div>
       <div class="kpi"><div class="v ${signCls(b.prelimBalance)}" style="color:#1d4ed8">${_repRub(b.prelimBalance)}</div><div class="l">Предварительный остаток на конец месяца</div></div>
       <div class="kpi"><div class="v ${signCls(b.actualBalance) || 'pos'}">${_repRub(b.actualBalance)}</div><div class="l">Фактический остаток на конец месяца</div></div>
@@ -13199,12 +13216,14 @@ function _buildBudgetReportHTML(y, m, ledgerKeys, detailed) {
     if (d.cfg.useFunds) {
       const names = _sortFundNames(Object.keys(b.byFund).filter(f => f && f !== '—'));
       if (b.byFund['—']) names.push('—');
+      const fundRefund = f => _repSum(d.refundTx.filter(t => (t.fund || '—') === f));
+      const fr = !!d.refunds;
       if (names.length) funds = `<h3>По фондам</h3><table>
-        <thead><tr><th>Фонд</th><th class="num">Приход</th><th class="num">Расход (оплачено)</th><th class="num">Предв. остаток</th><th class="num">Факт. остаток</th></tr></thead>
-        <tbody>${names.map(f => { const v = b.byFund[f]; return `<tr>
+        <thead><tr><th>Фонд</th><th class="num">Приход</th>${fr ? '<th class="num">Возвраты</th>' : ''}<th class="num">Расход (оплачено)</th><th class="num">Предв. остаток</th><th class="num">Факт. остаток</th></tr></thead>
+        <tbody>${names.map(f => { const v = b.byFund[f], rf = fundRefund(f); return `<tr>
           <td><span class="dot" style="background:${f === '—' ? '#94a3b8' : _fundColor(f)}"></span>${f === '—' ? 'Без фонда' : esc(f)}</td>
-          ${num(v.thisIncome, 'pos')}${num(v.thisExpensePaid)}${num(v.prelimBalance, signCls(v.prelimBalance))}${num(v.actualBalance, signCls(v.actualBalance))}</tr>`; }).join('')}</tbody>
-        <tfoot><tr class="total"><td>Итого</td>${num(b.thisIncome)}${num(b.thisExpensePaid)}${num(b.prelimBalance, signCls(b.prelimBalance))}${num(b.actualBalance, signCls(b.actualBalance))}</tr></tfoot>
+          ${num(_repR2(v.thisIncome - rf), 'pos')}${fr ? num(rf, rf ? 'pos' : 'muted') : ''}${num(v.thisExpensePaid)}${num(v.prelimBalance, signCls(v.prelimBalance))}${num(v.actualBalance, signCls(v.actualBalance))}</tr>`; }).join('')}</tbody>
+        <tfoot><tr class="total"><td>Итого</td>${num(d.realIncome)}${fr ? num(d.refunds) : ''}${num(b.thisExpensePaid)}${num(b.prelimBalance, signCls(b.prelimBalance))}${num(b.actualBalance, signCls(b.actualBalance))}</tr></tfoot>
       </table>`;
     }
 
@@ -13217,12 +13236,15 @@ function _buildBudgetReportHTML(y, m, ledgerKeys, detailed) {
     let ops = '';
     if (detailed) {
       const fundCol = d.cfg.useFunds;
-      const incomeTable = d.income.length ? `<h3>Приход</h3><table>
+      const moneyIn = (title, list, totalLabel, extraFoot) => list.length ? `<h3>${title}</h3><table>
         <thead><tr><th>Дата</th><th>Источник</th>${fundCol ? '<th>Фонд</th>' : ''}<th class="num">Сумма</th><th>Примечание</th></tr></thead>
-        <tbody>${d.income.map(t => `<tr><td class="nowrap">${fmtDate(t.date)}</td><td>${esc(t.type === 'refund' ? 'Возврат: ' + (t.vendor || '') : (t.vendor || ''))}</td>
+        <tbody>${list.map(t => `<tr><td class="nowrap">${fmtDate(t.date)}</td><td>${esc(t.vendor || '')}</td>
           ${fundCol ? `<td>${esc(t.fund || '')}</td>` : ''}${num(t.amount, 'pos')}<td class="small">${esc(t.notes || '')}</td></tr>`).join('')}</tbody>
-        <tfoot><tr class="total"><td colspan="${fundCol ? 3 : 2}">Итого приход</td>${num(_repSum(d.income))}<td></td></tr></tfoot>
+        <tfoot><tr class="total"><td colspan="${fundCol ? 3 : 2}">${totalLabel}</td>${num(_repSum(list))}<td></td></tr>${extraFoot || ''}</tfoot>
       </table>` : '';
+      const incomeTable = moneyIn('Приход', d.incomeTx, 'Итого приход')
+        + moneyIn('Возвраты <span class="small" style="font-weight:400">— возврат ранее потраченных средств, не новый приход</span>', d.refundTx, 'Итого возвраты',
+          d.incomeTx.length ? `<tr class="sub"><td colspan="${fundCol ? 3 : 2}">Всего поступило на счёт (приход + возвраты)</td>${num(_repSum(d.income))}<td></td></tr>` : '');
       const expenseTable = d.expenses.length ? `<h3>Расходы</h3><table>
         <thead><tr><th>Дата</th><th>Поставщик / назначение</th>${fundCol ? '<th>Фонд</th>' : ''}<th class="num">Сумма</th><th>Статус</th><th>Внёс</th></tr></thead>
         <tbody>${d.expenses.map(t => { const s = _budgetReportStatus(t, d); return `<tr class="${t.status === 'rejected' ? 'rej' : ''}">
@@ -13248,6 +13270,20 @@ function _buildBudgetReportHTML(y, m, ledgerKeys, detailed) {
     </section>`;
   }).join('');
 
+  // ---- the grand total of the budgets the report was asked for ----
+  const grandTotal = data.length > 1 ? `<section class="ledger grand">
+      <div class="ledger-head"><h2>Общий итог — ${esc(data.map(d => d.cfg.label).join(', '))}</h2><span class="state">${esc(period)}</span></div>
+      <div class="kpis">
+        <div class="kpi"><div class="v pos">${_repRub(tot.inc)}</div><div class="l">Приход за месяц</div></div>
+        ${anyRefunds ? `<div class="kpi"><div class="v pos">${_repRub(tot.ref)}</div><div class="l">Возвраты (ранее потраченные средства)</div></div>
+        <div class="kpi"><div class="v pos">${_repRub(tot.inc + tot.ref)}</div><div class="l">Всего поступило на счета</div></div>` : ''}
+        <div class="kpi"><div class="v">${_repRub(tot.paid)}</div><div class="l">Расход за месяц (оплачено)</div></div>
+        <div class="kpi"><div class="v" style="color:#64748b">${_repRub(tot.all)}</div><div class="l">Начислено за месяц</div></div>
+        <div class="kpi"><div class="v ${signCls(tot.prelim)}" style="color:#1d4ed8">${_repRub(tot.prelim)}</div><div class="l">Предварительный остаток на конец месяца</div></div>
+        <div class="kpi"><div class="v ${signCls(tot.actual) || 'pos'}">${_repRub(tot.actual)}</div><div class="l">Фактический остаток на конец месяца</div></div>
+      </div>
+    </section>` : '';
+
   return `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Финансовый отчёт — ${esc(period)}</title>
@@ -13270,6 +13306,8 @@ function _buildBudgetReportHTML(y, m, ledgerKeys, detailed) {
   th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: #64748b; font-weight: 700; border-bottom: 1.5px solid #cbd5e1; padding: 7px 8px; }
   td { padding: 7px 8px; border-bottom: 1px solid #eef2f7; vertical-align: top; }
   .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* A heading may take two lines, so that seven columns of figures fit the page's width. */
+  th.num { white-space: normal; }
   .nowrap { white-space: nowrap; }
   td.first { min-width: 130px; }
   tr.total td { font-weight: 700; border-top: 2px solid #1e293b; border-bottom: 0; background: #f8fafc; }
@@ -13290,6 +13328,8 @@ function _buildBudgetReportHTML(y, m, ledgerKeys, detailed) {
   .attention { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #92400e; display: flex; gap: 6px 18px; flex-wrap: wrap; margin-bottom: 8px; }
   .st { font-size: 10.5px; font-weight: 600; white-space: nowrap; }
   .st-paid { color: #15803d; } .st-pay { color: #b45309; } .st-appr { color: #1d4ed8; } .st-rej { color: #b91c1c; white-space: normal; }
+  .grand { border-top: 3px solid #1e293b; margin-top: 34px; }
+  .grand .kpi { background: #f8fafc; }
   .notes { margin-top: 28px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 10.5px; color: #64748b; }
   .notes p { margin: 3px 0; }
   @media (max-width: 680px) {
@@ -13325,9 +13365,10 @@ function _buildBudgetReportHTML(y, m, ledgerKeys, detailed) {
     <div><div class="org">Сад Будущего</div><h1>Финансовый отчёт — ${esc(period)}</h1></div>
     <div class="meta">Сформирован: ${esc(generated)}<br>${esc(_roleDisplayName(currentUser) || '')}</div>
   </div>
-  ${(summary + sections).split('<table>').join('<div class="tw"><table>').split('</table>').join('</table></div>')}
+  ${(summary + sections + grandTotal).split('<table>').join('<div class="tw"><table>').split('</table>').join('</table></div>')}
   <div class="notes">
     <p><b>Приход / Расход (оплачено)</b> — поступления и оплаченные расходы этого месяца.</p>
+    <p><b>Возвраты</b> — возврат ранее потраченных средств: в остатки входят (как и на банковском счёте), но приходом не считаются.</p>
     <p><b>Начислено за месяц</b> — все заявки на расход этого месяца: оплаченные, ожидающие и отклонённые.</p>
     <p><b>Предварительный остаток</b> — фактический остаток на конец прошлого месяца + приход месяца − все начисленные расходы месяца.</p>
     <p><b>Фактический остаток</b> — весь приход за всё время − все оплаченные расходы, по конец месяца.</p>
