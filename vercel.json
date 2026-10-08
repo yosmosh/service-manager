@@ -1,4 +1,8 @@
 {
+  "redirects": [
+    { "source": "/", "has": [{ "type": "host", "value": "service-manager-two.vercel.app" }], "destination": "https://www.sad-budushego.ru/", "permanent": false },
+    { "source": "/service-manager.html", "has": [{ "type": "host", "value": "service-manager-two.vercel.app" }], "destination": "https://www.sad-budushego.ru/", "permanent": false }
+  ],
   "rewrites": [
     { "source": "/", "destination": "/service-manager.html" },
     { "source": "/app-version", "destination": "/service-manager.html" },
