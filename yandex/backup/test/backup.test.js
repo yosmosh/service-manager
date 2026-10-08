@@ -65,6 +65,19 @@ function world() {
     assert.ok(!JSON.stringify(s).includes('SECRET'));
   });
 
+  await t('field reads batched under the 4 MB a YDB reply may carry; a big row goes alone', async () => {
+    const { planBatches } = require('../backup');
+    const MB = 1024 * 1024;
+    const keys = [{ path: 'a', field: '1', n: String(0.9 * MB) }, { path: 'a', field: '2', n: String(1.2 * MB) }, { path: 'a', field: '3', n: String(0.6 * MB) },
+      { path: 'b', field: 'x', n: String(3 * MB) }, { path: 'c', field: 'y', n: '10' }];
+    const b = planBatches(keys);
+    assert.deepStrictEqual(b.map(x => x.map(k => k.path + k.field)), [['a1', 'a2'], ['a3'], ['bx'], ['cy']]);
+    assert.ok(b.every(x => x.reduce((s, k) => s + Number(keys.find(z => z.path === k.path && z.field === k.field).n), 0) <= 2.5 * MB || x.length === 1));
+    const many = Array.from({ length: 450 }, (_, i) => ({ path: 'm', field: String(i), n: '100' }));
+    assert.deepStrictEqual(planBatches(many).map(x => x.length), [200, 200, 50]);
+    assert.deepStrictEqual(planBatches([]), []);
+  });
+
   await t('only the files not yet backed up are copied', async () => {
     assert.deepStrictEqual(planCopies(['files/a', 'files/b', 'files/c'], ['files/b', 'files/x']), ['files/a', 'files/c']);
   });

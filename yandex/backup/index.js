@@ -10,7 +10,7 @@
 'use strict';
 
 const { Driver, getCredentialsFromEnv, TypedValues, Types } = require('ydb-sdk');
-const { runBackup } = require('./backup');
+const { runBackup, planBatches } = require('./backup');
 
 const SRC = process.env.FILES_BUCKET || 'sad-budushego-files';
 const DST = process.env.BACKUP_BUCKET || 'sad-budushego-backup';
@@ -53,16 +53,28 @@ SELECT path, collection, create_time, update_time, qdate FROM doc_meta WHERE pat
     after = rows[rows.length - 1].path;
   }
 }
+// A reply may carry 4 MB at most, and one field (a whole ledger) can be most of a megabyte: so
+// first the fields' keys and sizes, then their values in batches sized to fit (planBatches).
 async function scanFields() {
-  const out = [];
+  const keys = [];
   let p = '', f = '';
   for (;;) {
     const [rows] = await q(`DECLARE $p AS Utf8; DECLARE $f AS Utf8;
-SELECT path, field, value FROM doc_fields WHERE path > $p OR (path = $p AND field > $f) ORDER BY path, field LIMIT 1000;`, { $p: U(p), $f: U(f) });
-    out.push(...rows);
-    if (rows.length < 1000) return out;
+SELECT path, field, CAST(LENGTH(value) AS Utf8) AS n FROM doc_fields
+WHERE (path > $p OR (path = $p AND field > $f)) AND value IS NOT NULL ORDER BY path, field LIMIT 1000;`, { $p: U(p), $f: U(f) });
+    keys.push(...rows);
+    if (rows.length < 1000) break;
     p = rows[rows.length - 1].path; f = rows[rows.length - 1].field;
   }
+  const KEY = Types.struct({ path: Types.UTF8, field: Types.UTF8 });
+  const out = [];
+  for (const batch of planBatches(keys)) {
+    const [rows] = await q(`DECLARE $keys AS List<Struct<path: Utf8, field: Utf8>>;
+SELECT d.path AS path, d.field AS field, d.value AS value FROM AS_TABLE($keys) AS k
+INNER JOIN doc_fields AS d ON d.path = k.path AND d.field = k.field;`, { $keys: TypedValues.list(KEY, batch) });
+    out.push(...rows);
+  }
+  return out;
 }
 async function readStatus() {
   const [rows] = await q(`DECLARE $path AS Utf8; SELECT field, value FROM doc_fields WHERE path = $path AND value IS NOT NULL;`, { $path: U(STATUS_PATH) });

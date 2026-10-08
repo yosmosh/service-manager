@@ -61,6 +61,21 @@ function buildSnapshot(metaRows, fieldRows, createdAt) {
   return { createdAt, note: 'Сад Будущего — резервная копия данных (без паролей). Каждый документ: его поля как в приложении.', documents };
 }
 
+// The field rows to read, in batches that keep each answer well under the 4 MB a YDB reply
+// may carry: by their sizes, at most `maxRows` a batch; a row bigger than the cap goes alone.
+function planBatches(keys, maxBytes = 2.5 * 1024 * 1024, maxRows = 200) {
+  const out = [];
+  let cur = [], bytes = 0;
+  for (const k of keys) {
+    const n = Number(k.n) || 0;
+    if (cur.length && (bytes + n > maxBytes || cur.length >= maxRows)) { out.push(cur); cur = []; bytes = 0; }
+    cur.push({ path: k.path, field: k.field });
+    bytes += n;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+
 // The source files not yet in the backup.
 function planCopies(sourceKeys, backupKeys) {
   const have = new Set(backupKeys);
@@ -117,4 +132,4 @@ async function runBackup({ db, s3, srcBucket, dstBucket, now, deadline, concurre
   return status;
 }
 
-module.exports = { decodeValue, encodeValue, buildSnapshot, planCopies, pool, runBackup, SKIP_PATH };
+module.exports = { decodeValue, encodeValue, buildSnapshot, planBatches, planCopies, pool, runBackup, SKIP_PATH };

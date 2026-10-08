@@ -66,7 +66,7 @@ if (-not $tr) {
     rule = @{ timer = @{
       cronExpression = '0 0 ? * SUN *'
       invokeFunctionWithRetry = @{ functionId = $fn.id; functionTag = '$latest'; serviceAccountId = $sa.id
-        retrySettings = @{ retryAttempts = '2'; interval = '600s' } }
+        retrySettings = @{ retryAttempts = '2'; interval = '60s' } }   # Yandex allows 10s-1m
     } }
   } | ConvertTo-Json -Depth 8
   $o = WaitOp (Invoke-RestMethod -Method Post -Uri 'https://serverless-triggers.api.cloud.yandex.net/triggers/v1/triggers' -Headers $h -ContentType 'application/json' -Body $body)
