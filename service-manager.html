@@ -877,6 +877,7 @@ function getAdmin2Pwd()         { return getLS('admin2_pwd')              || 'li
 const _LANDING = {
   owner: 'dashboard', admin: 'dashboard', kitchen: 'kitchen', kitchen_worker: 'kitchen',
   alexander: 'budget', accountant: 'budget', management: 'journal', admin2: 'budget',
+  storekeeper: 'warehouse', cleaning_head: 'warehouse',
 };
 function _enterAs(role) {
   currentUser = role;
@@ -1062,6 +1063,10 @@ function applyUserLayout() {
   } else if (currentUser === 'kitchen_worker') {
     sidebar.style.display = 'none';
     document.getElementById('user-label').textContent = '👨‍🍳 Сотрудник кухни';
+  } else if (currentUser === 'storekeeper' || currentUser === 'cleaning_head') {
+    // The warehouse's keepers: nothing but their own part of Склад (see _whArea).
+    sidebar.style.display = 'none';
+    document.getElementById('user-label').textContent = currentUser === 'storekeeper' ? '🧰 Кладовщик' : '🧽 Клининг';
   } else if (currentUser === 'alexander') {
     // Alexander gets a real (but heavily restricted) sidebar: view-only Журнал визитов
     // and Обслуживание территории, plus his Бюджет approval queue — nothing else.
@@ -1573,6 +1578,7 @@ async function openSettingsModal() {
     ${ownerCredsHtml}
     ${adminCredsHtml}
     ${kitchenCredsHtml}
+    ${isOwner ? _whKeeperCredsHtml() : ''}
     ${notifyHtml}
     ${telegramHtml}
     <div style="font-size:13px;font-weight:600;margin-bottom:6px;color:#374151;border-top:1px solid #f1f5f9;padding-top:14px">
@@ -1709,6 +1715,37 @@ function saveKitchenCreds() {
   setLS('kitchen_pwd', p);
   if (_useFirebase) _scheduleSave();
   alert('Данные менеджера кухни сохранены');
+}
+
+// The warehouse's keepers. An account here has no password until the owner sets one — until
+// then nobody can sign in to it (see yandex/data-api/accounts.js).
+function _whKeeperCredsHtml() {
+  if (!_YDB) return '';
+  const block = (role, title, note, ph) => {
+    const e = (_acctNames && _acctNames.roles && _acctNames.roles[role]) || {};
+    return `<div style="margin-bottom:16px;padding:12px 14px;background:#fff7ed;border:1px solid #fdba74;border-radius:10px">
+      <div style="font-size:12px;font-weight:700;color:#9a3412;margin-bottom:4px">${title}</div>
+      <div style="font-size:11px;color:#9a3412;margin-bottom:8px">${note}${e.unset ? ' <b>Пароль ещё не задан — войти нельзя.</b>' : ''}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
+        <div><div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
+          <input type="text" class="form-control" id="${role}-cred-user" value="${_escHtml(e.user || '')}" placeholder="${ph}"></div>
+        <div><div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
+          <input type="text" class="form-control" id="${role}-cred-pwd" value="" placeholder="${e.unset ? 'Задайте пароль' : 'Новый пароль (пусто — не менять)'}"></div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center;background:#ea580c;border-color:#ea580c" onclick="saveWhKeeperCreds('${role}')">💾 Сохранить</button>
+    </div>`;
+  };
+  return block('storekeeper', '🧰 Кладовщик', 'Видит только склад — инструмент, оборудование и материалы для ремонта.', 'sklad')
+    + block('cleaning_head', '🧽 Ответственный за уборку', 'Видит только склад — средства для уборки и гигиены (категории — в настройках склада).', 'klining');
+}
+async function saveWhKeeperCreds(role) {
+  const u = ((document.getElementById(role + '-cred-user') || {}).value || '').trim();
+  const p = ((document.getElementById(role + '-cred-pwd') || {}).value || '').trim();
+  if (!u) { alert('Введите имя пользователя'); return; }
+  const e = (_acctNames && _acctNames.roles && _acctNames.roles[role]) || {};
+  if (e.unset && !p) { alert('Задайте пароль — без него в эту учётную запись не войти'); return; }
+  await _saveRoleCreds(role, u, p, role === 'storekeeper' ? 'Данные кладовщика сохранены' : 'Данные ответственного за уборку сохранены');
+  if (_acctNames && _acctNames.roles && _acctNames.roles[role] && p) { delete _acctNames.roles[role].unset; _acctNames.roles[role].user = u; }
 }
 
 function saveKitchenWorkerCreds() {
@@ -2087,7 +2124,7 @@ function _docOfKey(k) {
 }
 // The warehouse documents are only of use to those who run the warehouse; nobody else's
 // poll pays for checking them.
-const _WAREHOUSE_ROLES = ['admin', 'owner'];
+const _WAREHOUSE_ROLES = ['admin', 'owner', 'storekeeper', 'cleaning_head'];
 const _sideDocsToPoll = () => Object.keys(SIDE_DOCS)
   .filter(p => p === 'appdata/finance_ledger' || _WAREHOUSE_ROLES.includes(currentUser));
 
@@ -2762,7 +2799,7 @@ function _resumeAfterUpdate() {
   if (!s || !s.u || !(Date.now() - s.t < 120000)) { if (_YDB) _authToken = null; return false; }
   if (_YDB && !(_authToken && _stateLoadedOnce)) { _authToken = null; return false; }
   const releaseGated = ['alexander', 'accountant', 'management', 'admin2'];
-  const known = ['owner', 'admin', 'kitchen', 'kitchen_worker'].concat(releaseGated).includes(s.u)
+  const known = ['owner', 'admin', 'kitchen', 'kitchen_worker', 'storekeeper', 'cleaning_head'].concat(releaseGated).includes(s.u)
     || PROVIDERS.some(p => p.id === s.u);
   if (!known || (releaseGated.includes(s.u) && !getBudgetReleased())) return false;
   currentUser = s.u;
@@ -3219,6 +3256,8 @@ function _getFromName() {
   if (currentUser === 'kitchen') return 'Кухня';
   if (currentUser === 'alexander') return 'Александр';
   if (currentUser === 'accountant') return 'Бухгалтер';
+  if (currentUser === 'storekeeper') return 'Кладовщик';
+  if (currentUser === 'cleaning_head') return 'Клининг';
   const p = PROVIDERS.find(x => x.id === currentUser);
   return p ? p.name : currentUser;
 }
@@ -3231,6 +3270,7 @@ function _roleDisplayName(role) {
     owner: 'Владелец', admin: 'Администратор', admin2: 'Администратор 2',
     kitchen: 'Кухня', kitchen_worker: 'Сотрудник кухни', alexander: 'Александр',
     accountant: 'Бухгалтер', management: 'Руководство', import: 'Импорт (история)',
+    storekeeper: 'Кладовщик', cleaning_head: 'Клининг',
   };
   if (names[role]) return names[role];
   const p = PROVIDERS.find(x => x.id === role);
@@ -3803,6 +3843,7 @@ function render() {
     content.innerHTML = renderBudget();
     return;
   }
+  if (_whArea()) view = 'warehouse';
 
   if (view === 'dashboard') {
     title.textContent = 'Панель управления';
@@ -7691,6 +7732,8 @@ const WH_CATS = [
   { id: 'office',      label: '📎 Канцтовары' },
   { id: 'other',       label: '📦 Прочее' },
 ];
+// Cleaning and hygiene supplies — the head of cleaning's part, unless the settings say otherwise.
+const WH_DEFAULT_CLEANING_CATS = ['cleaning', 'hygiene'];
 const WH_UNITS = ['шт', 'компл', 'пар', 'м', 'м²', 'кг', 'л', 'уп', 'рул', 'мешок'];
 const WH_COND = { new: 'Новое', good: 'Хорошее', used: 'Б/у, исправно', repair: 'Требует ремонта', broken: 'Неисправно' };
 const WH_DOC_TYPES = {
@@ -7711,6 +7754,7 @@ const getWhSettings  = () => Object.assign({
   orgName: 'Сад Будущего', legalName: '', inn: '', kpp: '', address: '', city: '',
   directorName: '', directorPosition: 'Директор', issuerName: '', issuerPosition: 'Администратор',
   responsibilityText: WH_DEFAULT_RESPONSIBILITY, tgReminders: false, tgTarget: 'topic',
+  cleaningCats: WH_DEFAULT_CLEANING_CATS,
 }, getLS('wh_settings') || {});
 
 const _whItem = id => getWhItems().find(i => i.id === id);
@@ -7721,6 +7765,19 @@ const _whCatName = id => _whCat(id).label.split(' ').slice(1).join(' ');
 // The picture the catalogue shows for an item: its first image.
 const _whMainImg = it => (it.fileIds || []).find((f, k) => String((it.fileTypes || [])[k] || '').startsWith('image/')) || null;
 const _whIsAsset = it => !!it && it.kind !== 'consumable';
+// Who keeps which part of it. The owner and the administrator see the whole warehouse; the
+// storekeeper (Кладовщик) tools, equipment and maintenance materials; the head of cleaning
+// (Клининг) the cleaning and hygiene supplies — which categories those are, the warehouse
+// settings say. A keeper sees, receives, issues, takes back and writes off only their own part;
+// the list of people is shared. Only what is shown and offered is narrowed — the stored lists
+// stay whole, so a keeper's save can never drop the other part.
+const _WH_AREA_OF_ROLE = { storekeeper: 'tools', cleaning_head: 'cleaning' };
+const _whArea = () => _WH_AREA_OF_ROLE[currentUser] || null;
+const _whCleaningCats = () => { const c = getWhSettings().cleaningCats; return Array.isArray(c) ? c : WH_DEFAULT_CLEANING_CATS; };
+const _whCatArea = cat => (_whCleaningCats().includes(_whCat(cat).id) ? 'cleaning' : 'tools');
+const _whMine = it => !!it && (!_whArea() || _whCatArea(it.category) === _whArea());
+const _whMyCats = () => WH_CATS.filter(c => !_whArea() || _whCatArea(c.id) === _whArea());
+const _WH_NOT_MINE = 'Эта позиция относится к другому участку склада';
 // Quantities may be fractional (kg, l, m) — kept to 3 decimals so sums don't drift.
 const _whQ = v => Math.round((Number(v) || 0) * 1000) / 1000;
 const _whFmtQ = v => _whQ(v).toLocaleString('ru-RU', { maximumFractionDigits: 3 });
@@ -7799,11 +7856,11 @@ function _whHoldings(docs) {
   return out;
 }
 const _whIsOverdue = h => !!h.dueDate && h.dueDate < _todayLocal();
-const _whOverdueList = () => _whHoldings().filter(_whIsOverdue);
+const _whOverdueList = () => _whHoldings().filter(h => _whIsOverdue(h) && _whMine(_whItem(h.itemId)));
 // Materials at or below the minimum the owner set for them.
 function _whLowStock() {
   const stock = _whStockMap();
-  return getWhItems().filter(i => i.kind === 'consumable' && Number(i.minQty) > 0 && (stock[i.id] || 0) <= Number(i.minQty))
+  return getWhItems().filter(i => _whMine(i) && i.kind === 'consumable' && Number(i.minQty) > 0 && (stock[i.id] || 0) <= Number(i.minQty))
     .map(i => ({ item: i, stock: stock[i.id] || 0 }));
 }
 // An item gone for good: written off, none left anywhere.
@@ -7825,11 +7882,14 @@ function _whUpdateBadge() {
 
 function renderWarehouse() {
   if (!_WAREHOUSE_ROLES.includes(currentUser)) return '<div style="padding:40px;text-align:center;color:#6b7280">Нет доступа</div>';
-  const tabs = [['catalog', '📦 Каталог'], ['people', '👷 Сотрудники'], ['docs', '📄 Документы'], ['settings', '⚙️ Настройки']];
+  const tabs = [['catalog', '📦 Каталог'], ['people', '👷 Сотрудники'], ['docs', '📄 Документы'], ['settings', '⚙️ Настройки']]
+    .filter(([k]) => k !== 'settings' || !_whArea());
+  if (whTab === 'settings' && _whArea()) whTab = 'catalog';
+  const areaNote = _whArea() ? `<div style="font-size:12px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;margin-bottom:10px">${_whArea() === 'tools' ? '🧰 Ваш участок: инструмент, оборудование и материалы для ремонта' : '🧽 Ваш участок: средства для уборки и гигиены'}</div>` : '';
   const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0">
     ${tabs.map(([k, l]) => `<button class="kitchen-tab-btn${whTab === k ? ' active' : ''}" onclick="setWhTab('${k}')">${l}</button>`).join('')}</div>`;
   const body = whTab === 'people' ? _whPeopleTab() : whTab === 'docs' ? _whDocsTab() : whTab === 'settings' ? _whSettingsTab() : _whCatalogTab();
-  return tabBar + body;
+  return areaNote + tabBar + body;
 }
 async function loadWhImages() { await _loadImages('img.whthumb[data-fid]'); }
 
@@ -7879,6 +7939,7 @@ function _whFiltered(ignoreCat) {
   const stock = _whStockMap(), hold = _whHoldings();
   const q = whSearch.trim().toLowerCase();
   const items = getWhItems().filter(i => {
+    if (!_whMine(i)) return false;
     if (!ignoreCat && whCat && i.category !== whCat) return false;
     if (whKind && (whKind === 'asset') !== _whIsAsset(i)) return false;
     if (!whShowGone && _whIsGone(i, stock, hold)) return false;
@@ -7901,7 +7962,7 @@ function _whCatChips() {
 function _whPhotoBar() {
   if (!_WAREHOUSE_ROLES.includes(currentUser)) return '';
   const stock = _whStockMap(), hold = _whHoldings();
-  const n = getWhItems().filter(i => !_whMainImg(i) && !_whIsGone(i, stock, hold)).length;
+  const n = getWhItems().filter(i => _whMine(i) && !_whMainImg(i) && !_whIsGone(i, stock, hold)).length;
   if (!n) return '';
   const word = n % 10 === 1 && n % 100 !== 11 ? 'позиция' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'позиции' : 'позиций';
   return `<div class="wh-photo-bar"><span>📷 Без фото: <b>${n}</b> ${word} — с фото их легче найти</span>
@@ -7912,8 +7973,8 @@ function _whCatalogList() {
   const { items, stock, hold } = _whFiltered(false);
   if (!items.length) return `<div style="text-align:center;padding:50px;color:#6b7280">
     <div style="font-size:44px;margin-bottom:10px">🧰</div>
-    <div style="font-size:15px;font-weight:600;margin-bottom:6px">${getWhItems().length ? 'Ничего не найдено' : 'Склад пока пуст'}</div>
-    ${getWhItems().length ? '' : '<div style="font-size:13px">Нажмите «+ Позиция», чтобы внести первый инструмент или материал</div>'}</div>`;
+    <div style="font-size:15px;font-weight:600;margin-bottom:6px">${getWhItems().some(_whMine) ? 'Ничего не найдено' : 'Склад пока пуст'}</div>
+    ${getWhItems().some(_whMine) ? '' : '<div style="font-size:13px">Нажмите «+ Позиция», чтобы внести первый инструмент или материал</div>'}</div>`;
   const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ru');
   const grid = list => `<div class="wh-grid">${list.slice().sort(byName).map(i => _whCard(i, stock, hold)).join('')}</div>`;
   if (whCat || whSearch.trim()) return grid(items);
@@ -7954,6 +8015,7 @@ function _whCard(i, stock, hold) {
 function openWhItem(id) {
   const it = _whItem(id);
   if (!it) { _showToast('Позиция не найдена', false); return; }
+  if (!_whMine(it)) { _showToast(_WH_NOT_MINE, false); return; }
   const stock = _whStockMap()[id] || 0, hold = _whHoldings().filter(h => h.itemId === id);
   const imgs = (it.fileIds || []).map((f, k) => ({ id: f, type: (it.fileTypes || [])[k] || '', name: (it.fileNames || [])[k] || 'Файл' }));
   // The main picture large, as a shop shows a product; the rest of the files small below it.
@@ -7999,6 +8061,7 @@ function openWhItem(id) {
 
 function openWhItemForm(id) {
   const it = id ? _whItem(id) : null;
+  if (it && !_whMine(it)) { _showToast(_WH_NOT_MINE, false); return; }
   pendingFiles = [];
   _modalGen++;
   const kind = it ? (it.kind || 'asset') : 'asset';
@@ -8023,7 +8086,7 @@ function openWhItemForm(id) {
       <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer"><input type="radio" name="wh-kind" value="consumable" ${kind === 'consumable' ? 'checked' : ''} ${it ? 'disabled' : ''} onchange="_whKindChanged()"> <span><b>📦 Материал</b> — выдаётся в расход (химия, лампы, крепёж)</span></label>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div class="form-group"><label>Категория</label><select class="form-control" id="wh-cat">${opt(WH_CATS.map(c => [c.id, c.label]), it ? it.category : 'tools')}</select></div>
+      <div class="form-group"><label>Категория</label><select class="form-control" id="wh-cat">${opt(_whMyCats().map(c => [c.id, c.label]), it ? it.category : (_whMyCats().some(c => c.id === 'tools') ? 'tools' : _whMyCats()[0].id))}</select></div>
       <div class="form-group"><label>Ед. измерения</label><select class="form-control" id="wh-unit">${opt(WH_UNITS.map(u => [u, u]), it ? it.unit : 'шт')}</select></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -8147,7 +8210,7 @@ function openWhPhotoAssistant(onlyId) {
   if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
   const stock = _whStockMap(), hold = _whHoldings();
   const order = c => WH_CATS.indexOf(_whCat(c));
-  const queue = onlyId ? [onlyId] : getWhItems().filter(i => !_whMainImg(i) && !_whIsGone(i, stock, hold))
+  const queue = onlyId ? [onlyId] : getWhItems().filter(i => _whMine(i) && !_whMainImg(i) && !_whIsGone(i, stock, hold))
     .sort((a, b) => order(a.category) - order(b.category) || String(a.name).localeCompare(String(b.name), 'ru')).map(i => i.id);
   if (!queue.length) { _showToast('✅ У всех позиций уже есть фото', true); return; }
   _whPA = { queue, idx: 0, added: 0 };
@@ -8224,6 +8287,8 @@ async function _saveWhItemInner(id) {
   const v = k => (document.getElementById(k) || {}).value || '';
   const name = v('wh-name').trim();
   if (!name) { alert('Укажите название'); return; }
+  if (id && !_whMine(_whItem(id))) { alert(_WH_NOT_MINE); return; }
+  if (_whArea() && _whCatArea(v('wh-cat') || 'other') !== _whArea()) { alert('Эта категория относится к другому участку склада'); return; }
   const kind = id ? (_whItem(id) || {}).kind || 'asset' : ((document.querySelector('input[name="wh-kind"]:checked') || {}).value || 'asset');
   const qty = id ? 0 : _whQ(v('wh-qty'));
   if (qty < 0) { alert('Количество не может быть отрицательным'); return; }
@@ -8281,7 +8346,7 @@ async function _saveWhItemInner(id) {
 
 // ---------- people ----------
 function _whPeopleTab() {
-  const hold = _whHoldings();
+  const hold = _whHoldings().filter(h => _whMine(_whItem(h.itemId)));
   const emps = getWhEmployees().filter(e => !e.archived).sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const list = emps.length ? emps.map(e => {
     const mine = hold.filter(h => h.employeeId === e.id);
@@ -8331,11 +8396,11 @@ async function _saveWhEmployeeInner(id) {
 function openWhEmployee(id) {
   const e = _whEmp(id);
   if (!e) return;
-  const mine = _whHoldings().filter(h => h.employeeId === id);
-  const docs = getWhDocs().filter(d => d.employeeId === id).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const mine = _whHoldings().filter(h => h.employeeId === id && _whMine(_whItem(h.itemId)));
+  const docs = getWhDocs().filter(d => d.employeeId === id && _whDocIsMine(d)).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
   const items = getWhItems();
   const consumed = [];
-  docs.filter(d => d.type === 'issue').forEach(d => (d.lines || []).forEach(l => { const it = items.find(i => i.id === l.itemId); if (it && it.kind === 'consumable') consumed.push({ d, l, it }); }));
+  docs.filter(d => d.type === 'issue').forEach(d => (d.lines || []).forEach(l => { const it = items.find(i => i.id === l.itemId); if (it && it.kind === 'consumable' && _whMine(it)) consumed.push({ d, l, it }); }));
   document.getElementById('modal-title').textContent = '👷 ' + e.name;
   document.getElementById('modal-body').innerHTML = `
     <div style="font-size:13px;color:#6b7280;margin-bottom:12px">${_escHtml(e.position || '')}${e.phone ? ' · 📞 ' + _escHtml(e.phone) : ''}</div>
@@ -8441,6 +8506,7 @@ function _whBudgetBox(ledgerKey, t) {
 
 // A plain receipt can still be tied to an invoice: the recent ones not yet on the shelf.
 function _whBudgetPicker() {
+  if (_whArea()) return '';
   const since = new Date(); since.setDate(since.getDate() - 90);
   const from = since.toISOString().slice(0, 10);
   const opts = [];
@@ -8544,7 +8610,7 @@ function _whReceiptTotal() {
 // Items a line may pick, for that kind of document.
 function _whLineOptions(type, selected) {
   const stock = _whStockMap();
-  const items = getWhItems().filter(i => type === 'receipt' || (stock[i.id] || 0) > 0 || i.id === selected)
+  const items = getWhItems().filter(i => _whMine(i) && (type === 'receipt' || (stock[i.id] || 0) > 0 || i.id === selected))
     .sort((a, b) => String(a.invNo).localeCompare(String(b.invNo)));
   const groups = WH_CATS.map(c => {
     const inCat = items.filter(i => i.category === c.id);
@@ -8572,7 +8638,7 @@ function _whAddLine(type, itemId, spec) {
       <input class="form-control whm-new-name" placeholder="Название новой позиции *" value="${_escHtml(spec.name || '')}">
       <div style="display:grid;grid-template-columns:1fr 1fr 90px;gap:6px;margin-top:6px">
         <select class="form-control whm-new-kind">${opt([['asset', '🔧 Инструмент / оборудование'], ['consumable', '📦 Материал']], spec.kind === 'consumable' ? 'consumable' : 'asset')}</select>
-        <select class="form-control whm-new-cat">${opt(WH_CATS.map(c => [c.id, c.label]), WH_CATS.some(c => c.id === spec.category) ? spec.category : 'other')}</select>
+        <select class="form-control whm-new-cat">${opt(_whMyCats().map(c => [c.id, c.label]), _whMyCats().some(c => c.id === spec.category) ? spec.category : (_whMyCats().some(c => c.id === 'other') ? 'other' : _whMyCats()[0].id))}</select>
         <select class="form-control whm-new-unit">${opt(WH_UNITS.map(u => [u, u]), WH_UNITS.includes(spec.unit) ? spec.unit : 'шт')}</select>
       </div></div>` : ''}`;
   box.appendChild(row);
@@ -8597,7 +8663,7 @@ function _whMoveRebuild(type) {
   if (!box) return;
   if (!emp) { box.innerHTML = '<div style="font-size:12px;color:#94a3b8;margin-bottom:10px">Выберите сотрудника</div>'; return; }
   const byItem = {};
-  _whHoldings().filter(h => h.employeeId === emp).forEach(h => { byItem[h.itemId] = _whQ((byItem[h.itemId] || 0) + h.qty); });
+  _whHoldings().filter(h => h.employeeId === emp && _whMine(_whItem(h.itemId))).forEach(h => { byItem[h.itemId] = _whQ((byItem[h.itemId] || 0) + h.qty); });
   const ids = Object.keys(byItem);
   box.innerHTML = ids.length ? ids.map(itemId => { const it = _whItem(itemId) || {}; return `<div class="whm-line" style="display:grid;grid-template-columns:1fr 80px 150px;gap:6px;margin-bottom:6px;align-items:center">
       <div style="font-size:13px"><input type="hidden" class="whm-item" value="${itemId}">${_escHtml(it.invNo || '')} · ${_escHtml(it.name || '?')}<div style="font-size:11px;color:#6b7280">на руках: ${_whFmtQ(byItem[itemId])} ${_escHtml(it.unit || '')}</div></div>
@@ -8623,6 +8689,7 @@ async function _saveWhMoveInner(type) {
   })).filter(l => l.itemId && l.qty > 0);
   if (!lines.length) { alert('Добавьте хотя бы одну позицию с количеством'); return; }
   if (lines.some(l => l.newItem && !l.newItem.name)) { alert('Укажите название каждой новой позиции'); return; }
+  if (_whArea() && lines.some(l => (l.newItem ? _whCatArea(l.newItem.category) !== _whArea() : !_whMine(_whItem(l.itemId))))) { alert(_WH_NOT_MINE + ' — уберите её из документа.'); return; }
   const budgetRef = type === 'receipt' ? v('whm-budget') : '';
   const knownReceipts = Number((document.getElementById('whm-budget') || { dataset: {} }).dataset.known) || 0;
   const dueDate = type === 'issue' ? v('whm-due') : '';
@@ -8725,8 +8792,10 @@ async function _saveWhMoveInner(type) {
 }
 
 // ---------- documents tab ----------
+// A document a keeper may see: one with at least a line of their part.
+const _whDocIsMine = d => !_whArea() || (d.lines || []).some(l => _whMine(_whItem(l.itemId)));
 function _whDocsTab() {
-  const docs = getWhDocs().slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const docs = getWhDocs().filter(_whDocIsMine).slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
   const items = getWhItems();
   const sum = d => (d.lines || []).reduce((s, l) => s + _whQ(l.qty) * (Number(l.price) || 0), 0);
   return `<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px;flex-wrap:wrap">
@@ -8755,6 +8824,11 @@ function _whSettingsTab() {
       ${f('issuerName', 'Кто выдаёт со склада — ФИО', s.issuerName)}${f('issuerPosition', 'Кто выдаёт — должность', s.issuerPosition)}
     </div>
     <div class="form-group"><label>Текст об ответственности (в акте выдачи)</label><textarea class="form-control" id="whs-responsibilityText" style="min-height:90px">${_escHtml(s.responsibilityText)}</textarea></div>
+    <div style="font-weight:700;margin:16px 0 4px">🧽 Участок ответственного за уборку</div>
+    <div style="font-size:12px;color:#6b7280;margin-bottom:8px">Отмеченные категории видит и ведёт ответственный за уборку, остальные — кладовщик. Владелец и администратор видят весь склад.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:4px 12px;margin-bottom:6px">
+      ${WH_CATS.map(c => `<label style="display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer"><input type="checkbox" class="whs-cleancat" value="${c.id}" ${(s.cleaningCats || []).includes(c.id) ? 'checked' : ''}> ${c.label}</label>`).join('')}
+    </div>
     <div style="font-weight:700;margin:16px 0 6px">🤖 Напоминания в Telegram</div>
     <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:8px"><input type="checkbox" id="whs-tgReminders" ${s.tgReminders ? 'checked' : ''}> Каждое утро сообщать о просроченных возвратах и заканчивающихся материалах</label>
     <select class="form-control" id="whs-tgTarget" style="max-width:420px">
@@ -8767,11 +8841,12 @@ function _whSettingsTab() {
 }
 async function saveWhSettings() { return _onceAtATime('whSettings', _saveWhSettingsInner); }
 async function _saveWhSettingsInner() {
-  if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
+  if (!_WAREHOUSE_ROLES.includes(currentUser) || _whArea()) return;
   const s = {};
   ['orgName', 'legalName', 'inn', 'kpp', 'address', 'city', 'directorName', 'directorPosition', 'issuerName', 'issuerPosition', 'responsibilityText', 'tgTarget']
     .forEach(k => { s[k] = ((document.getElementById('whs-' + k) || {}).value || '').trim(); });
   s.tgReminders = !!(document.getElementById('whs-tgReminders') || {}).checked;
+  s.cleaningCats = Array.from(document.querySelectorAll('.whs-cleancat')).filter(c => c.checked).map(c => c.value);
   setLS('wh_settings', Object.assign({}, getLS('wh_settings') || {}, s));
   if (!(await _whCommit())) { alert(_WH_NOT_SENT); render(); return; }
   _showToast('✅ Настройки склада сохранены', true); render();
@@ -8940,7 +9015,7 @@ function _whLoadQr() {
 function openWhLabels(ids) {
   if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
   if (ids && ids.length) { _printWhLabels(ids); return; }
-  const items = getWhItems().slice().sort((a, b) => String(a.invNo).localeCompare(String(b.invNo)));
+  const items = getWhItems().filter(_whMine).slice().sort((a, b) => String(a.invNo).localeCompare(String(b.invNo)));
   if (!items.length) { alert('На складе пока нет позиций'); return; }
   document.getElementById('modal-title').textContent = '🏷️ Наклейки с QR-кодом';
   document.getElementById('modal-body').innerHTML = `

@@ -31,6 +31,11 @@ const ACCOUNTS = [
   { role: 'accountant',     user: 'accountant_username',     defUser: 'accountant', pwd: 'accountant_pwd',     defPwd: 'buh123',     gated: true },
   { role: 'management',     user: 'management_username',     defUser: 'management', pwd: 'management_pwd',     defPwd: 'board2026',  gated: true },
   { role: 'admin2',         user: 'admin2_username',         defUser: 'admin2',     pwd: 'admin2_pwd',         defPwd: 'lichny2026', gated: true },
+  // The warehouse's two keepers — tools and equipment, and cleaning supplies. Made after the
+  // move, so they have NO default password: such an account signs in only once the owner has
+  // set one (a default written in this file would open it to anyone who read the code).
+  { role: 'storekeeper',    user: 'storekeeper_username',    defUser: 'sklad',      pwd: 'storekeeper_pwd',    defPwd: null },
+  { role: 'cleaning_head',  user: 'cleaning_head_username',  defUser: 'klining',    pwd: 'cleaning_head_pwd',  defPwd: null },
 ];
 // PROVIDERS in the app. Each signs in with its own id unless a name was set for it, and with
 // the pin 1234 until one was set.
@@ -194,6 +199,7 @@ function createAccounts({ store, auth, now }) {
     for (const a of ACCOUNTS) {
       if (a.gated && !released) continue;
       const e = creds.roles[a.role];
+      if (!e && !a.defPwd) continue; // no password set yet: no way in
       if (username !== (e ? e.user : a.defUser).toLowerCase()) continue;
       if (e ? await verifyPassword(password, e.hash) : samePlain(password, a.defPwd)) return { role: a.role, sub: a.role, gen: e ? e.gen : 0 };
     }
@@ -259,7 +265,8 @@ function createAccounts({ store, auth, now }) {
     PROVIDER_IDS.forEach(pid => { out.providers[pid] = { user: creds.providers[pid] ? creds.providers[pid].user : pid }; });
     if (role === 'owner') {
       out.roles = {};
-      ACCOUNTS.forEach(a => { out.roles[a.role] = { user: creds.roles[a.role] ? creds.roles[a.role].user : a.defUser }; });
+      // `unset`: an account with no password yet, which can't be signed in to until one is set.
+      ACCOUNTS.forEach(a => { out.roles[a.role] = creds.roles[a.role] ? { user: creds.roles[a.role].user } : (a.defPwd ? { user: a.defUser } : { user: a.defUser, unset: true }); });
     }
     return { status: 200, body: out };
   }
@@ -287,6 +294,7 @@ function createAccounts({ store, auth, now }) {
 
     const cur = creds[kind][id];
     const defPwd = kind === 'roles' ? account.defPwd : PROVIDER_DEFAULT_PIN;
+    if (!password && !cur && !defPwd) return { status: 400, body: { error: 'Задайте пароль — без него в эту учётную запись не войти' } };
     const next = {
       user,
       hash: password ? await hashPassword(password) : (cur ? cur.hash : await hashPassword(defPwd)),
@@ -332,6 +340,7 @@ function createAccounts({ store, auth, now }) {
     let added = 0;
     for (const a of ACCOUNTS) {
       if (existing && existing.roles[a.role]) { roles[a.role] = existing.roles[a.role]; continue; }
+      if (!str(f[a.pwd]) && !a.defPwd) continue; // nothing to import, and no default to fall back on
       roles[a.role] = { user: str(f[a.user]) || a.defUser, hash: await hashPassword(str(f[a.pwd]) || a.defPwd), gen: 0 };
       added++;
     }

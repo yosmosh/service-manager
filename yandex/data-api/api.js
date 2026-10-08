@@ -46,7 +46,7 @@ function docJson(path, meta, fieldTexts) {
 
 // Who keeps the warehouse — they alone search the web for product photos (images.js); and
 // the service key, for checking it works.
-const IMAGE_ROLES = ['owner', 'admin', 'service'];
+const IMAGE_ROLES = ['owner', 'admin', 'storekeeper', 'cleaning_head', 'service'];
 
 function createApi({ store, auth, files, accounts, images, now }) {
   const clock = now || (() => Date.now());

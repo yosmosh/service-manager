@@ -337,6 +337,39 @@ test('product photos: only the warehouse roles search and fetch', async () => {
   assert.deepStrictEqual([gone.status, gone.body.error], [422, 'Это фото не удалось загрузить — выберите другое']);
 });
 
+test('the warehouse keepers: no way in until the owner sets a password, then only with it', async () => {
+  const t = await imported();
+  // Not created by the import — there was nothing of theirs on Firebase, and no default.
+  assert.ok(!t.store.docs.get('_auth/credentials').fields.roles.includes('storekeeper'));
+  for (const [u, p] of [['sklad', ''], ['sklad', 'null'], ['sklad', 'undefined'], ['sklad', '1234'], ['klining', 'null'], ['klining', '']]) {
+    assert.strictEqual((await login(t, u, p)).status, 401, u + '/' + p);
+  }
+  const owner = (await login(t, 'Yosmosh', 'own-secret')).body.token;
+  const list = await t.call('GET', 'v1/auth:accounts', { token: owner });
+  assert.deepStrictEqual([list.body.roles.storekeeper, list.body.roles.cleaning_head, list.body.roles.admin], [{ user: 'sklad', unset: true }, { user: 'klining', unset: true }, { user: 'admin' }]);
+  // A name alone is not enough for an account that has no password yet.
+  const noPwd = await t.call('POST', 'v1/auth:setAccount', { token: owner, body: { kind: 'role', id: 'storekeeper', user: 'sklad' } });
+  assert.strictEqual(noPwd.status, 400);
+  assert.strictEqual((await login(t, 'sklad', 'null')).status, 401);
+  const set = await t.call('POST', 'v1/auth:setAccount', { token: owner, body: { kind: 'role', id: 'storekeeper', user: 'Sklad', password: 'skl-pass-1' } });
+  assert.strictEqual(set.status, 200, JSON.stringify(set.body));
+  const r = await login(t, 'sklad', 'skl-pass-1');
+  assert.deepStrictEqual([r.status, r.body.role], [200, 'storekeeper']);
+  assert.strictEqual((await login(t, 'sklad', 'wrong')).status, 401);
+  assert.strictEqual((await login(t, 'klining', 'skl-pass-1')).status, 401, 'the other keeper still has no way in');
+  // Once set, renaming without a new password keeps the password.
+  assert.strictEqual((await t.call('POST', 'v1/auth:setAccount', { token: owner, body: { kind: 'role', id: 'storekeeper', user: 'sklad2' } })).status, 200);
+  assert.strictEqual((await login(t, 'sklad2', 'skl-pass-1')).status, 200);
+  const list2 = await t.call('GET', 'v1/auth:accounts', { token: owner });
+  assert.deepStrictEqual(list2.body.roles.storekeeper, { user: 'sklad2' });
+  // The keeper reads the app's data and may use the photo search; the settings stay the owner's.
+  const tok = (await login(t, 'sklad2', 'skl-pass-1')).body.token;
+  assert.strictEqual((await t.call('GET', 'v1/documents/appdata/state', { token: tok })).status, 200);
+  assert.strictEqual((await t.call('GET', 'v1/auth:accounts', { token: tok })).status, 403);
+  assert.strictEqual((await t.call('POST', 'v1/auth:setAccount', { token: tok, body: { kind: 'role', id: 'storekeeper', user: 'x', password: 'y' } })).status, 403);
+  assert.strictEqual((await t.call('POST', 'v1/images:search', { token: tok, body: { query: 'дрель' } })).status, 200);
+});
+
 test('hashes: salted, and checked exactly', async () => {
   const { hashPassword } = require('../accounts');
   const a = await hashPassword('same'), b = await hashPassword('same');
