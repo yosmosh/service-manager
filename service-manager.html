@@ -6295,9 +6295,9 @@ function renderMaintenance() {
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">
           <div>
-            <div class="maint-title" style="font-weight:700;font-size:14px;cursor:pointer" title="Открыть отчёт" onclick="openMaintView('${w.id}')">${w.title}</div>
+            <div class="maint-title" style="font-weight:700;font-size:14px${_hasNewTools() ? ';cursor:pointer' : ''}" ${_hasNewTools() ? `title="Открыть отчёт" onclick="openMaintView('${w.id}')"` : ''}>${w.title}</div>
             <div style="font-size:11px;color:#6b7280;margin-top:3px">${maintCatLabel(w.category)} · 📅 ${fmtDate(w.date)}${w.cost ? ' · 💰 ' + Number(w.cost).toLocaleString('ru') + ' ₽' : ''}${w.createdBy ? ' · ✍️ ' + _roleDisplayName(w.createdBy) : ''}</div>
-            ${(w.project && _project(w.project)) || relN ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px">
+            ${_hasNewTools() && ((w.project && _project(w.project)) || relN) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px">
               ${_projectBadge(w.project, false)}
               ${relN ? `<span class="badge" onclick="openMaintView('${w.id}')" title="Связанные отчёты" style="font-size:10px;background:#dbeafe;color:#1e40af;cursor:pointer">🔗 Связанных отчётов: ${relN}</span>` : ''}
             </div>` : ''}
@@ -6330,7 +6330,7 @@ function renderMaintenance() {
       <button class="year-btn" onclick="maintMonth++;if(maintMonth>12){maintMonth=1;maintYear++}render()">►</button>
       ${isCurrent ? '<span class="badge badge-blue" style="margin-left:4px">Текущий месяц</span>' : ''}
       <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn btn-outline" id="maint-projects-btn" style="font-size:12px;padding:8px 12px" onclick="openProjects()">📁 Проекты</button>
+        ${_hasNewTools() ? `<button class="btn btn-outline" id="maint-projects-btn" style="font-size:12px;padding:8px 12px" onclick="openProjects()">📁 Проекты</button>` : ''}
         ${canEdit ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px" onclick="exportMaintenanceCsv()">📊 Реестр (Excel)</button>` : ''}
       </div>
     </div>
@@ -6861,10 +6861,14 @@ function _mvMoveBudget(fromL, toL, refs, opts) {
   if (problems.length) return { error: 'Ничего не перенесено:\n' + problems.join('\n') };
   const ids = new Set(picked.map(t => t.id));
   const useFunds = FINANCE_LEDGERS[toL].useFunds;
-  const movedTx = picked.map(t => Object.assign({}, t, {
-    fund: useFunds ? opts.fund : null,
-    ledgerMoves: (t.ledgerMoves || []).concat([{ from: fromL, to: toL, at: now, fund: t.fund || null }]),
-  }));
+  const movedTx = picked.map(t => {
+    const u = Object.assign({}, t, {
+      fund: useFunds ? opts.fund : null,
+      ledgerMoves: (t.ledgerMoves || []).concat([{ from: fromL, to: toL, at: now, fund: t.fund || null }]),
+    });
+    if (u.reimburse && !_reimbursable(toL, u.fund)) delete u.reimburse;
+    return u;
+  });
   setBudgetTx(fromL, src.filter(x => !ids.has(x.id)));
   setBudgetTx(toL, dst.filter(x => !ids.has(x.id)).concat(movedTx));
   // A warehouse receipt made from one of these invoices follows it.
@@ -12503,14 +12507,14 @@ const getProjects = () => getLS('projects') || [];
 const _project = id => (id ? getProjects().find(p => p.id === id) || null : null);
 const _costTypeLabel = id => (COST_TYPES.find(c => c.id === id) || {}).label || '';
 const _rubShort = n => '₽' + (Number(n) || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 });
-const _PROJECT_MANAGERS = ['owner', 'admin'];
-// Those who enter works or expenses start projects; the view-only roles (Руководство,
-// Александр, the accountant) only look at them.
-const _PROJECT_CREATORS = ['owner', 'admin', 'admin2', 'kitchen'];
-// The budgets whose expenses a project shows: those this person sees on the Бюджет page, none
-// for anyone who has no Бюджет page.
-const _BUDGET_PAGE_ROLES = ['owner', 'admin', 'admin2', 'kitchen', 'alexander', 'accountant', 'management'];
-const _projectLedgers = () => _BUDGET_PAGE_ROLES.includes(currentUser) ? _budgetVisibleLedgers(currentUser) : [];
+// Projects, linked reports and receipts paid back to employees are the owner's and the two
+// administrators' tools, all of them; nobody else sees any of it.
+const _NEW_TOOLS_ROLES = ['owner', 'admin', 'admin2'];
+const _hasNewTools = () => _NEW_TOOLS_ROLES.includes(currentUser);
+const _PROJECT_MANAGERS = _NEW_TOOLS_ROLES;
+const _PROJECT_CREATORS = _NEW_TOOLS_ROLES;
+// The budgets whose expenses a project shows: those this person sees on the Бюджет page.
+const _projectLedgers = () => _hasNewTools() ? _budgetVisibleLedgers(currentUser) : [];
 
 // The project field of a form: the open projects, the one already chosen even if closed since,
 // and a way to start a new one without leaving the form.
@@ -12582,6 +12586,7 @@ const _maintStatusBadge = s =>
 const _maintFirstImage = w => (w.fileIds || []).find((f, k) => String((w.fileTypes || [])[k] || '').startsWith('image/')) || null;
 
 function openProjects() {
+  if (!_hasNewTools()) return;
   const projects = getProjects().slice().sort((a, b) => (a.archived - b.archived) || String(a.name).localeCompare(String(b.name), 'ru'));
   _modalGen++;
   document.getElementById('modal-title').textContent = '📁 Проекты';
@@ -12609,6 +12614,7 @@ async function _newProjectFromList() {
 }
 
 function openProject(pid) {
+  if (!_hasNewTools()) return;
   const p = _project(pid);
   if (!p) { _showToast('Проект не найден', false); return; }
   const tt = _projectTotals(pid), works = _projectWorks(pid);
@@ -12666,9 +12672,10 @@ async function _toggleProjectArchived(pid) {
 // Linked reports are the stages of one job — the materials received, the tools bought, the
 // trees cut, the fence finished — each reachable from the others. A link is kept on both
 // works (`relatedIds`), so it shows from either side and goes from both at once.
-const _canEditMaint = () => currentUser === 'admin' || currentUser === 'owner';
+const _canEditMaint = () => _hasNewTools();
 
 function openMaintView(id) {
+  if (!_hasNewTools()) return;
   const w = getMaintWorks().find(x => x.id === id);
   if (!w) { _showToast('Отчёт не найден — возможно, его перенесли в журнал поставщика', false); return; }
   const canEdit = _canEditMaint();
@@ -12800,7 +12807,11 @@ async function unlinkMaintReport(id, other) {
 // money twice.
 const getSettlements = () => getLS('finance_settlements') || [];
 const _settlement = id => (id ? getSettlements().find(s => s.id === id) || null : null);
-const _SETTLE_ROLES = ['owner', 'accountant'];
+// Only cash of Личный бюджет is paid back this way — the cash the owner and the administrators
+// hand out themselves; the accountant has no part in it (she never handles cash).
+const _SETTLE_ROLES = _NEW_TOOLS_ROLES;
+const _REIMBURSE_LEDGER = 'personal', _REIMBURSE_FUND = 'Наличные';
+const _reimbursable = (lk, fund) => lk === _REIMBURSE_LEDGER && fund === _REIMBURSE_FUND;
 const _txFullyApproved = (lk, t) => FINANCE_LEDGERS[lk].approvers.every(r => (t.approvals || {})[r] && t.approvals[r].approved);
 // Receipts still to be paid back in a ledger.
 const _openReceipts = lk => getBudgetTx(lk).filter(t => t.type === 'expense' && t.reimburse && !t.reimburse.settlementId
@@ -12844,6 +12855,7 @@ function _txReportTags(t) {
 let _stl = null; // the payout form: { lk, picked: Set, employee, all }
 function openSettlementForm(lk, employee, txId) {
   if (!_SETTLE_ROLES.includes(currentUser)) return;
+  lk = _REIMBURSE_LEDGER;
   const open = _openReceipts(lk);
   const names = Array.from(new Set(open.map(t => t.reimburse.employee).filter(Boolean)));
   // Opened from a receipt's card: that receipt ticked, and its employee.
@@ -12894,7 +12906,7 @@ function _stlRender() {
         <div style="font-size:11px;color:#64748b">${fmtDate(t.date)} · 💵 ${_escHtml(t.reimburse.employee || '')}${t.notes ? ' · ' + _escHtml(String(t.notes).slice(0, 50)) : ''}${ok ? '' : ' · <b style="color:#b45309">ещё не согласован</b>'}</div>
         ${_txAttachmentsHtml(t)}</div>
       <div style="font-weight:700;white-space:nowrap">${_rubShort(t.amount)}</div></label>`;
-  }).join('') || `<div style="text-align:center;padding:18px;color:#94a3b8;font-size:13px">${_stl.employee.trim() && !_stl.all ? 'У этого сотрудника нет чеков, ждущих возмещения' : 'Чеков, ждущих возмещения, нет'} — их отмечают в форме расхода: «💵 Оплачено сотрудником — к возмещению».</div>`;
+  }).join('') || `<div style="text-align:center;padding:18px;color:#94a3b8;font-size:13px">${_stl.employee.trim() && !_stl.all ? 'У этого сотрудника нет чеков, ждущих возмещения' : 'Чеков, ждущих возмещения, нет'} — их отмечают в форме расхода Личного бюджета, фонд «Наличные»: «💵 Оплачено сотрудником — к возмещению».</div>`;
   const picked = getBudgetTx(_stl.lk).filter(t => _stl.picked.has(t.id));
   const sum = Math.round(picked.reduce((s, t) => s + (Number(t.amount) || 0), 0) * 100) / 100;
   const amount = Number((document.getElementById('stl-amount') || {}).value) || 0;
@@ -12969,6 +12981,7 @@ async function _saveSettlementInner() {
 
 function openSettlements(lk) {
   if (!_SETTLE_ROLES.includes(currentUser)) return;
+  lk = _REIMBURSE_LEDGER;
   const list = getSettlements().filter(s => s.ledger === lk).sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.no).localeCompare(String(a.no)));
   const openN = _openReceipts(lk).length;
   _modalGen++;
@@ -13479,9 +13492,10 @@ function renderBudget() {
   // The owner's formatted month report across all the ledgers (see openBudgetReportModal).
   const reportBtn = currentUser === 'owner' ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px${exportBtn ? '' : ';margin-left:auto'}" onclick="openBudgetReportModal()">📄 Отчёт за месяц</button>` : '';
   // Projects for whoever sees the budget; the payouts for receipts for those who pay.
-  const projectsBtn = `<button class="btn btn-outline" id="budget-projects-btn" style="font-size:12px;padding:8px 12px${exportBtn || reportBtn ? '' : ';margin-left:auto'}" onclick="openProjects()">📁 Проекты</button>`;
-  const openRc = _SETTLE_ROLES.includes(currentUser) ? _openReceipts(budgetLedger).length : 0;
-  const settleBtn = _SETTLE_ROLES.includes(currentUser) ? `<button class="btn btn-outline" id="budget-settle-btn" style="font-size:12px;padding:8px 12px" onclick="openSettlements('${budgetLedger}')">💵 Выплаты по чекам${openRc ? ` <span class="badge" style="background:#f59e0b;color:#fff;font-size:10px">${openRc}</span>` : ''}</button>` : '';
+  const projectsBtn = !_hasNewTools() ? '' : `<button class="btn btn-outline" id="budget-projects-btn" style="font-size:12px;padding:8px 12px${exportBtn || reportBtn ? '' : ';margin-left:auto'}" onclick="openProjects()">📁 Проекты</button>`;
+  const showSettle = _SETTLE_ROLES.includes(currentUser) && budgetLedger === _REIMBURSE_LEDGER;
+  const openRc = showSettle ? _openReceipts(budgetLedger).length : 0;
+  const settleBtn = showSettle ? `<button class="btn btn-outline" id="budget-settle-btn" style="font-size:12px;padding:8px 12px" onclick="openSettlements('${budgetLedger}')">💵 Выплаты по чекам${openRc ? ` <span class="badge" style="background:#f59e0b;color:#fff;font-size:10px">${openRc}</span>` : ''}</button>` : '';
   const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0;align-items:center">${tabs}${exportBtn}${reportBtn}${projectsBtn}${settleBtn}</div>`;
 
   const releaseBar = isOwner ? (getBudgetReleased()
@@ -13568,9 +13582,11 @@ function _registerColumns(cfg) {
   cols.push({ id:'paid',     label:'Оплачено',    brief:true  });
   cols.push({ id:'paidDate', label:'Дата оплаты', brief:false });
   cols.push({ id:'by',       label:'Кто добавил', brief:false });
-  cols.push({ id:'project',  label:'Проект',      brief:false });
-  cols.push({ id:'costType', label:'Статья',      brief:false });
-  cols.push({ id:'reimburse', label:'Возмещение сотруднику', brief:false });
+  if (_hasNewTools()) {
+    cols.push({ id:'project',  label:'Проект',      brief:false });
+    cols.push({ id:'costType', label:'Статья',      brief:false });
+    cols.push({ id:'reimburse', label:'Возмещение сотруднику', brief:false });
+  }
   cols.push({ id:'notes',    label:'Примечание',  brief:false });
   return cols;
 }
@@ -14346,17 +14362,14 @@ function _renderBudgetLedger(ledgerKey) {
 // An expense's project (with what the project has cost in all), kind of cost, and its
 // reimbursement state, as badges.
 function _txTagBadges(t) {
-  if (t.type !== 'expense') return '';
+  if (t.type !== 'expense' || !_hasNewTools()) return '';
   return _projectBadge(t.project, true)
     + (t.costType ? `<span class="badge" style="font-size:10px;background:#f1f5f9;color:#334155">${_costTypeLabel(t.costType)}</span>` : '')
     + _reimburseBadge(t);
 }
-// The pay button of a card: a receipt to pay back to an employee is paid by a payout.
-function _txPayButton(ledgerKey, t, payCall) {
-  return t.reimburse && !t.reimburse.settlementId
-    ? `<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="openSettlementForm('${ledgerKey}',null,'${t.id}')">💵 Выплатить по расписке</button>`
-    : `<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="${payCall}">💳 Отметить оплаченным</button>`;
-}
+// A receipt to pay back to an employee isn't marked paid — it is paid by a payout.
+const _txReimburseOpen = t => !!(t.reimburse && !t.reimburse.settlementId);
+const _txSettleButton = (ledgerKey, t) => `<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="openSettlementForm('${ledgerKey}',null,'${t.id}')">💵 Выплатить по расписке</button>`;
 
 function _renderBudgetTxCard(ledgerKey, t, cfg) {
   const isIncome = t.type === 'income' || t.type === 'refund';
@@ -14396,19 +14409,22 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
     const isMyRoleRequired = myRole && cfg.approvers.includes(myRole);
     const myApproved = isMyRoleRequired && (t.approvals||{})[myRole] && (t.approvals||{})[myRole].approved;
     const notPaidYet = !(t.accountantConfirm && t.accountantConfirm.paid);
-    const canConfirmPaid = currentUser==='accountant' && allApproved && notPaidYet;
+    const reimbOpen = _txReimburseOpen(t);
+    const canConfirmPaid = currentUser==='accountant' && allApproved && notPaidYet && !reimbOpen;
+    const canSettle = reimbOpen && allApproved && notPaidYet && _SETTLE_ROLES.includes(currentUser);
     // The owner can stand in for Alexander's approval and for the accountant's payment
     // confirmation — a backup path for when either of them is unavailable.
     const alexApproved = (t.approvals||{}).alexander && (t.approvals||{}).alexander.approved;
     const canActForAlexander = currentUser==='owner' && cfg.approvers.includes('alexander') && notPaidYet;
-    const canConfirmPaidAsOwner = currentUser==='owner' && allApproved && notPaidYet;
+    const canConfirmPaidAsOwner = currentUser==='owner' && allApproved && notPaidYet && !reimbOpen;
     actionsHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
       ${isMyRoleRequired && notPaidYet && !myApproved?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">✅ Согласовать</button>
         <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="rejectBudgetTx('${ledgerKey}','${t.id}')">❌ Отклонить</button>`:''}
       ${isMyRoleRequired && notPaidYet && myApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#d97706" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">↩️ Отменить своё согласование</button>`:''}
       ${canActForAlexander && !alexApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="approveBudgetTx('${ledgerKey}','${t.id}','alexander')">✅ Согласовать за Александра</button>`:''}
       ${canActForAlexander && alexApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#d97706" onclick="approveBudgetTx('${ledgerKey}','${t.id}','alexander')">↩️ Отменить согласование Александра</button>`:''}
-      ${canConfirmPaid || canConfirmPaidAsOwner?`${_txPayButton(ledgerKey, t, `confirmBudgetPaid('${ledgerKey}','${t.id}')`)}
+      ${canSettle ? _txSettleButton(ledgerKey, t) : ''}
+      ${canConfirmPaid || canConfirmPaidAsOwner?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="confirmBudgetPaid('${ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>
         <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="declineBudgetPaid('${ledgerKey}','${t.id}')">❌ Отказать в оплате</button>`:''}
     </div>`;
   }
@@ -14535,8 +14551,8 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
       <datalist id="bt-vendor-list-${ledgerKey}">${_budgetVendorSuggestions(ledgerKey).map(v=>`<option value="${v.replace(/"/g,'&quot;')}">`).join('')}</datalist>
     </div>
     <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="bt-amount" value="${t.amount||''}" min="0" step="0.01" ${window._budgetTxReadOnly?'disabled':''}></div>
-    ${cfg.useFunds ? `<div class="form-group"><label>Фонд *</label><select class="form-control" id="bt-fund" ${window._budgetTxReadOnly?'disabled':''}><option value="">— Выберите —</option>${fundOpts}</select></div>` : ''}
-    ${_budgetExpenseExtraHtml(t, type)}
+    ${cfg.useFunds ? `<div class="form-group"><label>Фонд *</label><select class="form-control" id="bt-fund" onchange="_toggleBudgetVendorField('${ledgerKey}')" ${window._budgetTxReadOnly?'disabled':''}><option value="">— Выберите —</option>${fundOpts}</select></div>` : ''}
+    ${_budgetExpenseExtraHtml(t, type, ledgerKey)}
     <div class="form-group">
       <label>📎 Документы (чек/счёт)${currentUser === 'owner' ? ' <span style="font-weight:400;color:#6b7280">— для вас необязательно</span>' : ''}</label>
       ${window._budgetTxReadOnly ? '' : '<div style="font-size:11px;color:#6b7280;margin:-2px 0 6px">Если чек на нескольких листах или фото — выберите их все сразу, либо нажмите «Добавить» несколько раз.</div>'}
@@ -14583,7 +14599,8 @@ function _removeBudgetSavedFile(i) {
 // pocket and is to be paid back (see openSettlementForm). A receipt a payout has closed says
 // which, and keeps its amount until that payout is undone. In a closed month the owner may
 // still file an expense under a project — that sorts it, it changes nothing that was paid.
-function _budgetExpenseExtraHtml(t, type) {
+function _budgetExpenseExtraHtml(t, type, ledgerKey) {
+  if (!_hasNewTools()) return '';
   const ro = !!window._budgetTxReadOnly;
   const tagsRo = ro && currentUser !== 'owner';
   const settled = t.reimburse && t.reimburse.settlementId ? _settlement(t.reimburse.settlementId) : null;
@@ -14602,7 +14619,7 @@ function _budgetExpenseExtraHtml(t, type) {
       <div class="form-group"><label>Статья расхода</label><select class="form-control" id="bt-costtype" ${tagsRo ? 'disabled' : ''}>
         <option value="">— не указана —</option>${COST_TYPES.map(c => `<option value="${c.id}" ${t.costType === c.id ? 'selected' : ''}>${c.label}</option>`).join('')}</select></div>
     </div>
-    <div class="form-group" style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 10px">${reimb}</div>
+    ${ledgerKey === _REIMBURSE_LEDGER || settled ? `<div class="form-group" id="bt-reimb-block" ${settled || t.fund === _REIMBURSE_FUND ? '' : 'hidden'} style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 10px">${reimb}</div>` : ''}
   </div>`;
 }
 // The owner's project and kind of cost on an expense of a closed month — nothing else changes.
@@ -14632,6 +14649,9 @@ function _toggleBudgetVendorField(ledgerKey) {
   group.hidden = type === 'income';
   const extra = document.getElementById('bt-expense-extra');
   if (extra) extra.hidden = type !== 'expense';
+  // Paid back to an employee: cash only.
+  const rb = document.getElementById('bt-reimb-block'), fundEl = document.getElementById('bt-fund');
+  if (rb && document.getElementById('bt-reimb')) rb.hidden = !(fundEl && fundEl.value === _REIMBURSE_FUND);
   const label = document.getElementById('bt-vendor-label');
   if (label) label.textContent = 'Наименование / поставщик *';
 }
@@ -14735,7 +14755,7 @@ async function _saveBudgetTxInner(ledgerKey) {
     fund = document.getElementById('bt-fund').value;
     if (!fund) { alert('Укажите фонд'); return; }
   }
-  if (type === 'expense' && reimbOn && !reimbEmp) { alert('Укажите сотрудника, которому нужно вернуть деньги'); return; }
+  if (type === 'expense' && reimbOn && _reimbursable(ledgerKey, fund) && !reimbEmp) { alert('Укажите сотрудника, которому нужно вернуть деньги'); return; }
   // A receipt a payout has closed keeps what was paid for it — see _settledChangeBlocked.
   if (_settledChangeBlocked(editingId ? getBudgetTx(ledgerKey).find(x => x.id === editingId) : null, type, vendor, amount, date, fund)) return;
   // No scanned invoice/receipt, no payment request — approvers and the accountant need
@@ -14865,10 +14885,12 @@ async function _saveBudgetTxInner(ledgerKey) {
     createdAt: existing ? existing.createdAt : new Date().toISOString(),
   };
   if (type === 'expense') {
-    if (project) record.project = project;
-    if (costType) record.costType = costType;
+    // Someone without these fields in the form (the kitchen) keeps what the owner gave the record.
+    const src = projEl ? { project, costType } : (existing || {});
+    if (src.project) record.project = src.project;
+    if (src.costType) record.costType = src.costType;
     if (existing && existing.reimburse && existing.reimburse.settlementId) record.reimburse = existing.reimburse;
-    else if (reimbEmp) record.reimburse = { employee: reimbEmp };
+    else if (reimbEmp && _reimbursable(ledgerKey, fund)) record.reimburse = { employee: reimbEmp };
   }
 
   if (editingId) { const idx=list.findIndex(x=>x.id===editingId); if(idx>=0)list[idx]=record; else list.push(record); }
@@ -14988,7 +15010,7 @@ async function _approveBudgetTxInner(ledgerKey, id, asRole) {
       t2.accountantConfirm = {paid:true, date:new Date().toISOString()};
       setBudgetTx(ledgerKey, after);
       if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
-    } else if (nowAllApproved) {
+    } else if (nowAllApproved && !t2.reimburse) {
       _notifyAccountant(`🧾 Готово к оплате — ${FINANCE_LEDGERS[ledgerKey].label}`, _getFromName(), `${t2.vendor||''} · ₽${(Number(t2.amount)||0).toLocaleString('ru-RU')}`);
     }
   }
@@ -15108,6 +15130,7 @@ function _accountantPendingPaymentItems() {
       if (t.type !== 'expense') return;
       if (t.status === 'rejected') return;
       if (t.accountantConfirm && t.accountantConfirm.paid) return;
+      if (_txReimburseOpen(t)) return; // paid back in cash by a payout, not by her
       const allApproved = cfg.approvers.every(role => t.approvals && t.approvals[role] && t.approvals[role].approved);
       if (!allApproved) return;
       items.push(Object.assign({}, t, {_ledgerKey: lk}));
@@ -15130,12 +15153,11 @@ function _renderAccountantQueueList(items) {
         <div style="font-weight:600;font-size:14px">${t.vendor||''}</div>
         ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
         ${_txAttachmentsHtml(t)}
-        ${t.project || t.reimburse ? `<div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">${_txTagBadges(t)}</div>` : ''}
       </div>
       <div style="font-weight:700;font-size:16px;color:#dc2626;flex-shrink:0">−₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
     </div>
     <div style="display:flex;gap:6px;margin-top:8px">
-      ${_txPayButton(t._ledgerKey, t, `_acctQueueConfirmPaid('${t._ledgerKey}','${t.id}')`)}
+      <button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="_acctQueueConfirmPaid('${t._ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>
       <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="_acctQueueDeclinePaid('${t._ledgerKey}','${t.id}')">❌ Отказать в оплате</button>
     </div>
   </div>`).join('');
