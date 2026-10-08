@@ -2033,7 +2033,8 @@ const _dirtyGen = {};
 // incident) — moved into their own document (appdata/finance_ledger), same split pattern
 // as `files`/files_registry above. Read in _loadState, routed to the right document in
 // _doFlushState; everywhere else in the app just calls getLS/setLS as before.
-const LEDGER_KEYS = ['finance_tx_maintenance', 'finance_tx_personal'];
+// finance_settlements (payouts for employees' receipts) sits with the ledgers it closes receipts in.
+const LEDGER_KEYS = ['finance_tx_maintenance', 'finance_tx_personal', 'finance_settlements'];
 
 // The warehouse (Склад) lives in documents of its own from the start: appdata/state was
 // already at about half of the 1MB cap when it was added, and a catalogue of hundreds of
@@ -2091,6 +2092,7 @@ const TX_KEYS = [
   'telegram_drafts', 'telegram_log',
   'kitchen_invoices', 'kitchen_deliveries', 'kitchen_inventory', 'kitchen_writeoffs',
   'wh_items', 'wh_employees', 'wh_docs',
+  'projects', 'finance_settlements',
 ];
 // payment_records is the same hazard in map form: it's the "Журнал оплат" tick-list,
 // keyed provider_year_month, and the accountant and the owner both tick it. Writing it
@@ -6286,14 +6288,19 @@ function renderMaintenance() {
         }).join('')}
       </div>` : '';
 
+    const relN = (w.relatedIds || []).filter(r => all.some(x => x.id === r)).length;
     return `
     <div class="sos-item">
       <div class="sos-bar" style="background:${w.status==='done'?'var(--success)':w.status==='in_progress'?'var(--warning)':'#94a3b8'}"></div>
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">
           <div>
-            <div style="font-weight:700;font-size:14px">${w.title}</div>
+            <div class="maint-title" style="font-weight:700;font-size:14px;cursor:pointer" title="Открыть отчёт" onclick="openMaintView('${w.id}')">${w.title}</div>
             <div style="font-size:11px;color:#6b7280;margin-top:3px">${maintCatLabel(w.category)} · 📅 ${fmtDate(w.date)}${w.cost ? ' · 💰 ' + Number(w.cost).toLocaleString('ru') + ' ₽' : ''}${w.createdBy ? ' · ✍️ ' + _roleDisplayName(w.createdBy) : ''}</div>
+            ${(w.project && _project(w.project)) || relN ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px">
+              ${_projectBadge(w.project, false)}
+              ${relN ? `<span class="badge" onclick="openMaintView('${w.id}')" title="Связанные отчёты" style="font-size:10px;background:#dbeafe;color:#1e40af;cursor:pointer">🔗 Связанных отчётов: ${relN}</span>` : ''}
+            </div>` : ''}
           </div>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
             ${statusBadge(w.status)}
@@ -6317,12 +6324,15 @@ function renderMaintenance() {
     </div>`;
 
   return `
-    <div style="display:flex;align-items:center;gap:12px;padding:16px 0 12px;border-bottom:1px solid #e2e8f0;margin-bottom:16px">
+    <div style="display:flex;align-items:center;gap:12px;padding:16px 0 12px;border-bottom:1px solid #e2e8f0;margin-bottom:16px;flex-wrap:wrap">
       <button class="year-btn" onclick="maintMonth--;if(maintMonth<1){maintMonth=12;maintYear--}render()">◄</button>
       <div style="font-size:16px;font-weight:700;color:#1e293b;min-width:160px;text-align:center">${MONTHS[maintMonth-1]} ${maintYear}</div>
       <button class="year-btn" onclick="maintMonth++;if(maintMonth>12){maintMonth=1;maintYear++}render()">►</button>
       ${isCurrent ? '<span class="badge badge-blue" style="margin-left:4px">Текущий месяц</span>' : ''}
-      ${canEdit ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px;margin-left:auto" onclick="exportMaintenanceCsv()">📊 Реестр (Excel)</button>` : ''}
+      <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-outline" id="maint-projects-btn" style="font-size:12px;padding:8px 12px" onclick="openProjects()">📁 Проекты</button>
+        ${canEdit ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px" onclick="exportMaintenanceCsv()">📊 Реестр (Excel)</button>` : ''}
+      </div>
     </div>
     ${cards}`;
 }
@@ -6370,6 +6380,10 @@ function openMaintModal(editId) {
           <option value="planned"     ${ex?.status==='planned'          ?'selected':''}>📋 Запланировано</option>
         </select>
       </div>
+    </div>
+    <div class="form-group">
+      <label>📁 Проект <span style="font-weight:400;color:#6b7280">— объединяет работы и расходы по одному объекту</span></label>
+      ${_projectSelectHtml('maint-project', ex?.project || '')}
     </div>
     <div class="form-group">
       <label>Описание / примечания</label>
@@ -6454,6 +6468,8 @@ async function _saveMaintInner(editId) {
     const description      = document.getElementById('maint-desc').value.trim();
     const quarterlySection = document.getElementById('maint-qsec').value || undefined;
     const linkedProviderId = document.getElementById('maint-provider').value || undefined;
+    const projSel = document.getElementById('maint-project');
+    const project = projSel && projSel.value && projSel.value !== '__new' ? projSel.value : undefined;
     // Taken before the first upload — see _saveSOSInner.
     const formGen = _modalGen;
     const picked = pendingFiles.slice();
@@ -6491,12 +6507,15 @@ async function _saveMaintInner(editId) {
         else delete updated.quarterlySection;
         if (linkedProviderId) updated.linkedProviderId = linkedProviderId;
         else delete updated.linkedProviderId;
+        if (project) updated.project = project;
+        else delete updated.project;
         list[idx] = updated;
       }
     } else {
       const item = { id: _newTxId(), title, date, cost, category, status, description, fileIds, fileNames, fileTypes, createdBy: currentUser, createdAt: new Date().toISOString() };
       if (quarterlySection) item.quarterlySection = quarterlySection;
       if (linkedProviderId) item.linkedProviderId = linkedProviderId;
+      if (project) item.project = project;
       if (draftExtra && draftExtra.sourceMessageId) item.telegramSourceMessageId = draftExtra.sourceMessageId;
       if (draftExtra && (draftExtra.sourceMessageIds || []).length) item.telegramSourceMessageIds = draftExtra.sourceMessageIds;
       list.push(item);
@@ -6563,7 +6582,9 @@ async function _saveMaintInner(editId) {
 
 function delMaint(id) {
   if (!confirm('Удалить эту запись?')) return;
-  setLS('maint_works', getMaintWorks().filter(w => w.id !== id));
+  // Its links go with it, from the reports it was linked to as well.
+  setLS('maint_works', getMaintWorks().filter(w => w.id !== id).map(w => (w.relatedIds || []).includes(id)
+    ? Object.assign({}, w, { relatedIds: w.relatedIds.filter(x => x !== id) }) : w));
   render();
 }
 
@@ -6832,6 +6853,7 @@ function _mvMoveBudget(fromL, toL, refs, opts) {
     if (!t) { problems.push('• одну из записей тем временем перенесли или удалили'); return; }
     const name = `«${t.vendor || 'Приход'}» ₽${(Number(t.amount) || 0).toLocaleString('ru-RU')} от ${fmtDate(t.date)}`;
     if (t.imported) { problems.push(`• ${name}: запись из импортированной истории — не переносится`); return; }
+    if (t.reimburse && t.reimburse.settlementId) { problems.push(`• ${name}: чек закрыт выплатой по расписке — сначала отмените выплату`); return; }
     const mk = _budgetTxMonthKey(t);
     if (_monthClosedToOwner(fromL, mk) || _monthClosedToOwner(toL, mk)) { problems.push(`• ${name}: ${_monthLabel(mk)} закрыт — сначала откройте его`); return; }
     picked.push(t);
@@ -12461,6 +12483,553 @@ function _findSimilarTx(ledgerKey, vendor, amount, date, exceptId) {
 
 const getBudgetTx = (ledgerKey) => getLS('finance_tx_'+ledgerKey) || [];
 const setBudgetTx = (ledgerKey, list) => setLS('finance_tx_'+ledgerKey, list);
+
+// ==============================
+// ПРОЕКТЫ · СВЯЗАННЫЕ ОТЧЁТЫ · ВОЗМЕЩЕНИЕ ЧЕКОВ
+// ==============================
+// A project (Забор, Котельная, Подготовка к заезду) gathers the budget's expenses and the
+// territory works done for it, across ledgers and months: what it cost in all, by kind of
+// cost, and what was done. Kept in appdata/state (`projects`, merged by id); an expense or a
+// work names its project by id (`project`), an expense its kind of cost (`costType`).
+const COST_TYPES = [
+  { id: 'materials', label: '🧱 Материалы' },
+  { id: 'works',     label: '👷 Работы и зарплата' },
+  { id: 'transport', label: '🚚 Транспорт и доставка' },
+  { id: 'equipment', label: '🛠️ Инструмент и техника' },
+  { id: 'services',  label: '🧾 Услуги' },
+  { id: 'other',     label: '📦 Прочее' },
+];
+const getProjects = () => getLS('projects') || [];
+const _project = id => (id ? getProjects().find(p => p.id === id) || null : null);
+const _costTypeLabel = id => (COST_TYPES.find(c => c.id === id) || {}).label || '';
+const _rubShort = n => '₽' + (Number(n) || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 });
+const _PROJECT_MANAGERS = ['owner', 'admin'];
+// The budgets whose expenses a project shows: those this person sees on the Бюджет page, none
+// for anyone who has no Бюджет page.
+const _BUDGET_PAGE_ROLES = ['owner', 'admin', 'admin2', 'kitchen', 'alexander', 'accountant', 'management'];
+const _projectLedgers = () => _BUDGET_PAGE_ROLES.includes(currentUser) ? _budgetVisibleLedgers(currentUser) : [];
+
+// The project field of a form: the open projects, the one already chosen even if closed since,
+// and a way to start a new one without leaving the form.
+function _projectSelectHtml(selId, current, disabled) {
+  const list = getProjects().filter(p => !p.archived || p.id === current)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru'));
+  return `<select class="form-control" id="${selId}" onchange="_projectSelectChanged(this)" ${disabled ? 'disabled' : ''}>
+    <option value="">— Без проекта —</option>
+    ${list.map(p => `<option value="${p.id}" ${p.id === current ? 'selected' : ''}>📁 ${_escHtml(p.name)}${p.archived ? ' (закрыт)' : ''}</option>`).join('')}
+    <option value="__new">➕ Новый проект…</option>
+  </select>`;
+}
+function _projectSelectChanged(sel) {
+  if (sel.value !== '__new') return;
+  const p = _createProject();
+  if (!p) { sel.value = ''; return; }
+  if (!Array.from(sel.options).some(o => o.value === p.id)) {
+    const opt = document.createElement('option');
+    opt.value = p.id; opt.textContent = '📁 ' + p.name;
+    sel.insertBefore(opt, sel.lastElementChild);
+  }
+  sel.value = p.id;
+}
+// A project by that name if there is one already (whatever the letter case), else a new one.
+function _createProject(name) {
+  name = String(name != null ? name : (prompt('Название проекта (например: Забор, Котельная, Подготовка к заезду):') || '')).trim().slice(0, 80);
+  if (!name) return null;
+  const same = getProjects().find(p => String(p.name).trim().toLowerCase() === name.toLowerCase());
+  if (same) return same;
+  const p = { id: _newTxId(), name, archived: false, createdBy: currentUser, createdAt: new Date().toISOString() };
+  setLS('projects', getProjects().concat([p]));
+  return p;
+}
+
+// A project's expenses in the budgets this person may see, newest first.
+function _projectExpenses(pid) {
+  const out = [];
+  _projectLedgers().forEach(lk => getBudgetTx(lk).forEach(t => {
+    if (t.project === pid && t.type === 'expense') out.push({ lk, t });
+  }));
+  return out.sort((a, b) => String(b.t.date || '').localeCompare(String(a.t.date || '')));
+}
+// What a project cost: every expense not rejected — paid and still to pay — and by kind.
+function _projectTotals(pid) {
+  const all = _projectExpenses(pid);
+  const live = all.filter(x => x.t.status !== 'rejected');
+  const sum = arr => Math.round(arr.reduce((s, x) => s + (Number(x.t.amount) || 0), 0) * 100) / 100;
+  const isPaid = x => !!(x.t.accountantConfirm && x.t.accountantConfirm.paid);
+  const byType = {};
+  live.forEach(x => { const k = x.t.costType || ''; byType[k] = Math.round(((byType[k] || 0) + (Number(x.t.amount) || 0)) * 100) / 100; });
+  const total = sum(live), paid = sum(live.filter(isPaid));
+  return { all, live, total, paid, unpaid: Math.round((total - paid) * 100) / 100, byType };
+}
+const _projectWorks = pid => getMaintWorks().filter(w => w.project === pid)
+  .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+
+// The project's tag on a card; with the total, the "Итого по проекту" of an expense.
+function _projectBadge(pid, withTotal) {
+  const p = _project(pid);
+  if (!p) return '';
+  const extra = withTotal ? ' · итого по проекту ' + _rubShort(_projectTotals(pid).total) : '';
+  return `<span class="badge" onclick="event.stopPropagation();openProject('${p.id}')" title="Открыть проект" style="font-size:10px;background:#ede9fe;color:#5b21b6;cursor:pointer">📁 ${_escHtml(p.name)}${extra}</span>`;
+}
+
+const _maintStatusBadge = s =>
+  s === 'done'        ? '<span class="badge badge-success">✅ Выполнено</span>'  :
+  s === 'in_progress' ? '<span class="badge badge-warning">🔄 В работе</span>'  :
+                        '<span class="badge" style="background:#e2e8f0;color:#374151">📋 Запланировано</span>';
+const _maintFirstImage = w => (w.fileIds || []).find((f, k) => String((w.fileTypes || [])[k] || '').startsWith('image/')) || null;
+
+function openProjects() {
+  const projects = getProjects().slice().sort((a, b) => (a.archived - b.archived) || String(a.name).localeCompare(String(b.name), 'ru'));
+  _modalGen++;
+  document.getElementById('modal-title').textContent = '📁 Проекты';
+  const rows = projects.map(p => {
+    const tt = _projectTotals(p.id), nw = _projectWorks(p.id).length;
+    return `<div onclick="openProject('${p.id}')" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:8px;cursor:pointer;${p.archived ? 'opacity:.6' : ''}">
+      <div style="min-width:0"><div style="font-weight:700">📁 ${_escHtml(p.name)}${p.archived ? ' <span class="badge badge-gray" style="font-size:10px">закрыт</span>' : ''}</div>
+        <div style="font-size:12px;color:#64748b">${tt.live.length} расход(ов) · ${nw} отчёт(ов)</div></div>
+      <div style="font-weight:800;white-space:nowrap">${_rubShort(tt.total)}</div></div>`;
+  }).join('');
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-size:12px;color:#64748b;margin-bottom:10px">Проект объединяет расходы из бюджетов и отчёты о работах по одному объекту или цели — в нём видно, сколько он стоил всего и на что.</div>
+    ${rows || '<div style="text-align:center;padding:30px;color:#94a3b8">Проектов пока нет — создайте первый, или выберите «➕ Новый проект…» прямо в форме расхода или работы.</div>'}`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
+    <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
+    <button class="btn btn-primary" onclick="_newProjectFromList()">➕ Новый проект</button></div>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+async function _newProjectFromList() {
+  const p = _createProject();
+  if (!p) return;
+  clearTimeout(_saveTimer); await _flushState();
+  openProject(p.id);
+}
+
+function openProject(pid) {
+  const p = _project(pid);
+  if (!p) { _showToast('Проект не найден', false); return; }
+  const tt = _projectTotals(pid), works = _projectWorks(pid);
+  const canManage = _PROJECT_MANAGERS.includes(currentUser);
+  _modalGen++;
+  document.getElementById('modal-title').textContent = '📁 ' + p.name + (p.archived ? ' (закрыт)' : '');
+  const kpi = (v, l, c) => `<div class="stat-card"><div class="stat-value" style="font-size:18px;${c ? 'color:' + c : ''}">${v}</div><div class="stat-label">${l}</div></div>`;
+  const types = Object.keys(tt.byType).sort((a, b) => tt.byType[b] - tt.byType[a]);
+  const byType = types.length ? `<div style="font-weight:700;margin:14px 0 6px">По статьям расходов</div>
+    ${types.map(k => { const v = tt.byType[k], pct = tt.total ? Math.round(v / tt.total * 100) : 0; return `<div style="margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;font-size:13px"><span>${k ? _costTypeLabel(k) : '— статья не указана'}</span><b>${_rubShort(v)} <span style="color:#94a3b8;font-weight:400">${pct}%</span></b></div>
+      <div style="height:6px;background:#f1f5f9;border-radius:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:#7c3aed"></div></div></div>`; }).join('')}` : '';
+  const status = t => t.status === 'rejected' ? '<span style="color:#b91c1c">отклонено</span>'
+    : (t.accountantConfirm && t.accountantConfirm.paid) ? '<span style="color:#15803d">оплачено</span>' : '<span style="color:#b45309">ждёт оплаты</span>';
+  const expRows = tt.all.map(({ lk, t }) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:13px;${t.status === 'rejected' ? 'opacity:.55' : ''}">
+      <div style="min-width:0"><div style="font-weight:600">${_escHtml(t.vendor || '')}</div>
+        <div style="font-size:11px;color:#64748b">${fmtDate(t.date)} · ${_escHtml(FINANCE_LEDGERS[lk].label)}${t.costType ? ' · ' + _costTypeLabel(t.costType) : ''} · ${status(t)}${t.notes ? ' · ' + _escHtml(String(t.notes).slice(0, 60)) : ''}</div></div>
+      <div style="font-weight:700;white-space:nowrap">${_rubShort(t.amount)}</div></div>`).join('');
+  const workRows = works.map(w => `<div onclick="openMaintView('${w.id}')" style="display:flex;justify-content:space-between;gap:10px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:6px;cursor:pointer">
+      <div style="min-width:0"><div style="font-weight:600;font-size:13px">${_escHtml(w.title || '')}</div><div style="font-size:11px;color:#64748b">${fmtDate(w.date)} · ${maintCatLabel(w.category)}</div></div>
+      <div>${_maintStatusBadge(w.status)}</div></div>`).join('');
+  document.getElementById('modal-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+      ${kpi(_rubShort(tt.total), 'Итого расходов по проекту', '#5b21b6')}${kpi(_rubShort(tt.paid), 'Оплачено', '#15803d')}${kpi(_rubShort(tt.unpaid), 'Ещё не оплачено', '#b45309')}
+    </div>
+    ${byType}
+    <div style="font-weight:700;margin:14px 0 4px">💰 Расходы (${tt.all.length})</div>
+    ${expRows || '<div style="font-size:12px;color:#94a3b8">Расходов с этим проектом пока нет — выберите проект в форме расхода.</div>'}
+    <div style="font-weight:700;margin:14px 0 6px">🏗️ Отчёты о работах (${works.length})</div>
+    ${workRows || '<div style="font-size:12px;color:#94a3b8">Отчётов с этим проектом пока нет — выберите проект в форме работы.</div>'}`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
+    <button class="btn btn-outline" onclick="openProjects()">← Все проекты</button>
+    ${canManage ? `<button class="btn btn-outline" onclick="_renameProject('${pid}')">✏️ Переименовать</button>
+    <button class="btn btn-outline" onclick="_toggleProjectArchived('${pid}')">${p.archived ? '📂 Открыть снова' : '📦 Закрыть проект'}</button>` : ''}
+    <button class="btn btn-primary" onclick="closeModal()">Готово</button></div>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+async function _renameProject(pid) {
+  const p = _project(pid);
+  if (!p || !_PROJECT_MANAGERS.includes(currentUser)) return;
+  const name = String(prompt('Новое название проекта:', p.name) || '').trim().slice(0, 80);
+  if (!name || name === p.name) return;
+  setLS('projects', getProjects().map(x => x.id === pid ? Object.assign({}, x, { name }) : x));
+  clearTimeout(_saveTimer); await _flushState();
+  openProject(pid);
+}
+async function _toggleProjectArchived(pid) {
+  if (!_PROJECT_MANAGERS.includes(currentUser)) return;
+  setLS('projects', getProjects().map(x => x.id === pid ? Object.assign({}, x, { archived: !x.archived }) : x));
+  clearTimeout(_saveTimer); await _flushState();
+  openProject(pid);
+}
+
+// ---------- a territory work: its own card, and the reports linked to it ----------
+// Linked reports are the stages of one job — the materials received, the tools bought, the
+// trees cut, the fence finished — each reachable from the others. A link is kept on both
+// works (`relatedIds`), so it shows from either side and goes from both at once.
+const _canEditMaint = () => currentUser === 'admin' || currentUser === 'owner';
+
+function openMaintView(id) {
+  const w = getMaintWorks().find(x => x.id === id);
+  if (!w) { _showToast('Отчёт не найден — возможно, его перенесли в журнал поставщика', false); return; }
+  const canEdit = _canEditMaint();
+  const works = getMaintWorks();
+  const related = (w.relatedIds || []).map(rid => works.find(x => x.id === rid)).filter(Boolean)
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+  const relIds = new Set(related.map(r => r.id));
+  const sameProject = w.project ? _projectWorks(w.project).filter(x => x.id !== id && !relIds.has(x.id)) : [];
+  _modalGen++;
+  document.getElementById('modal-title').textContent = '🏗️ ' + (w.title || 'Отчёт о работе');
+  const files = (w.fileIds || []).map((f, k) => ({ id: f, type: (w.fileTypes || [])[k] || '', name: (w.fileNames || [])[k] || 'Файл' }));
+  const gallery = files.length ? `<div data-gids='${_jsonAttr(files.map(f => f.id))}' data-gtypes='${_jsonAttr(files.map(f => f.type))}' data-gnames='${_jsonAttr(files.map(f => f.name))}' style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
+    ${files.map((f, k) => f.type.startsWith('image/')
+      ? `<img class="mthumb" data-fid="${f.id}" onclick="openGalleryEl(this,${k})" style="width:84px;height:84px;object-fit:cover;border-radius:10px;cursor:pointer;background:#e2e8f0">`
+      : `<div onclick="openGalleryEl(this,${k})" style="width:84px;height:84px;border-radius:10px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:28px;cursor:pointer">${fileEmoji(f.type)}</div>`).join('')}</div>` : '';
+  const relCard = r => {
+    const img = _maintFirstImage(r);
+    return `<div onclick="openMaintView('${r.id}')" class="maint-rel" style="display:flex;gap:10px;align-items:center;padding:8px;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:6px;cursor:pointer;background:#fff">
+      ${img ? `<img class="mthumb" data-fid="${img}" style="width:48px;height:48px;object-fit:cover;border-radius:8px;background:#e2e8f0;flex-shrink:0">`
+        : `<div style="width:48px;height:48px;border-radius:8px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">🏗️</div>`}
+      <div style="flex:1;min-width:0"><div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escHtml(r.title || '')}</div>
+        <div style="font-size:11px;color:#64748b">📅 ${fmtDate(r.date)} · ${maintCatLabel(r.category)}</div>
+        ${r.description ? `<div style="font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escHtml(r.description)}</div>` : ''}</div>
+      <div style="flex-shrink:0">${_maintStatusBadge(r.status)}</div>
+      ${canEdit ? `<button title="Отвязать" onclick="event.stopPropagation();unlinkMaintReport('${id}','${r.id}')" style="background:#fee2e2;color:#dc2626;border:none;border-radius:8px;width:30px;height:30px;cursor:pointer;flex-shrink:0">✕</button>` : ''}</div>`;
+  };
+  document.getElementById('modal-body').innerHTML = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">${_maintStatusBadge(w.status)}${w.project ? _projectBadge(w.project, false) : ''}</div>
+    <div style="font-size:12px;color:#64748b">${maintCatLabel(w.category)} · 📅 ${fmtDate(w.date)}${w.cost ? ' · 💰 ' + Number(w.cost).toLocaleString('ru') + ' ₽' : ''}${w.createdBy ? ' · ✍️ ' + _escHtml(_roleDisplayName(w.createdBy)) : ''}</div>
+    ${w.description ? `<div style="font-size:13px;color:#374151;margin-top:8px;background:#f8fafc;border-radius:6px;padding:8px 10px;border-left:3px solid #2563eb;white-space:pre-wrap">${_escHtml(w.description)}</div>` : ''}
+    ${gallery}
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:14px 0 6px;flex-wrap:wrap">
+      <div style="font-weight:800">🔗 Связанные отчёты (${related.length})</div>
+      ${canEdit ? `<button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="openMaintLinkPicker('${id}')">🔗 Связать с другими отчётами</button>` : ''}
+    </div>
+    ${related.map(relCard).join('') || '<div style="font-size:12px;color:#94a3b8">Связанных отчётов нет. Свяжите этапы одной работы — приёмку материалов, закупку, сами работы, итог — чтобы переходить между ними отсюда.</div>'}
+    ${sameProject.length ? `<div style="font-weight:700;margin:14px 0 6px;font-size:13px">📁 Ещё в проекте «${_escHtml((_project(w.project) || {}).name || '')}» (${sameProject.length})</div>
+      ${sameProject.map(r => `<div onclick="openMaintView('${r.id}')" style="font-size:12px;padding:5px 0;cursor:pointer;color:#2563eb">${fmtDate(r.date)} — ${_escHtml(r.title || '')}</div>`).join('')}` : ''}`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
+    <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
+    ${canEdit ? `<button class="btn btn-primary" onclick="openMaintModal('${id}')">✏️ Редактировать</button>` : ''}</div>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  loadMaintImages();
+}
+
+// Choosing the reports to link: every other work, searchable, several at once.
+let _mlp = null; // { id, q, picked: Set }
+function openMaintLinkPicker(id) {
+  if (!_canEditMaint()) return;
+  const w = getMaintWorks().find(x => x.id === id);
+  if (!w) return;
+  _mlp = { id, q: '', picked: new Set() };
+  _modalGen++;
+  document.getElementById('modal-title').textContent = '🔗 Связать: ' + (w.title || 'отчёт');
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-size:12px;color:#64748b;margin-bottom:8px">Отметьте отчёты по тому же объекту или работе. Связь появится в обоих: из любого из них можно будет перейти в остальные.</div>
+    <input class="form-control" id="mlp-q" placeholder="🔍 Поиск: название, описание, категория, проект, дата…" oninput="_mlp.q=this.value;_mlpRender()" style="margin-bottom:8px">
+    <div id="mlp-list"></div>`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
+    <button class="btn btn-outline" onclick="openMaintView('${id}')">← Назад</button>
+    <button class="btn btn-primary" id="mlp-go" onclick="_mlpConfirm()">🔗 Связать</button></div>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  _mlpRender();
+}
+function _mlpRender() {
+  const el = document.getElementById('mlp-list');
+  if (!el || !_mlp) return;
+  const works = getMaintWorks();
+  const self = works.find(x => x.id === _mlp.id) || {};
+  const linked = new Set(self.relatedIds || []);
+  const q = _mlp.q.trim().toLowerCase();
+  const list = works.filter(w => w.id !== _mlp.id && !linked.has(w.id)).filter(w => !q || [w.title, w.description, maintCatLabel(w.category), (_project(w.project) || {}).name, fmtDate(w.date), w.date]
+    .some(v => String(v || '').toLowerCase().includes(q)))
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).slice(0, 200);
+  el.innerHTML = list.map(w => `<label style="display:flex;gap:10px;align-items:center;padding:8px;border:1px solid ${_mlp.picked.has(w.id) ? '#2563eb' : '#e2e8f0'};border-radius:10px;margin-bottom:6px;cursor:pointer;background:${_mlp.picked.has(w.id) ? '#eff6ff' : '#fff'}">
+      <input type="checkbox" ${_mlp.picked.has(w.id) ? 'checked' : ''} onchange="_mlpToggle('${w.id}',this.checked)" style="width:18px;height:18px;flex-shrink:0">
+      <div style="flex:1;min-width:0"><div style="font-weight:700;font-size:13px">${_escHtml(w.title || '')}</div>
+        <div style="font-size:11px;color:#64748b">📅 ${fmtDate(w.date)} · ${maintCatLabel(w.category)}${w.project && _project(w.project) ? ' · 📁 ' + _escHtml(_project(w.project).name) : ''}</div></div>
+      <div style="flex-shrink:0">${_maintStatusBadge(w.status)}</div></label>`).join('')
+    || `<div style="text-align:center;padding:24px;color:#94a3b8">${q ? 'Ничего не найдено' : 'Других отчётов нет'}</div>`;
+  const go = document.getElementById('mlp-go');
+  if (go) go.textContent = _mlp.picked.size ? `🔗 Связать (${_mlp.picked.size})` : '🔗 Связать';
+}
+function _mlpToggle(wid, on) {
+  if (!_mlp) return;
+  if (on) _mlp.picked.add(wid); else _mlp.picked.delete(wid);
+  _mlpRender();
+}
+async function _mlpConfirm() {
+  if (!_mlp) return;
+  if (!_mlp.picked.size) { alert('Отметьте хотя бы один отчёт'); return; }
+  const id = _mlp.id;
+  await linkMaintReports(id, Array.from(_mlp.picked));
+  _mlp = null;
+  openMaintView(id);
+}
+// Both ends of every link, in one save.
+async function linkMaintReports(id, others) {
+  if (!_canEditMaint()) return;
+  const add = (arr, v) => Array.from(new Set((arr || []).concat(v)));
+  const set = new Set(others.filter(o => o !== id));
+  setLS('maint_works', getMaintWorks().map(w =>
+    w.id === id ? Object.assign({}, w, { relatedIds: add(w.relatedIds, Array.from(set)) })
+    : set.has(w.id) ? Object.assign({}, w, { relatedIds: add(w.relatedIds, [id]) }) : w));
+  clearTimeout(_saveTimer);
+  await _flushState();
+  render();
+  _showToast('🔗 Отчёты связаны', true);
+}
+async function unlinkMaintReport(id, other) {
+  if (!_canEditMaint()) return;
+  if (!confirm('Отвязать этот отчёт? Связь пропадёт в обоих отчётах (сами отчёты останутся).')) return;
+  setLS('maint_works', getMaintWorks().map(w =>
+    w.id === id ? Object.assign({}, w, { relatedIds: (w.relatedIds || []).filter(x => x !== other) })
+    : w.id === other ? Object.assign({}, w, { relatedIds: (w.relatedIds || []).filter(x => x !== id) }) : w));
+  clearTimeout(_saveTimer);
+  await _flushState();
+  render();
+  openMaintView(id);
+}
+
+// ---------- reimbursing an employee's receipts ----------
+// An employee pays for something out of their own pocket: the receipt goes in as an expense
+// marked `reimburse: { employee }` — it waits, approved as usual, to be paid back. When the
+// money is handed over against a signed receipt or act, that payout (a "settlement", kept in
+// appdata/finance_ledger as finance_settlements) gathers the receipts it covers and marks them
+// paid, each saying which payout closed it. The payout itself is NOT another expense: the
+// receipts are the expenses, and counting the cash handed over as well would count the same
+// money twice.
+const getSettlements = () => getLS('finance_settlements') || [];
+const _settlement = id => (id ? getSettlements().find(s => s.id === id) || null : null);
+const _SETTLE_ROLES = ['owner', 'accountant'];
+const _txFullyApproved = (lk, t) => FINANCE_LEDGERS[lk].approvers.every(r => (t.approvals || {})[r] && t.approvals[r].approved);
+// Receipts still to be paid back in a ledger.
+const _openReceipts = lk => getBudgetTx(lk).filter(t => t.type === 'expense' && t.reimburse && !t.reimburse.settlementId
+  && t.status !== 'rejected' && !(t.accountantConfirm && t.accountantConfirm.paid));
+function _settleNextNo(date) {
+  const y = String(date || _todayLocal()).slice(0, 4);
+  const max = getSettlements().reduce((m, s) => { const mm = String(s.no || '').match(new RegExp('^Р-' + y + '-(\\d+)$')); return mm ? Math.max(m, Number(mm[1])) : m; }, 0);
+  return `Р-${y}-${String(max + 1).padStart(3, '0')}`;
+}
+// Names to offer: the warehouse's people, and whoever was reimbursed before.
+function _reimburseNames() {
+  const names = new Set(getWhEmployees().filter(e => !e.archived).map(e => e.name).filter(Boolean));
+  Object.keys(FINANCE_LEDGERS).forEach(lk => getBudgetTx(lk).forEach(t => { if (t.reimburse && t.reimburse.employee) names.add(t.reimburse.employee); }));
+  return Array.from(names).sort((a, b) => a.localeCompare(b, 'ru'));
+}
+const _sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+
+// On an expense's card: waiting to be paid back, or closed by which payout.
+function _reimburseBadge(t) {
+  if (!t.reimburse) return '';
+  const who = _escHtml(t.reimburse.employee || '');
+  const s = _settlement(t.reimburse.settlementId);
+  if (s) return `<span class="badge" onclick="event.stopPropagation();openSettlement('${s.id}')" title="Открыть выплату" style="font-size:10px;background:#dcfce7;color:#166534;cursor:pointer">🧾 Закрыт распиской № ${_escHtml(s.no)} от ${fmtDate(s.date)} — ${_escHtml(s.employee)}</span>`;
+  if (t.accountantConfirm && t.accountantConfirm.paid) return `<span class="badge" style="font-size:10px;background:#dcfce7;color:#166534">💵 Возмещено: ${who}</span>`;
+  return `<span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e">💵 К возмещению: ${who}</span>`;
+}
+
+// The same, as plain text — for the register and the month report.
+function _reimburseText(t) {
+  if (!t.reimburse) return '';
+  const s = _settlement(t.reimburse.settlementId);
+  if (s) return 'Закрыт распиской № ' + s.no + ' от ' + fmtDate(s.date) + ' — ' + s.employee;
+  return (t.accountantConfirm && t.accountantConfirm.paid ? 'Возмещено: ' : 'К возмещению: ') + (t.reimburse.employee || '');
+}
+function _txReportTags(t) {
+  if (t.type !== 'expense') return '';
+  const p = _project(t.project);
+  return [p ? 'Проект: ' + p.name : '', t.costType ? _costTypeLabel(t.costType).replace(/^\S+\s/, '') : '', _reimburseText(t)].filter(Boolean).join(' · ');
+}
+
+let _stl = null; // the payout form: { lk, picked: Set, employee, all }
+function openSettlementForm(lk, employee, txId) {
+  if (!_SETTLE_ROLES.includes(currentUser)) return;
+  const open = _openReceipts(lk);
+  const names = Array.from(new Set(open.map(t => t.reimburse.employee).filter(Boolean)));
+  // Opened from a receipt's card: that receipt ticked, and its employee.
+  const fromTx = txId ? open.find(t => t.id === txId) : null;
+  _stl = { lk, picked: new Set(fromTx ? [txId] : []), employee: employee || (fromTx && fromTx.reimburse.employee) || (names.length === 1 ? names[0] : ''), all: false };
+  pendingFiles = [];
+  _modalGen++;
+  document.getElementById('modal-title').textContent = '💵 Выплата по чекам — ' + FINANCE_LEDGERS[lk].label;
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-size:12px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:10px">Деньги, выданные сотруднику за чеки, которые он оплатил сам. Отмеченные чеки закрываются этой распиской и считаются оплаченными. Сама выплата отдельным расходом не учитывается — иначе одни и те же деньги посчитались бы дважды.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Сотрудник *</label><input class="form-control" id="stl-emp" list="stl-emp-list" value="${_escHtml(_stl.employee)}" placeholder="ФИО" oninput="_stl.employee=this.value;_stlRender()">
+        <datalist id="stl-emp-list">${_reimburseNames().map(n => `<option value="${_escHtml(n)}">`).join('')}</datalist></div>
+      <div class="form-group"><label>Дата выдачи *</label><input type="date" class="form-control" id="stl-date" value="${_todayLocal()}"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Сумма по расписке / акту, ₽ *</label><input type="number" min="0" step="0.01" class="form-control" id="stl-amount" oninput="_stlRender()"></div>
+      <div class="form-group"><label>Номер</label><input class="form-control" value="${_settleNextNo()}" disabled></div>
+    </div>
+    <div class="form-group"><label>📎 Расписка / акт выдачи${currentUser === 'owner' ? ' <span style="font-weight:400;color:#6b7280">— для вас необязательно</span>' : ' *'}</label>
+      <input type="file" id="stl-file" accept="image/*,application/pdf" multiple style="display:none" onchange="onFilePick(event)">
+      <button type="button" class="btn btn-outline" style="width:100%;justify-content:center" onclick="document.getElementById('stl-file').click()">📂 Загрузить скан или фото</button>
+      <div id="pending-list"></div></div>
+    <div class="form-group"><label>Примечание</label><input class="form-control" id="stl-note"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap">
+      <div style="font-weight:800">🧾 Чеки к выплате</div>
+      <label style="font-size:12px;display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" onchange="_stl.all=this.checked;_stlRender()"> чеки всех сотрудников</label>
+    </div>
+    <div id="stl-list"></div>
+    <div id="stl-sum" style="position:sticky;bottom:0;background:#fff;padding-top:6px"></div>`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
+    <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" id="stl-save" onclick="saveSettlement()">💾 Сохранить выплату</button></div>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  _stlRender();
+}
+function _stlRender() {
+  const el = document.getElementById('stl-list');
+  if (!el || !_stl) return;
+  const open = _openReceipts(_stl.lk).filter(t => _stl.all || !_stl.employee.trim() || _sameName(t.reimburse.employee, _stl.employee) || _stl.picked.has(t.id))
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+  el.innerHTML = open.map(t => {
+    const ok = _txFullyApproved(_stl.lk, t);
+    const on = _stl.picked.has(t.id);
+    return `<label style="display:flex;gap:10px;align-items:center;padding:8px;border:1px solid ${on ? '#16a34a' : '#e2e8f0'};border-radius:10px;margin-bottom:6px;background:${on ? '#f0fdf4' : '#fff'};${ok ? 'cursor:pointer' : 'opacity:.6'}">
+      <input type="checkbox" ${on ? 'checked' : ''} ${ok ? '' : 'disabled'} onchange="_stlToggle('${t.id}',this.checked)" style="width:18px;height:18px;flex-shrink:0">
+      <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px">${_escHtml(t.vendor || '')}</div>
+        <div style="font-size:11px;color:#64748b">${fmtDate(t.date)} · 💵 ${_escHtml(t.reimburse.employee || '')}${t.notes ? ' · ' + _escHtml(String(t.notes).slice(0, 50)) : ''}${ok ? '' : ' · <b style="color:#b45309">ещё не согласован</b>'}</div>
+        ${_txAttachmentsHtml(t)}</div>
+      <div style="font-weight:700;white-space:nowrap">${_rubShort(t.amount)}</div></label>`;
+  }).join('') || `<div style="text-align:center;padding:18px;color:#94a3b8;font-size:13px">${_stl.employee.trim() && !_stl.all ? 'У этого сотрудника нет чеков, ждущих возмещения' : 'Чеков, ждущих возмещения, нет'} — их отмечают в форме расхода: «💵 Оплачено сотрудником — к возмещению».</div>`;
+  const picked = getBudgetTx(_stl.lk).filter(t => _stl.picked.has(t.id));
+  const sum = Math.round(picked.reduce((s, t) => s + (Number(t.amount) || 0), 0) * 100) / 100;
+  const amount = Number((document.getElementById('stl-amount') || {}).value) || 0;
+  const diff = Math.round((amount - sum) * 100) / 100;
+  const sumEl = document.getElementById('stl-sum');
+  if (sumEl) sumEl.innerHTML = `<div style="border-top:2px solid #1e293b;padding:8px 2px;font-size:13px;display:flex;gap:6px 16px;flex-wrap:wrap">
+    <span>Выбрано чеков: <b>${picked.length}</b> на сумму <b>${_rubShort(sum)}</b></span>
+    <span>Сумма расписки: <b>${_rubShort(amount)}</b></span>
+    <span style="font-weight:700;color:${!amount ? '#64748b' : diff === 0 ? '#15803d' : '#b45309'}">${!amount ? '' : diff === 0 ? '✅ Сходится' : 'Разница: ' + (diff > 0 ? '+' : '−') + _rubShort(Math.abs(diff))}</span></div>`;
+}
+function _stlToggle(id, on) {
+  if (!_stl) return;
+  if (on) _stl.picked.add(id); else _stl.picked.delete(id);
+  _stlRender();
+}
+async function saveSettlement() { return _onceAtATime('settlement', _saveSettlementInner); }
+async function _saveSettlementInner() {
+  if (!_stl || !_SETTLE_ROLES.includes(currentUser)) return;
+  const lk = _stl.lk;
+  const v = id => ((document.getElementById(id) || {}).value || '').trim();
+  const employee = v('stl-emp'), date = v('stl-date'), note = v('stl-note');
+  const amount = Math.round((Number(v('stl-amount')) || 0) * 100) / 100;
+  if (!employee) { alert('Укажите сотрудника, которому выдаются деньги'); return; }
+  if (!date) { alert('Укажите дату выдачи'); return; }
+  if (!(amount > 0)) { alert('Укажите сумму по расписке / акту'); return; }
+  if (!_stl.picked.size) { alert('Отметьте чеки, которые закрывает эта выплата'); return; }
+  if (_filesStillProcessing()) { alert('⏳ Файлы ещё обрабатываются — подождите пару секунд'); return; }
+  const picked = pendingFiles.slice();
+  if (!picked.length && currentUser !== 'owner') { alert('📎 Загрузите скан или фото расписки / акта выдачи'); return; }
+  if (date.slice(0, 7) < _currentMonthKey() && !_ownerMayWriteMonth(lk, date.slice(0, 7))) {
+    alert('⛔ Этот месяц уже закрыт — выплату можно провести датой текущего месяца.'); return;
+  }
+  await _syncBeforeDecision();
+  const now = getBudgetTx(lk);
+  const receipts = now.filter(t => _stl.picked.has(t.id));
+  const gone = Array.from(_stl.picked).filter(id => !receipts.some(t => t.id === id));
+  const notOpen = receipts.filter(t => !(t.reimburse && !t.reimburse.settlementId && t.status !== 'rejected' && !(t.accountantConfirm && t.accountantConfirm.paid) && _txFullyApproved(lk, t)));
+  if (gone.length || notOpen.length) {
+    alert('Пока форма была открыта, часть чеков изменилась (удалены, оплачены, отклонены или согласование отозвано):\n'
+      + notOpen.map(t => '• ' + (t.vendor || '') + ' — ' + _rubShort(t.amount)).join('\n') + '\n\nОтметьте чеки заново.');
+    notOpen.forEach(t => _stl.picked.delete(t.id)); gone.forEach(id => _stl.picked.delete(id));
+    _stlRender(); return;
+  }
+  const sum = Math.round(receipts.reduce((s, t) => s + (Number(t.amount) || 0), 0) * 100) / 100;
+  if (sum !== amount && !confirm(`Сумма расписки (${_rubShort(amount)}) не совпадает с суммой чеков (${_rubShort(sum)}) — разница ${_rubShort(Math.abs(amount - sum))}.\n\nСохранить выплату так?`)) return;
+  const btn = document.getElementById('stl-save');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Сохраняем…'; }
+  const fileIds = [], fileNames = [], fileTypes = [];
+  for (let k = 0; k < picked.length; k++) {
+    const f = picked[k];
+    fileIds.push(await dbSave({ name: f.name, type: f.type, size: f.size, data: f.data }, k + 1, picked.length));
+    fileNames.push(f.name); fileTypes.push(f.type);
+  }
+  const s = { id: _newTxId(), no: _settleNextNo(date), ledger: lk, date, employee, amount, receiptIds: receipts.map(t => t.id),
+    fileIds, fileNames, fileTypes, note, createdBy: currentUser, createdAt: new Date().toISOString() };
+  // Noon UTC: the paid date stays the day of the payout in Russia, and with it the month.
+  const paidAt = date + 'T12:00:00.000Z';
+  const ids = new Set(s.receiptIds);
+  setBudgetTx(lk, getBudgetTx(lk).map(t => !ids.has(t.id) ? t : Object.assign({}, t, {
+    reimburse: Object.assign({}, t.reimburse, { settlementId: s.id }),
+    accountantConfirm: { paid: true, date: paidAt, settlementId: s.id, by: currentUser },
+  })));
+  setLS('finance_settlements', getSettlements().concat([s]));
+  clearTimeout(_saveTimer);
+  const ok = await _flushState();
+  _stl = null;
+  closeModal(true);
+  render();
+  if (!ok) { alert('⚠️ Нет связи с сервером — выплата сохранена на этом устройстве и уйдёт, как только связь появится.'); return; }
+  _showToast(`✅ Выплата ${s.no}: закрыто чеков — ${receipts.length}`, true);
+}
+
+function openSettlements(lk) {
+  if (!_SETTLE_ROLES.includes(currentUser)) return;
+  const list = getSettlements().filter(s => s.ledger === lk).sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.no).localeCompare(String(a.no)));
+  const openN = _openReceipts(lk).length;
+  _modalGen++;
+  document.getElementById('modal-title').textContent = '💵 Выплаты по чекам — ' + FINANCE_LEDGERS[lk].label;
+  document.getElementById('modal-body').innerHTML = `
+    ${openN ? `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13px;color:#92400e">💵 Ждут возмещения: <b>${openN}</b> чек(ов) на ${_rubShort(_openReceipts(lk).reduce((s, t) => s + (Number(t.amount) || 0), 0))}</div>` : ''}
+    ${list.map(s => { const sum = _settlementReceiptsSum(s); const diff = Math.round((s.amount - sum) * 100) / 100; return `<div onclick="openSettlement('${s.id}')" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:8px;cursor:pointer">
+      <div style="min-width:0"><div style="font-weight:700">🧾 № ${_escHtml(s.no)} · ${fmtDate(s.date)}</div>
+        <div style="font-size:12px;color:#64748b">${_escHtml(s.employee)} · чеков: ${(s.receiptIds || []).length}${diff ? ` · <b style="color:#b45309">разница ${_rubShort(diff)}</b>` : ''}</div></div>
+      <div style="font-weight:800;white-space:nowrap">${_rubShort(s.amount)}</div></div>`; }).join('') || '<div style="text-align:center;padding:24px;color:#94a3b8">Выплат пока не было</div>'}`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
+    <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
+    <button class="btn btn-primary" onclick="openSettlementForm('${lk}')">➕ Новая выплата</button></div>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+const _settlementReceipts = s => getBudgetTx(s.ledger).filter(t => (s.receiptIds || []).includes(t.id));
+const _settlementReceiptsSum = s => Math.round(_settlementReceipts(s).reduce((a, t) => a + (Number(t.amount) || 0), 0) * 100) / 100;
+
+function openSettlement(id) {
+  const s = _settlement(id);
+  if (!s) { _showToast('Выплата не найдена', false); return; }
+  const receipts = _settlementReceipts(s);
+  const sum = _settlementReceiptsSum(s), diff = Math.round((s.amount - sum) * 100) / 100;
+  const files = (s.fileIds || []).map((f, k) => ({ id: f, type: (s.fileTypes || [])[k] || '', name: (s.fileNames || [])[k] || 'Документ' }));
+  const canUndo = _SETTLE_ROLES.includes(currentUser) && !(s.date.slice(0, 7) < _currentMonthKey() && !_ownerMayWriteMonth(s.ledger, s.date.slice(0, 7)));
+  _modalGen++;
+  document.getElementById('modal-title').textContent = '🧾 Выплата № ' + s.no;
+  document.getElementById('modal-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px">
+      <div class="stat-card"><div class="stat-value" style="font-size:16px">${_escHtml(s.employee)}</div><div class="stat-label">Получатель · ${fmtDate(s.date)}</div></div>
+      <div class="stat-card"><div class="stat-value" style="font-size:16px">${_rubShort(s.amount)}</div><div class="stat-label">По расписке</div></div>
+      <div class="stat-card"><div class="stat-value" style="font-size:16px;color:${diff ? '#b45309' : '#15803d'}">${diff ? (diff > 0 ? '+' : '−') + _rubShort(Math.abs(diff)) : '✅ 0'}</div><div class="stat-label">Разница с чеками</div></div>
+    </div>
+    <div style="font-size:12px;color:#64748b;margin-bottom:8px">${_escHtml(FINANCE_LEDGERS[s.ledger].label)}${s.note ? ' · ' + _escHtml(s.note) : ''}${s.createdBy ? ' · ✍️ ' + _escHtml(_roleDisplayName(s.createdBy)) : ''}</div>
+    ${files.length ? `<div data-gids='${_jsonAttr(files.map(f => f.id))}' data-gtypes='${_jsonAttr(files.map(f => f.type))}' data-gnames='${_jsonAttr(files.map(f => f.name))}' style="margin-bottom:10px">
+      <a href="#" onclick="event.preventDefault();openGalleryEl(this,0)" style="font-size:13px;color:#2563eb;text-decoration:none">📎 Расписка / акт${files.length > 1 ? ` (${files.length})` : ''}</a></div>` : '<div style="font-size:12px;color:#94a3b8;margin-bottom:10px">📄 Без скана расписки — внесено владельцем</div>'}
+    <div style="font-weight:800;margin-bottom:6px">🧾 Закрытые чеки (${receipts.length}) — ${_rubShort(sum)}</div>
+    ${receipts.map(t => `<div style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9">
+      <div style="min-width:0"><div style="font-weight:600;font-size:13px">${_escHtml(t.vendor || '')}</div>
+        <div style="font-size:11px;color:#64748b">${fmtDate(t.date)}${t.notes ? ' · ' + _escHtml(String(t.notes).slice(0, 60)) : ''}${t.project && _project(t.project) ? ' · 📁 ' + _escHtml(_project(t.project).name) : ''}</div>
+        ${_txAttachmentsHtml(t)}</div>
+      <div style="font-weight:700;white-space:nowrap">${_rubShort(t.amount)}</div></div>`).join('')}`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
+    ${_SETTLE_ROLES.includes(currentUser) ? `<button class="btn btn-outline" onclick="openSettlements('${s.ledger}')">← Все выплаты</button>` : ''}
+    ${canUndo ? `<button class="btn btn-outline" style="color:#dc2626" onclick="undoSettlement('${s.id}')">↩️ Отменить выплату</button>` : ''}
+    <button class="btn btn-primary" onclick="closeModal()">Готово</button></div>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+// Undone, its receipts are waiting to be paid back again, and its document is deleted.
+async function undoSettlement(id) {
+  const s = _settlement(id);
+  if (!s || !_SETTLE_ROLES.includes(currentUser)) return;
+  if (!confirm(`Отменить выплату № ${s.no}? Её чеки снова будут ждать возмещения, скан расписки будет удалён.`)) return;
+  setBudgetTx(s.ledger, getBudgetTx(s.ledger).map(t => (t.reimburse && t.reimburse.settlementId === id) ? Object.assign({}, t, {
+    reimburse: { employee: t.reimburse.employee },
+    accountantConfirm: (t.accountantConfirm && t.accountantConfirm.settlementId === id) ? { paid: false } : t.accountantConfirm,
+  }) : t));
+  setLS('finance_settlements', getSettlements().filter(x => x.id !== id));
+  clearTimeout(_saveTimer);
+  if (!(await _flushState())) { alert('⚠️ Нет связи с сервером — отмена уйдёт, как только связь появится.'); render(); return; }
+  for (const f of (s.fileIds || [])) { try { await dbDel(f); } catch (e) {} }
+  closeModal(true);
+  render();
+  _showToast(`↩️ Выплата ${s.no} отменена`, true);
+}
 const getBudgetFunds = () => getLS('finance_funds') || [];
 
 // Приход и Возврат средств are both income-side entries, everywhere the app tells expense
@@ -12905,7 +13474,11 @@ function renderBudget() {
   const exportBtn = canExportRegister ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px;margin-left:auto" onclick="exportBudgetRegisterCsv('${budgetLedger}')">📊 Реестр (Excel)</button>` : '';
   // The owner's formatted month report across all the ledgers (see openBudgetReportModal).
   const reportBtn = currentUser === 'owner' ? `<button class="btn btn-outline" style="font-size:12px;padding:8px 12px${exportBtn ? '' : ';margin-left:auto'}" onclick="openBudgetReportModal()">📄 Отчёт за месяц</button>` : '';
-  const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0;align-items:center">${tabs}${exportBtn}${reportBtn}</div>`;
+  // Projects for whoever sees the budget; the payouts for receipts for those who pay.
+  const projectsBtn = `<button class="btn btn-outline" id="budget-projects-btn" style="font-size:12px;padding:8px 12px${exportBtn || reportBtn ? '' : ';margin-left:auto'}" onclick="openProjects()">📁 Проекты</button>`;
+  const openRc = _SETTLE_ROLES.includes(currentUser) ? _openReceipts(budgetLedger).length : 0;
+  const settleBtn = _SETTLE_ROLES.includes(currentUser) ? `<button class="btn btn-outline" id="budget-settle-btn" style="font-size:12px;padding:8px 12px" onclick="openSettlements('${budgetLedger}')">💵 Выплаты по чекам${openRc ? ` <span class="badge" style="background:#f59e0b;color:#fff;font-size:10px">${openRc}</span>` : ''}</button>` : '';
+  const tabBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;background:white;padding:10px 14px;border-radius:12px;border:1px solid #e2e8f0;align-items:center">${tabs}${exportBtn}${reportBtn}${projectsBtn}${settleBtn}</div>`;
 
   const releaseBar = isOwner ? (getBudgetReleased()
     ? `<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#166534;font-weight:600">✅ Опубликовано — доступно администратору, Александру, бухгалтеру и кухне</div>`
@@ -12991,6 +13564,9 @@ function _registerColumns(cfg) {
   cols.push({ id:'paid',     label:'Оплачено',    brief:true  });
   cols.push({ id:'paidDate', label:'Дата оплаты', brief:false });
   cols.push({ id:'by',       label:'Кто добавил', brief:false });
+  cols.push({ id:'project',  label:'Проект',      brief:false });
+  cols.push({ id:'costType', label:'Статья',      brief:false });
+  cols.push({ id:'reimburse', label:'Возмещение сотруднику', brief:false });
   cols.push({ id:'notes',    label:'Примечание',  brief:false });
   return cols;
 }
@@ -13012,6 +13588,9 @@ function _registerCellValue(col, t) {
     case 'paidDate': return paid ? _fmtApprovalWhen(t.accountantConfirm.date) : '';
     case 'by':       return _roleDisplayName(t.createdBy || '') || '';
     case 'notes':    return t.notes || '';
+    case 'project':  return (_project(t.project) || {}).name || '';
+    case 'costType': return _costTypeLabel(t.costType).replace(/^\S+\s/, '');
+    case 'reimburse': return _reimburseText(t);
     default: {
       const a = (t.approvals || {})[col.role];
       return a && a.approved ? ('Да · ' + _fmtApprovalWhen(a.date)) : 'Нет';
@@ -13249,7 +13828,7 @@ function _buildBudgetReportHTML(y, m, ledgerKeys, detailed) {
         <thead><tr><th>Дата</th><th>Поставщик / назначение</th>${fundCol ? '<th>Фонд</th>' : ''}<th class="num">Сумма</th><th>Статус</th><th>Внёс</th></tr></thead>
         <tbody>${d.expenses.map(t => { const s = _budgetReportStatus(t, d); return `<tr class="${t.status === 'rejected' ? 'rej' : ''}">
           <td class="nowrap">${fmtDate(t.date)}</td>
-          <td>${esc(t.vendor || '')}${t.notes ? `<div class="small">${esc(t.notes)}</div>` : ''}</td>
+          <td>${esc(t.vendor || '')}${t.notes ? `<div class="small">${esc(t.notes)}</div>` : ''}${_txReportTags(t) ? `<div class="small">${esc(_txReportTags(t))}</div>` : ''}</td>
           ${fundCol ? `<td>${esc(t.fund || '')}</td>` : ''}${num(t.amount)}
           <td><span class="st ${s.cls}">${esc(s.text)}</span></td>
           <td class="small">${esc(_roleDisplayName(t.createdBy || '') || '')}</td></tr>`; }).join('')}</tbody>
@@ -13760,6 +14339,21 @@ function _renderBudgetLedger(ledgerKey) {
   return summaryCards + fundBreakdown + kitchenPresepBar + maintPreaugBar + personalPreaugBar + acctSortToggle + addBtn + rows;
 }
 
+// An expense's project (with what the project has cost in all), kind of cost, and its
+// reimbursement state, as badges.
+function _txTagBadges(t) {
+  if (t.type !== 'expense') return '';
+  return _projectBadge(t.project, true)
+    + (t.costType ? `<span class="badge" style="font-size:10px;background:#f1f5f9;color:#334155">${_costTypeLabel(t.costType)}</span>` : '')
+    + _reimburseBadge(t);
+}
+// The pay button of a card: a receipt to pay back to an employee is paid by a payout.
+function _txPayButton(ledgerKey, t, payCall) {
+  return t.reimburse && !t.reimburse.settlementId
+    ? `<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="openSettlementForm('${ledgerKey}',null,'${t.id}')">💵 Выплатить по расписке</button>`
+    : `<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="${payCall}">💳 Отметить оплаченным</button>`;
+}
+
 function _renderBudgetTxCard(ledgerKey, t, cfg) {
   const isIncome = t.type === 'income' || t.type === 'refund';
   const typeLabel = t.type==='income'?'Приход':t.type==='refund'?'Возврат':'Расход';
@@ -13810,7 +14404,7 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
       ${isMyRoleRequired && notPaidYet && myApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#d97706" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">↩️ Отменить своё согласование</button>`:''}
       ${canActForAlexander && !alexApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="approveBudgetTx('${ledgerKey}','${t.id}','alexander')">✅ Согласовать за Александра</button>`:''}
       ${canActForAlexander && alexApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#d97706" onclick="approveBudgetTx('${ledgerKey}','${t.id}','alexander')">↩️ Отменить согласование Александра</button>`:''}
-      ${canConfirmPaid || canConfirmPaidAsOwner?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="confirmBudgetPaid('${ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>
+      ${canConfirmPaid || canConfirmPaidAsOwner?`${_txPayButton(ledgerKey, t, `confirmBudgetPaid('${ledgerKey}','${t.id}')`)}
         <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="declineBudgetPaid('${ledgerKey}','${t.id}')">❌ Отказать в оплате</button>`:''}
     </div>`;
   }
@@ -13861,7 +14455,7 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
         <div style="font-weight:600;font-size:14px">${t.vendor||''}</div>
         ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
         ${_txAttachmentsHtml(t)}
-        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${monthBadge}${statusBadge}${approvalBadges}</div>
+        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${_txTagBadges(t)}${monthBadge}${statusBadge}${approvalBadges}</div>
       </div>
       <div style="font-weight:700;font-size:16px;color:${amtColor};flex-shrink:0">${amtSign}₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
     </div>
@@ -13938,6 +14532,7 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
     </div>
     <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="bt-amount" value="${t.amount||''}" min="0" step="0.01" ${window._budgetTxReadOnly?'disabled':''}></div>
     ${cfg.useFunds ? `<div class="form-group"><label>Фонд *</label><select class="form-control" id="bt-fund" ${window._budgetTxReadOnly?'disabled':''}><option value="">— Выберите —</option>${fundOpts}</select></div>` : ''}
+    ${_budgetExpenseExtraHtml(t, type)}
     <div class="form-group">
       <label>📎 Документы (чек/счёт)${currentUser === 'owner' ? ' <span style="font-weight:400;color:#6b7280">— для вас необязательно</span>' : ''}</label>
       ${window._budgetTxReadOnly ? '' : '<div style="font-size:11px;color:#6b7280;margin:-2px 0 6px">Если чек на нескольких листах или фото — выберите их все сразу, либо нажмите «Добавить» несколько раз.</div>'}
@@ -13949,7 +14544,8 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
     </div>
     <div class="form-group"><label>Примечание</label><textarea class="form-control" id="bt-notes" ${window._budgetTxReadOnly?'disabled':''}>${t.notes||''}</textarea></div>`;
   document.getElementById('modal-footer').innerHTML = window._budgetTxReadOnly
-    ? `<button class="btn btn-outline" onclick="closeModal()">Закрыть</button>`
+    ? `<button class="btn btn-outline" onclick="closeModal()">Закрыть</button>${currentUser === 'owner' && type === 'expense' ? `
+    <button class="btn btn-primary" id="bt-tags-btn" onclick="_saveTxTags('${ledgerKey}','${id}')">💾 Сохранить проект и статью</button>` : ''}`
     : `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
     <button class="btn btn-primary" id="bt-save-btn" onclick="saveBudgetTx('${ledgerKey}')">💾 Сохранить</button>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
@@ -13979,11 +14575,59 @@ function _removeBudgetSavedFile(i) {
   if (el) el.innerHTML = _renderBudgetSavedFiles();
 }
 
+// An expense's project, its kind of cost, and whether an employee paid it out of their own
+// pocket and is to be paid back (see openSettlementForm). A receipt a payout has closed says
+// which, and keeps its amount until that payout is undone. In a closed month the owner may
+// still file an expense under a project — that sorts it, it changes nothing that was paid.
+function _budgetExpenseExtraHtml(t, type) {
+  const ro = !!window._budgetTxReadOnly;
+  const tagsRo = ro && currentUser !== 'owner';
+  const settled = t.reimburse && t.reimburse.settlementId ? _settlement(t.reimburse.settlementId) : null;
+  const emp = (t.reimburse && t.reimburse.employee) || '';
+  const reimb = settled
+    ? `<div style="font-size:12px;color:#166534">🧾 Чек закрыт распиской № ${_escHtml(settled.no)} от ${fmtDate(settled.date)} — ${_escHtml(settled.employee)}. Сумму, поставщика, дату и фонд не изменить, пока выплата не отменена.</div>`
+    : `<label style="display:flex;gap:8px;align-items:center;cursor:pointer;margin:0;font-weight:600"><input type="checkbox" id="bt-reimb" ${t.reimburse ? 'checked' : ''} ${ro ? 'disabled' : ''} onchange="document.getElementById('bt-reimb-emp-wrap').hidden=!this.checked" style="width:18px;height:18px"> 💵 Оплачено сотрудником из своих денег — к возмещению</label>
+      <div id="bt-reimb-emp-wrap" ${t.reimburse ? '' : 'hidden'} style="margin-top:6px">
+        <input class="form-control" id="bt-reimb-emp" list="bt-reimb-list" autocomplete="off" placeholder="ФИО сотрудника, которому вернуть деньги" value="${_escHtml(emp)}" ${ro ? 'disabled' : ''}>
+        <datalist id="bt-reimb-list">${_reimburseNames().map(n => `<option value="${_escHtml(n)}">`).join('')}</datalist>
+        <div style="font-size:11px;color:#92400e;margin-top:4px">Чек пройдёт согласование как обычно, а оплачен будет выплатой сотруднику по расписке — «💵 Выплаты по чекам».</div>
+      </div>`;
+  return `<div id="bt-expense-extra" ${type === 'expense' ? '' : 'hidden'}>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>📁 Проект</label>${_projectSelectHtml('bt-project', t.project || '', tagsRo)}</div>
+      <div class="form-group"><label>Статья расхода</label><select class="form-control" id="bt-costtype" ${tagsRo ? 'disabled' : ''}>
+        <option value="">— не указана —</option>${COST_TYPES.map(c => `<option value="${c.id}" ${t.costType === c.id ? 'selected' : ''}>${c.label}</option>`).join('')}</select></div>
+    </div>
+    <div class="form-group" style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 10px">${reimb}</div>
+  </div>`;
+}
+// The owner's project and kind of cost on an expense of a closed month — nothing else changes.
+async function _saveTxTags(ledgerKey, id) {
+  if (currentUser !== 'owner') return;
+  const projEl = document.getElementById('bt-project');
+  const project = projEl && projEl.value && projEl.value !== '__new' ? projEl.value : '';
+  const costType = (document.getElementById('bt-costtype') || {}).value || '';
+  setBudgetTx(ledgerKey, getBudgetTx(ledgerKey).map(t => {
+    if (t.id !== id) return t;
+    const u = Object.assign({}, t);
+    if (project) u.project = project; else delete u.project;
+    if (costType) u.costType = costType; else delete u.costType;
+    return u;
+  }));
+  clearTimeout(_saveTimer);
+  const ok = await _flushState();
+  closeModal(true);
+  render();
+  _showToast(ok ? '✅ Сохранено' : '⚠️ Нет связи — сохранится, когда связь появится', ok);
+}
+
 function _toggleBudgetVendorField(ledgerKey) {
   const type = document.getElementById('bt-type').value;
   const group = document.getElementById('bt-vendor-group');
   if (!group) return;
   group.hidden = type === 'income';
+  const extra = document.getElementById('bt-expense-extra');
+  if (extra) extra.hidden = type !== 'expense';
   const label = document.getElementById('bt-vendor-label');
   if (label) label.textContent = 'Наименование / поставщик *';
 }
@@ -14012,6 +14656,17 @@ async function saveBudgetTx(ledgerKey) {
   }
 }
 
+// A receipt closed by a payout: its amount, vendor, date and fund are what the payout paid
+// for, so they stay until the payout is undone. Says so and answers true when the form would
+// change one of them.
+function _settledChangeBlocked(cur, type, vendor, amount, date, fund) {
+  if (!cur || !cur.reimburse || !cur.reimburse.settlementId) return false;
+  if (type === 'expense' && cur.amount === Number(amount) && cur.vendor === vendor && cur.date === date && (cur.fund || null) === (fund || null)) return false;
+  const sx = _settlement(cur.reimburse.settlementId);
+  alert('🧾 Этот чек закрыт выплатой' + (sx ? ' № ' + sx.no + ' от ' + fmtDate(sx.date) : '') + ' — сумму, поставщика, дату и фонд изменить нельзя.\n\nЕсли в чеке ошибка — сначала отмените выплату («💵 Выплаты по чекам»), исправьте чек и проведите выплату снова.');
+  return true;
+}
+
 async function _saveBudgetTxInner(ledgerKey) {
   // Everything this save needs from the form is taken now, before its first await. The
   // form can be closed while documents upload (a tap outside it, «Отмена») and another one
@@ -14023,6 +14678,11 @@ async function _saveBudgetTxInner(ledgerKey) {
   const picked = pendingFiles.slice();
   const time = (document.getElementById('bt-time').value || '');
   const notes = (document.getElementById('bt-notes').value || '').trim();
+  const projEl = document.getElementById('bt-project');
+  const project = projEl && projEl.value && projEl.value !== '__new' ? projEl.value : '';
+  const costType = (document.getElementById('bt-costtype') || {}).value || '';
+  const reimbOn = !!(document.getElementById('bt-reimb') || {}).checked;
+  const reimbEmp = reimbOn ? ((document.getElementById('bt-reimb-emp') || {}).value || '').trim().slice(0, 80) : '';
   const cfg = FINANCE_LEDGERS[ledgerKey];
   const type = document.getElementById('bt-type').value;
   // Income can only be recorded by the owner — others with access to this ledger
@@ -14071,6 +14731,9 @@ async function _saveBudgetTxInner(ledgerKey) {
     fund = document.getElementById('bt-fund').value;
     if (!fund) { alert('Укажите фонд'); return; }
   }
+  if (type === 'expense' && reimbOn && !reimbEmp) { alert('Укажите сотрудника, которому нужно вернуть деньги'); return; }
+  // A receipt a payout has closed keeps what was paid for it — see _settledChangeBlocked.
+  if (_settledChangeBlocked(editingId ? getBudgetTx(ledgerKey).find(x => x.id === editingId) : null, type, vendor, amount, date, fund)) return;
   // No scanned invoice/receipt, no payment request — approvers and the accountant need
   // something to actually check before signing off, not just a typed-in amount. A receipt
   // can now be several files (several pages/photos of the same document); what matters is
@@ -14171,6 +14834,8 @@ async function _saveBudgetTxInner(ledgerKey) {
   // first place (the only two people the UI ever lets reach this edit path). Any edit
   // that actually changes the amount/vendor/date/fund still resets the chain.
   const keepStatus = existing && !materialChange;
+  // Closed by a payout while the documents were uploading.
+  if (_settledChangeBlocked(existing, type, vendor, amount, date, fund)) return;
   const record = {
     id: editingId || _newTxId(),
     type, date,
@@ -14195,6 +14860,12 @@ async function _saveBudgetTxInner(ledgerKey) {
     createdBy: existing ? existing.createdBy : currentUser,
     createdAt: existing ? existing.createdAt : new Date().toISOString(),
   };
+  if (type === 'expense') {
+    if (project) record.project = project;
+    if (costType) record.costType = costType;
+    if (existing && existing.reimburse && existing.reimburse.settlementId) record.reimburse = existing.reimburse;
+    else if (reimbEmp) record.reimburse = { employee: reimbEmp };
+  }
 
   if (editingId) { const idx=list.findIndex(x=>x.id===editingId); if(idx>=0)list[idx]=record; else list.push(record); }
   else list.push(record);
@@ -14309,7 +14980,7 @@ async function _approveBudgetTxInner(ledgerKey, id, asRole) {
     const t2 = after.find(x => x.id === id);
     if (!t2) { _showToast('✅ Согласовано', true); render(); return; }
     const nowAllApproved = FINANCE_LEDGERS[ledgerKey].approvers.every(role => (t2.approvals||{})[role] && t2.approvals[role].approved);
-    if (nowAllApproved && ledgerKey === 'personal' && t2.fund === 'Наличные' && !(t2.accountantConfirm && t2.accountantConfirm.paid)) {
+    if (nowAllApproved && ledgerKey === 'personal' && t2.fund === 'Наличные' && !t2.reimburse && !(t2.accountantConfirm && t2.accountantConfirm.paid)) {
       t2.accountantConfirm = {paid:true, date:new Date().toISOString()};
       setBudgetTx(ledgerKey, after);
       if (_useFirebase) { clearTimeout(_saveTimer); await _flushState(); }
@@ -14455,11 +15126,12 @@ function _renderAccountantQueueList(items) {
         <div style="font-weight:600;font-size:14px">${t.vendor||''}</div>
         ${t.notes?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${t.notes}</div>`:''}
         ${_txAttachmentsHtml(t)}
+        ${t.project || t.reimburse ? `<div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">${_txTagBadges(t)}</div>` : ''}
       </div>
       <div style="font-weight:700;font-size:16px;color:#dc2626;flex-shrink:0">−₽${(Number(t.amount)||0).toLocaleString('ru-RU')}</div>
     </div>
     <div style="display:flex;gap:6px;margin-top:8px">
-      <button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="_acctQueueConfirmPaid('${t._ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>
+      ${_txPayButton(t._ledgerKey, t, `_acctQueueConfirmPaid('${t._ledgerKey}','${t.id}')`)}
       <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="_acctQueueDeclinePaid('${t._ledgerKey}','${t.id}')">❌ Отказать в оплате</button>
     </div>
   </div>`).join('');
@@ -14558,6 +15230,7 @@ async function delBudgetTx(ledgerKey, id) {
   // Deleting is content-level too (it erases a closed month's history outright) — locked
   // the same as editing, for the owner as well. See _isTxMonthClosed.
   if (_isTxMonthClosed(t, ledgerKey)) { alert('🔒 Этот месяц закрыт — операцию нельзя удалить.'); return; }
+  if (t.reimburse && t.reimburse.settlementId) { const sx = _settlement(t.reimburse.settlementId); alert('🧾 Этот чек закрыт выплатой' + (sx ? ' № ' + sx.no : '') + ' — сначала отмените выплату («💵 Выплаты по чекам»).'); return; }
   const isOwnUnpaidSubmission = t.type === 'expense' && t.status !== 'rejected' &&
     t.createdBy === currentUser && cfg.canCreate.includes(currentUser) &&
     !(t.accountantConfirm && t.accountantConfirm.paid);
