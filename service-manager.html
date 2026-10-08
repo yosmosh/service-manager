@@ -12504,6 +12504,9 @@ const _project = id => (id ? getProjects().find(p => p.id === id) || null : null
 const _costTypeLabel = id => (COST_TYPES.find(c => c.id === id) || {}).label || '';
 const _rubShort = n => '₽' + (Number(n) || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 });
 const _PROJECT_MANAGERS = ['owner', 'admin'];
+// Those who enter works or expenses start projects; the view-only roles (Руководство,
+// Александр, the accountant) only look at them.
+const _PROJECT_CREATORS = ['owner', 'admin', 'admin2', 'kitchen'];
 // The budgets whose expenses a project shows: those this person sees on the Бюджет page, none
 // for anyone who has no Бюджет page.
 const _BUDGET_PAGE_ROLES = ['owner', 'admin', 'admin2', 'kitchen', 'alexander', 'accountant', 'management'];
@@ -12594,10 +12597,11 @@ function openProjects() {
     ${rows || '<div style="text-align:center;padding:30px;color:#94a3b8">Проектов пока нет — создайте первый, или выберите «➕ Новый проект…» прямо в форме расхода или работы.</div>'}`;
   document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
     <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
-    <button class="btn btn-primary" onclick="_newProjectFromList()">➕ Новый проект</button></div>`;
+    ${_PROJECT_CREATORS.includes(currentUser) ? '<button class="btn btn-primary" onclick="_newProjectFromList()">➕ Новый проект</button>' : ''}</div>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
 async function _newProjectFromList() {
+  if (!_PROJECT_CREATORS.includes(currentUser)) return;
   const p = _createProject();
   if (!p) return;
   clearTimeout(_saveTimer); await _flushState();
