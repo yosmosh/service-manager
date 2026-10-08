@@ -1,0 +1,11 @@
+{
+  "name": "sad-budushego-backup",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Weekly backup of the app's data (YDB) and files (Object Storage) into the sad-budushego-backup bucket.",
+  "main": "index.js",
+  "dependencies": {
+    "@yandex-cloud/nodejs-sdk": "^2.0.0",
+    "ydb-sdk": "5.11.1"
+  }
+}

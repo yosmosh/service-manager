@@ -1569,6 +1569,7 @@ async function openSettingsModal() {
     </div>` : '';
 
   document.getElementById('modal-body').innerHTML = `
+    ${isOwner && _YDB ? '<div id="backup-status-box" style="margin-bottom:16px;padding:10px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;font-size:12px;color:#475569">💾 Резервная копия: проверяем…</div>' : ''}
     ${ownerCredsHtml}
     ${adminCredsHtml}
     ${kitchenCredsHtml}
@@ -1597,6 +1598,33 @@ async function openSettingsModal() {
     <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
     <button class="btn btn-primary" onclick="saveAllPins()">💾 Сохранить данные поставщиков</button>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
+  if (isOwner && _YDB) _showBackupStatus();
+}
+
+// The weekly backup (Yandex function «backup», Sundays 03:00 Moscow) leaves its report in
+// appdata/backup_status: the last run, and the last one that went well. Shown to the owner in
+// Настройки, so a backup that silently stopped working is noticed.
+const _BACKUP_STALE_DAYS = 9;
+async function _showBackupStatus() {
+  const box = document.getElementById('backup-status-box');
+  if (!box) return;
+  let st = null;
+  try { st = await _fsGetDoc('appdata/backup_status'); } catch (e) { box.textContent = '💾 Резервная копия: не удалось проверить (нет связи)'; return; }
+  const el = document.getElementById('backup-status-box');
+  if (!el) return;
+  const ok = st && st.lastOk, last = st && st.last;
+  const when = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+  const ageDays = ok ? (Date.now() - Date.parse(ok.at)) / 86400000 : Infinity;
+  const fresh = ok && ageDays <= _BACKUP_STALE_DAYS;
+  const files = ok ? ` · данные и ${(ok.filesInBackup || 0).toLocaleString('ru-RU')} файл(ов)${ok.filesLeft ? ` (ещё ${ok.filesLeft} в очереди)` : ''}` : '';
+  el.style.background = fresh ? '#f0fdf4' : '#fef2f2';
+  el.style.borderColor = fresh ? '#86efac' : '#fca5a5';
+  el.style.color = fresh ? '#166534' : '#991b1b';
+  el.innerHTML = !ok
+    ? '💾 <b>Резервной копии ещё нет</b>' + (last && last.error ? ' — ошибка: ' + _escHtml(last.error) : '')
+    : `💾 <b>Резервная копия: ${when(ok.at)}</b>${files}${fresh ? ' ✅' : ' — <b>больше недели назад, проверьте!</b>'}`
+      + (last && !last.ok && last.at !== ok.at ? `<div style="margin-top:4px">⚠️ Последний запуск ${when(last.at)} с ошибкой: ${_escHtml(last.error || '')}</div>` : '')
+      + '<div style="margin-top:4px;font-size:11px;opacity:.8">Каждое воскресенье ночью; копии данных хранятся год, файлы — без срока.</div>';
 }
 
 function saveNotifyConfig() {
@@ -12652,7 +12680,8 @@ function openProject(pid) {
     <button class="btn btn-primary" onclick="closeModal()">Готово</button></div>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
-async function _renameProject(pid) {
+async function _renameProject(pid) { return _onceAtATime('project', () => _renameProjectInner(pid)); }
+async function _renameProjectInner(pid) {
   const p = _project(pid);
   if (!p || !_PROJECT_MANAGERS.includes(currentUser)) return;
   const name = String(prompt('Новое название проекта:', p.name) || '').trim().slice(0, 80);
@@ -12661,7 +12690,8 @@ async function _renameProject(pid) {
   clearTimeout(_saveTimer); await _flushState();
   openProject(pid);
 }
-async function _toggleProjectArchived(pid) {
+async function _toggleProjectArchived(pid) { return _onceAtATime('project', () => _toggleProjectArchivedInner(pid)); }
+async function _toggleProjectArchivedInner(pid) {
   if (!_PROJECT_MANAGERS.includes(currentUser)) return;
   setLS('projects', getProjects().map(x => x.id === pid ? Object.assign({}, x, { archived: !x.archived }) : x));
   clearTimeout(_saveTimer); await _flushState();
@@ -13031,7 +13061,8 @@ function openSettlement(id) {
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
 // Undone, its receipts are waiting to be paid back again, and its document is deleted.
-async function undoSettlement(id) {
+async function undoSettlement(id) { return _onceAtATime('settlement', () => _undoSettlementInner(id)); }
+async function _undoSettlementInner(id) {
   const s = _settlement(id);
   if (!s || !_SETTLE_ROLES.includes(currentUser)) return;
   if (!confirm(`Отменить выплату № ${s.no}? Её чеки снова будут ждать возмещения, скан расписки будет удалён.`)) return;
@@ -14623,7 +14654,8 @@ function _budgetExpenseExtraHtml(t, type, ledgerKey) {
   </div>`;
 }
 // The owner's project and kind of cost on an expense of a closed month — nothing else changes.
-async function _saveTxTags(ledgerKey, id) {
+async function _saveTxTags(ledgerKey, id) { return _onceAtATime('txTags', () => _saveTxTagsInner(ledgerKey, id)); }
+async function _saveTxTagsInner(ledgerKey, id) {
   if (currentUser !== 'owner') return;
   const projEl = document.getElementById('bt-project');
   const project = projEl && projEl.value && projEl.value !== '__new' ? projEl.value : '';
