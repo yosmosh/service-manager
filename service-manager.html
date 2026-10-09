@@ -8651,6 +8651,13 @@ function _whMatchItem(name, items) {
   return bestScore >= 0.6 ? best : null;
 }
 
+// What a failed invoice reading tells a person. A timeout (504) is a long document the reader
+// didn't finish in time — said in plain words rather than as an HTTP code.
+function _scanFailText(status, data) {
+  if (data && data.error) return data.error;
+  if (status === 504 || status === 502) return 'ИИ не успел дочитать документ — он длинный. Попробуйте ещё раз; если не выйдет — заполните позиции вручную.';
+  return 'HTTP ' + status;
+}
 async function whScanBudgetInvoice() {
   const [ledger, txId] = String((document.getElementById('whm-budget') || {}).value || '').split('|');
   const t = ledger ? getBudgetTx(ledger).find(x => x.id === txId) : null;
@@ -8666,7 +8673,7 @@ async function whScanBudgetInvoice() {
       body: JSON.stringify({ purpose: 'warehouse', fileUrls: urls }),
     });
     const data = await resp.json().catch(() => ({}));
-    if (!resp.ok || !data.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+    if (!resp.ok || !data.ok) throw new Error(_scanFailText(resp.status, data));
     json = data.result || {};
   } catch (e) {
     setBtn('🤖 Заполнить позиции из счёта', false);
@@ -12042,8 +12049,8 @@ async function scanInvoiceWithAI() {
         headers: {'content-type':'application/json'},
         body: JSON.stringify({ imageBase64: base64, mediaType: forAI.type || 'image/jpeg' })
       });
-      const data = await resp.json();
-      if (!resp.ok || !data.ok) throw new Error(data.error || resp.statusText);
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.ok) throw new Error(_scanFailText(resp.status, data));
       const json = data.result;
       // Fill form
       if (json.date) document.getElementById('kinv-date').value = json.date;

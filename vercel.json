@@ -17,7 +17,7 @@
   ],
   "functions": {
     "api/telegram/build-drafts.js": { "maxDuration": 60 },
-    "api/kitchen/scan-invoice.js": { "maxDuration": 60 }
+    "api/kitchen/scan-invoice.js": { "maxDuration": 120 }
   },
   "headers": [
     {

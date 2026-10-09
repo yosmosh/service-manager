@@ -94,7 +94,8 @@ async function fetchOwnFile(url) {
 }
 
 module.exports = async (req, res) => {
-  if (req.method !== 'POST') { res.status(405).json({ error: 'method not allowed' }); return; }
+  // `v` tells which version answers — a deploy can be checked from outside with a plain GET.
+  if (req.method !== 'POST') { res.status(405).json({ error: 'method not allowed', v: 2 }); return; }
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) { res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' }); return; }
 
@@ -127,12 +128,16 @@ module.exports = async (req, res) => {
       // Sonnet 5 thinks before answering by default, and thinking counts against max_tokens —
       // the old cap of 4096 could run out on a long invoice before the JSON was complete.
       // 16000 is the documented default for a non-streaming request (as in build-drafts).
+      // Effort low: reading lines off a document needs little deliberation, and at the default
+      // (high) a long invoice — dozens of lines — took past the function's time limit and came
+      // back as a 504 (2026-10-09, a 375 000 ₽ ВсеИнструменты invoice).
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: JSON.stringify({
           model: 'claude-sonnet-5',
           max_tokens: 16000,
+          output_config: { effort: 'low' },
           messages: [{ role: 'user', content }],
         }),
       });
