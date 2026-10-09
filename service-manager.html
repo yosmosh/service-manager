@@ -387,6 +387,14 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 .wh-info{padding:8px 10px 10px}
 .wh-name{font-weight:700;font-size:13px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.6em}
 .wh-meta{font-size:11px;color:#64748b;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The basket: add from a card, a stepper once it's in */
+.wh-card.inbasket{border-color:#2563eb;box-shadow:0 0 0 2px #bfdbfe}
+.wh-bsk-add{margin-top:7px;width:100%;border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:8px;padding:6px 0;font-size:12px;font-weight:700;cursor:pointer}
+.wh-bsk-add:hover{background:#dbeafe}
+.wh-bsk{margin-top:7px;display:flex;align-items:center;justify-content:space-between;background:#2563eb;color:#fff;border-radius:8px;overflow:hidden}
+.wh-bsk button{border:none;background:none;color:#fff;font-size:18px;font-weight:700;width:38px;height:32px;cursor:pointer}
+.wh-bsk span{font-size:13px;font-weight:700}
+.wh-basket-n{display:inline-block;min-width:20px;border-radius:999px;background:#fff;color:#1d4ed8;font-size:12px;font-weight:800;padding:0 6px;margin-left:4px}
 /* Photo search results (item form, photo assistant) */
 .wh-found{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px;margin-top:8px}
 .wh-found button{position:relative;aspect-ratio:1/1;border:2px solid #e2e8f0;border-radius:10px;background:#fff;padding:4px;cursor:pointer;overflow:hidden}
@@ -3864,6 +3872,7 @@ function render() {
     title.textContent = '🧰 Склад';
     if (_WAREHOUSE_ROLES.includes(currentUser)) {
       actions.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+        ${_whBasketBtn()}
         <button class="btn btn-outline" onclick="openWhMove('receipt')" title="Приход">📥<span class="wh-tb-txt"> Приход</span></button>
         <button class="btn btn-outline" onclick="openWhMove('issue')" title="Выдать">📤<span class="wh-tb-txt"> Выдать</span></button>
         <button class="btn btn-primary" onclick="openWhItemForm()" title="Новая позиция">+<span class="wh-tb-txt"> Позиция</span></button></div>`;
@@ -7869,6 +7878,58 @@ function _whIsGone(it, stock, holdings) {
   return (stock[it.id] || 0) <= 0 && out <= 0 && getWhDocs().some(d => d.type === 'writeoff' && (d.lines || []).some(l => l.itemId === it.id));
 }
 
+// ---------- the basket ----------
+// Items picked from the catalogue to issue together, like a shop's basket: { itemId: qty }.
+// A convenience of this person in this browser — kept for the session, never shared or saved.
+// "Корзина" at the top opens one issue act with all of them, to change or trim before saving.
+let _whBasket = null, _whBasketFormGen = -1;
+const _whBasketKey = () => 'wh_basket_' + (currentUser || '');
+function _whBasketGet() {
+  if (!_whBasket || _whBasket._for !== currentUser) {
+    let saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem(_whBasketKey()) || 'null'); } catch (e) {}
+    _whBasket = { _for: currentUser, items: (saved && typeof saved === 'object') ? saved : {} };
+  }
+  return _whBasket.items;
+}
+function _whBasketSave() { try { sessionStorage.setItem(_whBasketKey(), JSON.stringify(_whBasketGet())); } catch (e) {} }
+const _whBasketCount = () => Object.keys(_whBasketGet()).length;
+// One more (or less) of an item, never more than is on the shelf; at nought it leaves.
+function _whBasketAdd(id, delta) {
+  const b = _whBasketGet(), it = _whItem(id);
+  if (!it || !_whMine(it)) return;
+  const onShelf = _whStockMap()[id] || 0;
+  const next = _whQ(Math.min((b[id] || 0) + delta, onShelf));
+  if (delta > 0 && (b[id] || 0) >= onShelf) _showToast('Больше нет на складе: ' + _whFmtQ(onShelf) + ' ' + (it.unit || 'шт'), false);
+  if (next > 0) b[id] = next; else delete b[id];
+  _whBasketSave();
+  _whBasketRefresh();
+}
+function _whBasketClear() { _whBasket = { _for: currentUser, items: {} }; _whBasketSave(); _whBasketRefresh(); }
+function _whBasketRefresh() {
+  const btn = document.getElementById('wh-basket-btn');
+  if (btn) btn.outerHTML = _whBasketBtn();
+  if (view === 'warehouse' && whTab === 'catalog' && document.getElementById('wh-list')) {
+    const y = window.scrollY;
+    document.getElementById('wh-list').innerHTML = _whCatalogList();
+    loadWhImages();
+    window.scrollTo(0, y);
+  }
+}
+function _whBasketBtn() {
+  const n = _whBasketCount();
+  return `<button class="btn ${n ? 'btn-primary' : 'btn-outline'}" id="wh-basket-btn" onclick="openWhBasket()" title="Корзина">🧺<span class="wh-tb-txt"> Корзина</span>${n ? `<span class="wh-basket-n">${n}</span>` : ''}</button>`;
+}
+// The basket as one issue act: every item on its own line with its quantity.
+function openWhBasket() {
+  const b = _whBasketGet(), stock = _whStockMap();
+  // What has left the shelf (or the keeper's part) since it was picked goes quietly.
+  Object.keys(b).forEach(id => { if (!_whMine(_whItem(id)) || !(stock[id] > 0)) delete b[id]; });
+  _whBasketSave();
+  if (!_whBasketCount()) { _showToast('🧺 Корзина пуста — нажмите «В корзину» на карточках', false); _whBasketRefresh(); return; }
+  openWhMove('issue', { basket: true });
+}
+
 // ---------- the page ----------
 let whTab = 'catalog', whSearch = '', whCat = '', whKind = '', whShowGone = false;
 function setWhTab(t) { whTab = t; render(); }
@@ -8000,14 +8061,19 @@ function _whCard(i, stock, hold) {
   const img = _whMainImg(i);
   const pic = img ? `<img class="whthumb" data-fid="${img}" alt="">`
     : `<div class="wh-nophoto"><div>${_whIcon(i.category)}</div><span>Нет фото</span></div>`;
+  const inB = _whBasketGet()[i.id] || 0;
+  const basket = !_WAREHOUSE_ROLES.includes(currentUser) || gone || onShelf <= 0 ? ''
+    : inB ? `<div class="wh-bsk" onclick="event.stopPropagation()"><button title="Меньше" onclick="_whBasketAdd('${i.id}',-1)">−</button><span>🧺 ${_whFmtQ(inB)} ${unit}</span><button title="Больше" onclick="_whBasketAdd('${i.id}',1)">+</button></div>`
+    : `<button class="wh-bsk-add" onclick="event.stopPropagation();_whBasketAdd('${i.id}',1)">🧺 В корзину</button>`;
   const addPhoto = !img && _WAREHOUSE_ROLES.includes(currentUser)
     ? `<button class="wh-addphoto" title="Добавить фото" onclick="event.stopPropagation();openWhPhotoAssistant('${i.id}')">📷</button>` : '';
-  return `<div class="wh-card${gone ? ' gone' : ''}${late ? ' late' : ''}" onclick="openWhItem('${i.id}')">
+  return `<div class="wh-card${gone ? ' gone' : ''}${late ? ' late' : ''}${inB ? ' inbasket' : ''}" onclick="openWhItem('${i.id}')">
     <div class="wh-pic">${pic}<span class="wh-badge ${badge[0]}">${badge[1]}</span>${addPhoto}</div>
     <div class="wh-info">
       <div class="wh-name">${_escHtml(i.name)}</div>
       <div class="wh-meta">${_escHtml(i.invNo || '')}${i.location ? ' · 📍 ' + _escHtml(i.location) : ''}</div>
       ${_whIsAsset(i) && out ? `<div class="wh-meta" style="color:${late ? '#b91c1c' : '#b45309'};font-weight:600">👷 выдано: ${_whFmtQ(out)} ${unit}</div>` : ''}
+      ${basket}
     </div></div>`;
 }
 
@@ -8054,6 +8120,7 @@ function openWhItem(id) {
     <button class="btn btn-outline" onclick="openWhItemForm('${id}')">✏️ Изменить</button>
     <button class="btn btn-outline" onclick="openWhMove('receipt',{itemId:'${id}'})">📥 Приход</button>
     ${stock > 0 ? `<button class="btn btn-outline" style="color:#dc2626" onclick="openWhMove('writeoff',{itemId:'${id}'})">🗑 Списать</button>` : ''}
+    ${stock > 0 ? `<button class="btn btn-outline" onclick="_whBasketAdd('${id}',1);closeModal()">🧺 В корзину</button>` : ''}
     ${stock > 0 ? `<button class="btn btn-primary" onclick="openWhMove('issue',{itemId:'${id}'})">📤 Выдать</button>` : ''}</div>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
   loadWhImages();
@@ -8450,7 +8517,16 @@ function openWhMove(type, preset) {
   document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
     <button class="btn btn-primary" id="whm-save" onclick="saveWhMove('${type}')">💾 ${type === 'issue' ? 'Выдать и оформить акт' : type === 'return' ? 'Принять и оформить акт' : 'Провести'}</button>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
-  if (type === 'return') _whMoveRebuild(type); else _whAddLine(type, preset.itemId);
+  if (type === 'issue' && preset.basket) {
+    const b = _whBasketGet();
+    Object.keys(b).forEach(id => _whAddLine('issue', id, { qty: b[id] }));
+    _whBasketFormGen = _modalGen;
+    document.getElementById('modal-title').textContent = '🧺 Выдача из корзины';
+    const head = document.createElement('div');
+    head.style.cssText = 'font-size:12px;color:#1e40af;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 10px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap';
+    head.innerHTML = '<span>🧺 В корзине позиций: <b>' + Object.keys(b).length + '</b> — выберите, кому выдаётся; количество можно поправить, лишнее убрать ✕.</span><button class="btn btn-outline" style="font-size:11px;padding:3px 8px" onclick="if(confirm(\'Очистить корзину?\')){_whBasketClear();closeModal()}">Очистить корзину</button>';
+    document.getElementById('modal-body').prepend(head);
+  } else if (type === 'return') _whMoveRebuild(type); else _whAddLine(type, preset.itemId);
   // From the list of paid invoices: the reader starts at once — nothing to type.
   if (type === 'receipt' && preset.autoRead && bt && _whScanUrls(bt).length) whScanBudgetInvoice();
 }
@@ -8760,6 +8836,7 @@ function _whMoveRebuild(type) {
 async function saveWhMove(type) { return _onceAtATime('whMove', () => _saveWhMoveInner(type)); }
 async function _saveWhMoveInner(type) {
   if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
+  const fromBasket = type === 'issue' && _whBasketFormGen === _modalGen;
   const v = id => (document.getElementById(id) || {}).value || '';
   const employeeId = v('whm-emp'), date = v('whm-date') || _todayLocal();
   if ((type === 'issue' || type === 'return') && !employeeId) { alert('Выберите сотрудника'); return; }
@@ -8849,6 +8926,8 @@ async function _saveWhMoveInner(type) {
   if (budgetTx) doc.budgetRef = { ledger: budgetLedger, txId: budgetTx.id, vendor: budgetTx.vendor || '', amount: Number(budgetTx.amount) || 0, date: budgetTx.date || '' };
   if (type === 'writeoff') doc.reason = v('whm-reason');
   setLS('wh_docs', getWhDocs().concat([doc]));
+  // Issued from the basket: the basket has done its job.
+  if (fromBasket) { _whBasketFormGen = -1; _whBasketClear(); }
   // A tool comes back in the condition the return says; a receipt at a new price updates
   // the item's price for the next act.
   let changedItems = false;
