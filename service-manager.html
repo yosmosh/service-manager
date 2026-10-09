@@ -7876,7 +7876,7 @@ function setWhTab(t) { whTab = t; render(); }
 function _whUpdateBadge() {
   const el = document.getElementById('wh-badge');
   if (!el) return;
-  const n = _WAREHOUSE_ROLES.includes(currentUser) ? _whLowStock().length + _whOverdueList().length : 0;
+  const n = _WAREHOUSE_ROLES.includes(currentUser) ? _whLowStock().length + _whOverdueList().length + _whPendingIntakes().length : 0;
   el.textContent = n; el.style.display = n ? '' : 'none';
 }
 
@@ -7916,7 +7916,7 @@ function _whAlerts() {
 // picked and nothing searched, one section per category.
 function _whCatalogTab() {
   const kindBtn = (v, l) => `<button class="wh-seg${whKind === v ? ' active' : ''}" onclick="whKind='${v}';document.querySelectorAll('.wh-seg').forEach(b=>b.classList.toggle('active',b===this));_whRefreshList()">${l}</button>`;
-  return `${_whAlerts()}
+  return `${_whIntakeBlock()}${_whAlerts()}
     <div class="wh-toolbar">
       <input class="form-control wh-search" placeholder="🔍 Найти: название, инв. номер, место…" value="${_escHtml(whSearch)}" oninput="whSearch=this.value;_whRefreshList()">
       <div class="wh-segs">${kindBtn('', 'Всё')}${kindBtn('asset', '🔧 Инструмент')}${kindBtn('consumable', '📦 Материалы')}</div>
@@ -8449,6 +8449,8 @@ function openWhMove(type, preset) {
     <button class="btn btn-primary" id="whm-save" onclick="saveWhMove('${type}')">💾 ${type === 'issue' ? 'Выдать и оформить акт' : type === 'return' ? 'Принять и оформить акт' : 'Провести'}</button>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
   if (type === 'return') _whMoveRebuild(type); else _whAddLine(type, preset.itemId);
+  // From the list of paid invoices: the reader starts at once — nothing to type.
+  if (type === 'receipt' && preset.autoRead && bt && _whScanUrls(bt).length) whScanBudgetInvoice();
 }
 
 // ---------- receipt from a budget invoice ----------
@@ -8458,6 +8460,30 @@ function openWhMove(type, preset) {
 // receipt, so an invoice's card shows its receipts without its record changing.
 const _WH_BUDGET_LEDGERS = ['maintenance', 'personal'];
 const _whReceiptsForTx = txId => getWhDocs().filter(d => d.type === 'receipt' && d.budgetRef && d.budgetRef.txId === txId);
+// Invoices marked "после оплаты — на склад" (whIntake: whose part they go to) that are paid and
+// not yet received: each keeper sees those of their part, the owner and the administrator all.
+// Received — a receipt tied to the invoice — and it leaves the list.
+function _whPendingIntakes() {
+  const out = [];
+  _WH_BUDGET_LEDGERS.forEach(lk => getBudgetTx(lk).forEach(t => {
+    if (t.type !== 'expense' || !t.whIntake || t.status === 'rejected') return;
+    if (!(t.accountantConfirm && t.accountantConfirm.paid)) return;
+    if (_whArea() && t.whIntake !== _whArea()) return;
+    if (_whReceiptsForTx(t.id).length) return;
+    out.push({ lk, t });
+  }));
+  return out.sort((a, b) => String(a.t.date || '').localeCompare(String(b.t.date || '')));
+}
+function _whIntakeBlock() {
+  const list = _whPendingIntakes();
+  if (!list.length) return '';
+  return `<div id="wh-intake" style="background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:10px 14px;margin-bottom:10px">
+    <div style="font-weight:700;color:#1e40af;margin-bottom:6px">📦 Оплачено — ждёт приёмки на склад (${list.length})</div>
+    ${list.map(({ lk, t }) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 0;border-top:1px solid #dbeafe;font-size:13px">
+      <div style="min-width:0"><b>${_escHtml(t.vendor || '')}</b> · ${_whRub(t.amount)} · ${fmtDate(t.date)}${!_whArea() ? ` · <span style="color:#475569">${t.whIntake === 'cleaning' ? '🧽 уборка' : '🧰 кладовщик'}</span>` : ''}${t.notes ? `<div style="font-size:11px;color:#475569">${_escHtml(String(t.notes).slice(0, 90))}</div>` : ''}</div>
+      <button class="btn btn-primary" style="font-size:12px;padding:5px 12px" onclick="openWhReceiptFromBudget('${lk}','${t.id}',true)">📥 Принять</button></div>`).join('')}
+    <div style="font-size:11px;color:#475569;margin-top:6px">Позиции заполнятся из документа счёта — проверьте количество по факту поставки.</div></div>`;
+}
 
 // On a budget card: the receipts made from it, and the button to make one. Only where goods
 // for the maintenance side are bought, only for those who run the warehouse, and not for an
@@ -8470,13 +8496,13 @@ function _whBudgetTxActions(ledgerKey, t) {
     <button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="openWhReceiptFromBudget('${ledgerKey}','${t.id}')">📦 ${docs.length ? 'Ещё поступление' : 'Оприходовать на склад'}</button></div>`;
 }
 
-function openWhReceiptFromBudget(ledgerKey, txId) {
+function openWhReceiptFromBudget(ledgerKey, txId, autoRead) {
   if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
   const t = getBudgetTx(ledgerKey).find(x => x.id === txId);
   if (!t) { _showToast('Операция не найдена', false); return; }
   const docs = _whReceiptsForTx(txId);
   if (docs.length && !confirm(`По этому счёту уже оформлено поступление: ${docs.map(d => d.no).join(', ')}.\n\nОформить ещё одно (например, вторая часть поставки)?`)) return;
-  openWhMove('receipt', { budget: { ledger: ledgerKey, txId } });
+  openWhMove('receipt', { budget: { ledger: ledgerKey, txId }, autoRead: !!autoRead });
 }
 
 // The invoice's files the reader can take: this app's own uploads, photos or PDF, up to five.
@@ -8575,7 +8601,7 @@ async function whScanBudgetInvoice() {
   if (!got.length) { setBtn('🤖 Заполнить позиции из счёта', false); alert('В счёте не нашлось товаров для склада — добавьте позиции вручную.'); return; }
   // Lines left empty give way to what was read; anything already chosen stays.
   box.querySelectorAll('.whm-line').forEach(r => { if (!(r.querySelector('.whm-item') || {}).value) r.remove(); });
-  const items = getWhItems();
+  const items = getWhItems().filter(_whMine);
   let matched = 0;
   got.forEach(x => {
     const it = _whMatchItem(x.name, items);
@@ -14471,7 +14497,8 @@ function _txTagBadges(t) {
   if (t.type !== 'expense' || !_hasNewTools()) return '';
   return _projectBadge(t.project, true)
     + (t.costType ? `<span class="badge" style="font-size:10px;background:#f1f5f9;color:#334155">${_costTypeLabel(t.costType)}</span>` : '')
-    + _reimburseBadge(t);
+    + _reimburseBadge(t)
+    + (t.whIntake && !_whReceiptsForTx(t.id).length ? `<span class="badge" style="font-size:10px;background:#e0f2fe;color:#075985">📦 После оплаты → склад (${t.whIntake === 'cleaning' ? 'уборка' : 'кладовщик'})</span>` : '');
 }
 // A receipt to pay back to an employee isn't marked paid — it is paid by a payout.
 const _txReimburseOpen = t => !!(t.reimburse && !t.reimburse.settlementId);
@@ -14725,6 +14752,13 @@ function _budgetExpenseExtraHtml(t, type, ledgerKey) {
       <div class="form-group"><label>Статья расхода</label><select class="form-control" id="bt-costtype" ${tagsRo ? 'disabled' : ''}>
         <option value="">— не указана —</option>${COST_TYPES.map(c => `<option value="${c.id}" ${t.costType === c.id ? 'selected' : ''}>${c.label}</option>`).join('')}</select></div>
     </div>
+    ${_WH_BUDGET_LEDGERS.includes(ledgerKey) ? `<div class="form-group"><label>📦 После оплаты — на склад</label>
+      <select class="form-control" id="bt-whintake" ${tagsRo ? 'disabled' : ''}>
+        <option value="">— не на склад —</option>
+        <option value="tools" ${t.whIntake === 'tools' ? 'selected' : ''}>🧰 Кладовщику — инструмент, оборудование, материалы</option>
+        <option value="cleaning" ${t.whIntake === 'cleaning' ? 'selected' : ''}>🧽 Ответственному за уборку — уборка, гигиена, химия</option>
+      </select>
+      <div style="font-size:11px;color:#6b7280;margin-top:4px">Оплаченный счёт сам появится на складе в «Ждут приёмки»: позиции заполнятся из документа счёта — останется проверить и принять, когда товар привезут.</div></div>` : ''}
     ${ledgerKey === _REIMBURSE_LEDGER || settled ? `<div class="form-group" id="bt-reimb-block" ${settled || t.fund === _REIMBURSE_FUND ? '' : 'hidden'} style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 10px">${reimb}</div>` : ''}
   </div>`;
 }
@@ -14735,11 +14769,13 @@ async function _saveTxTagsInner(ledgerKey, id) {
   const projEl = document.getElementById('bt-project');
   const project = projEl && projEl.value && projEl.value !== '__new' ? projEl.value : '';
   const costType = (document.getElementById('bt-costtype') || {}).value || '';
+  const whEl = document.getElementById('bt-whintake');
   setBudgetTx(ledgerKey, getBudgetTx(ledgerKey).map(t => {
     if (t.id !== id) return t;
     const u = Object.assign({}, t);
     if (project) u.project = project; else delete u.project;
     if (costType) u.costType = costType; else delete u.costType;
+    if (whEl) { if (whEl.value) u.whIntake = whEl.value; else delete u.whIntake; }
     return u;
   }));
   clearTimeout(_saveTimer);
@@ -14812,6 +14848,8 @@ async function _saveBudgetTxInner(ledgerKey) {
   const projEl = document.getElementById('bt-project');
   const project = projEl && projEl.value && projEl.value !== '__new' ? projEl.value : '';
   const costType = (document.getElementById('bt-costtype') || {}).value || '';
+  const whIntakeEl = document.getElementById('bt-whintake');
+  const whIntake = whIntakeEl ? whIntakeEl.value : '';
   const reimbOn = !!(document.getElementById('bt-reimb') || {}).checked;
   const reimbEmp = reimbOn ? ((document.getElementById('bt-reimb-emp') || {}).value || '').trim().slice(0, 80) : '';
   const cfg = FINANCE_LEDGERS[ledgerKey];
@@ -14996,6 +15034,8 @@ async function _saveBudgetTxInner(ledgerKey) {
     const src = projEl ? { project, costType } : (existing || {});
     if (src.project) record.project = src.project;
     if (src.costType) record.costType = src.costType;
+    const intake = whIntakeEl ? whIntake : (existing && existing.whIntake) || '';
+    if (intake && _WH_BUDGET_LEDGERS.includes(ledgerKey)) record.whIntake = intake;
     if (existing && existing.reimburse && existing.reimburse.settlementId) record.reimburse = existing.reimburse;
     else if (reimbEmp && _reimbursable(ledgerKey, fund)) record.reimburse = { employee: reimbEmp };
   }
