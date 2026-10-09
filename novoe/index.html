@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- For the staff, by link only: kept out of search engines. -->
+<meta name="robots" content="noindex, nofollow">
+<title>Октябрьские обновления системы</title>
+<style>img{max-width:100%}body{margin:0}</style>
+</head>
+<body>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Unbounded:wght@500;700&display=swap">
+<style>
+/* Layout: one reading column; each update is a section — what it is, who it is for, how to use it, then a screen from the system. */
+:root {
+  --bg: #f6f8f6; --surface: #ffffff; --fg: #17201b; --muted: #58645d; --line: #dbe3dd;
+  --accent: #2f6b4f; --accent-soft: #e3efe7; --accent-fg: #ffffff;
+  --note: #fff7e6; --note-line: #f0d9a6; --note-fg: #6b4a0f;
+  --chip-owner: #ede7fb; --chip-owner-fg: #4b2f8f;
+  --chip-admin: #e2ecfb; --chip-admin-fg: #1f4c8f;
+  --chip-keeper: #fdeee2; --chip-keeper-fg: #8a3d10;
+  --chip-acct: #eef0f2; --chip-acct-fg: #3b4650;
+  --shadow: 0 1px 2px rgba(23, 32, 27, .06), 0 8px 24px rgba(23, 32, 27, .06);
+  --display: "Unbounded", "Golos Text", system-ui, sans-serif;
+  --body: "Golos Text", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111613; --surface: #18201b; --fg: #e5ece7; --muted: #9aa8a0; --line: #2a352e;
+  --accent: #6fbf95; --accent-soft: #1d2d24; --accent-fg: #0f1612;
+  --note: #2a2316; --note-line: #4d3f20; --note-fg: #f1d9a3;
+  --chip-owner: #2a2342; --chip-owner-fg: #cbbcf5; --chip-admin: #1b2a40; --chip-admin-fg: #a9c6f2;
+  --chip-keeper: #3a2618; --chip-keeper-fg: #f3c3a0; --chip-acct: #252b30; --chip-acct-fg: #c4ccd3;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25); color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111613; --surface: #18201b; --fg: #e5ece7; --muted: #9aa8a0; --line: #2a352e;
+  --accent: #6fbf95; --accent-soft: #1d2d24; --accent-fg: #0f1612;
+  --note: #2a2316; --note-line: #4d3f20; --note-fg: #f1d9a3;
+  --chip-owner: #2a2342; --chip-owner-fg: #cbbcf5; --chip-admin: #1b2a40; --chip-admin-fg: #a9c6f2;
+  --chip-keeper: #3a2618; --chip-keeper-fg: #f3c3a0; --chip-acct: #252b30; --chip-acct-fg: #c4ccd3;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25); color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.6; padding-inline: 16px; padding-block: 0 64px }
+.wrap { max-width: 920px; margin: 0 auto }
+header.top { padding-block: 44px 28px; border-bottom: 1px solid var(--line); margin-bottom: 8px }
+.kicker { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 600 }
+h1 { font-family: var(--display); font-weight: 700; font-size: clamp(28px, 5vw, 44px); line-height: 1.12; margin: 10px 0 14px; text-wrap: balance; letter-spacing: -.01em }
+.lead { font-size: 18px; color: var(--muted); max-width: 65ch; margin: 0 }
+.lead b { color: var(--fg); font-weight: 600 }
+
+nav.toc { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; margin: 26px 0 6px }
+nav.toc a { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--fg); text-decoration: none; min-width: 0 }
+nav.toc a:hover, nav.toc a:focus-visible { border-color: var(--accent); outline: none }
+nav.toc .t { font-weight: 600; font-size: 15px; line-height: 1.35 }
+nav.toc .w { font-size: 12.5px; color: var(--muted) }
+
+section.upd { padding-block: 40px 8px; border-bottom: 1px solid var(--line) }
+section.upd:last-of-type { border-bottom: 0 }
+.area { font-size: 12.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 600 }
+h2 { font-family: var(--display); font-weight: 500; font-size: clamp(21px, 3.2vw, 27px); line-height: 1.25; margin: 6px 0 12px; text-wrap: balance }
+p { margin: 0 0 12px; max-width: 68ch }
+.who { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 14px; font-size: 13px; color: var(--muted) }
+.chip { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 12.5px; font-weight: 600; white-space: nowrap }
+.chip.owner { background: var(--chip-owner); color: var(--chip-owner-fg) }
+.chip.admin { background: var(--chip-admin); color: var(--chip-admin-fg) }
+.chip.keeper { background: var(--chip-keeper); color: var(--chip-keeper-fg) }
+.chip.acct { background: var(--chip-acct); color: var(--chip-acct-fg) }
+ol.steps { margin: 4px 0 16px; padding-left: 1.4em; max-width: 68ch }
+ol.steps li { margin-bottom: 6px; padding-left: 4px }
+ul.points { margin: 4px 0 16px; padding-left: 1.2em; max-width: 68ch }
+ul.points li { margin-bottom: 5px }
+.ui { font-weight: 600; white-space: nowrap; background: var(--accent-soft); color: var(--fg); border-radius: 5px; padding: 0 5px }
+.note { background: var(--note); border: 1px solid var(--note-line); color: var(--note-fg); border-radius: 10px; padding: 10px 14px; margin: 0 0 16px; max-width: 68ch; font-size: 15px }
+figure { margin: 18px 0 8px }
+figure .shot { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow) }
+figure img { display: block; width: 100%; height: auto }
+figure.small { max-width: 560px }
+figcaption { font-size: 13px; color: var(--muted); margin-top: 8px }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px }
+.pair figure { margin-top: 10px; min-width: 0 }
+@media (max-width: 720px) { .pair { grid-template-columns: 1fr } }
+footer.end { margin-top: 36px; padding: 18px; border-radius: 12px; background: var(--accent-soft); font-size: 15px; max-width: 920px }
+a { color: var(--accent) }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important } }
+html { scroll-behavior: smooth }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="kicker">Система «Сад Будущего» · октябрь 2026</div>
+    <h1>Что нового в системе</h1>
+    <p class="lead">За последние дни в системе появились проекты, связанные отчёты, возмещение чеков сотрудникам, корзина на складе и отдельные учётные записи для <b>кладовщика</b> и <b>ответственного за уборку</b>. Ниже — что изменилось, кого это касается и как этим пользоваться.</p>
+    <nav class="toc" aria-label="Обновления">
+      <a href="#sklad-oplata"><span class="t">📦 Оплаченные счета сами попадают на склад</span><span class="w">Владелец, администраторы, кладовщик, уборка</span></a>
+      <a href="#korzina"><span class="t">🧺 Корзина на складе</span><span class="w">Все, кто работает со складом</span></a>
+      <a href="#poisk"><span class="t">🔍 Поиск позиций в формах склада</span><span class="w">Все, кто работает со складом</span></a>
+      <a href="#kladovshik"><span class="t">🧰 Кладовщик и ответственный за уборку</span><span class="w">Новые учётные записи</span></a>
+      <a href="#proekty"><span class="t">📁 Проекты и статьи расходов</span><span class="w">Владелец, администраторы</span></a>
+      <a href="#vozmeshchenie"><span class="t">💵 Возмещение чеков сотрудникам</span><span class="w">Личный бюджет, наличные</span></a>
+      <a href="#otchety"><span class="t">🔗 Связанные отчёты</span><span class="w">Обслуживание территории</span></a>
+      <a href="#prochee"><span class="t">⚙️ Чтение счетов и резервная копия</span><span class="w">Работает само</span></a>
+    </nav>
+  </header>
+
+  <section class="upd" id="sklad-oplata">
+    <div class="area">Бюджет → Склад</div>
+    <h2>📦 Оплаченные счета сами попадают на склад</h2>
+    <div class="who">Для кого: <span class="chip owner">Владелец</span><span class="chip admin">Администратор</span><span class="chip admin">Администратор 2</span><span class="chip keeper">Кладовщик</span><span class="chip keeper">Ответственный за уборку</span></div>
+    <p>Раньше после оплаты счёта товар вносили на склад вручную, строку за строкой. Теперь это делается автоматически.</p>
+    <ol class="steps">
+      <li>При создании расхода в бюджете «ТО и зарплаты» или «Личный бюджет» выберите в поле <span class="ui">📦 После оплаты — на склад</span>, кому пойдёт товар: кладовщику (инструмент, оборудование, материалы) или ответственному за уборку (уборка, гигиена, химия).</li>
+      <li>После согласования и оплаты счёт сам появится вверху страницы «Склад» у нужного ответственного, в блоке <span class="ui">Оплачено — ждёт приёмки</span>.</li>
+      <li>Когда товар привезли, ответственный нажимает <span class="ui">📥 Принять</span>. Система сама читает скан счёта и заполняет позиции и количество.</li>
+      <li>Ответственный сверяет количество с фактической поставкой и сохраняет. Товар зачислен на склад, счёт уходит из списка.</li>
+    </ol>
+    <div class="note">К заявке на оплату обязательно прикладывайте скан или фото счёта — без него позиции придётся выбирать вручную. Подтверждение приёмки оставлено специально: оплачено ещё не значит доставлено.</div>
+    <figure><div class="shot"><img src="/novoe/img/budgetform.png" alt="Форма нового расхода с полями «Проект», «Статья расхода», «После оплаты — на склад» и «Оплачено сотрудником — к возмещению»" loading="lazy"></div><figcaption>Форма расхода: проект, статья, «после оплаты — на склад» и возмещение сотруднику. Пример на тестовых данных.</figcaption></figure>
+    <figure><div class="shot"><img src="/novoe/img/catalog.png" alt="Склад: блок «Оплачено — ждёт приёмки на склад» с кнопкой «Принять»" loading="lazy"></div><figcaption>Вверху склада — оплаченные счета, ждущие приёмки. Пример на тестовых данных.</figcaption></figure>
+  </section>
+
+  <section class="upd" id="korzina">
+    <div class="area">Склад</div>
+    <h2>🧺 Корзина: выдать несколько позиций одним актом</h2>
+    <div class="who">Для кого: все, кто работает со складом</div>
+    <p>Можно листать каталог с фотографиями и собирать в корзину всё, что нужно выдать сотруднику, — как в интернет-магазине.</p>
+    <ol class="steps">
+      <li>На карточке позиции нажмите <span class="ui">🧺 В корзину</span>. Карточка выделится синим, появятся кнопки <span class="ui">− 1 +</span> для количества. Больше, чем есть на складе, выбрать нельзя.</li>
+      <li>Наверху страницы кнопка <span class="ui">🧺 Корзина</span> показывает, сколько позиций выбрано.</li>
+      <li>Нажмите на неё — откроется один акт выдачи со всеми позициями. Выберите сотрудника, при необходимости поправьте количество или уберите лишнее и нажмите <span class="ui">Выдать и оформить акт</span>.</li>
+    </ol>
+    <p>Корзина у каждого своя и хранится, пока открыт браузер.</p>
+    <figure><div class="shot"><img src="/novoe/img/basket.png" alt="Окно «Выдача из корзины» с тремя позициями и выбранным сотрудником" loading="lazy"></div><figcaption>Выдача из корзины: все выбранные позиции в одном акте. Пример на тестовых данных.</figcaption></figure>
+  </section>
+
+  <section class="upd" id="poisk">
+    <div class="area">Склад</div>
+    <h2>🔍 Поиск позиций в формах склада</h2>
+    <div class="who">Для кого: все, кто работает со складом</div>
+    <p>В формах выдачи, поступления и списания над списком позиций есть строка поиска. Начните печатать название, инвентарный номер или место хранения — появятся подходящие позиции с фото и остатком на складе. Нажатие добавляет позицию в акт, Enter выбирает первую. При поступлении можно сразу завести новую позицию под набранным названием.</p>
+    <figure><div class="shot"><img src="/novoe/img/search.png" alt="Форма выдачи: поиск «дрель» показывает позицию с фото и остатком" loading="lazy"></div><figcaption>Поиск в форме выдачи. Пример на тестовых данных.</figcaption></figure>
+  </section>
+
+  <section class="upd" id="kladovshik">
+    <div class="area">Склад · учётные записи</div>
+    <h2>🧰 Кладовщик и ответственный за уборку</h2>
+    <div class="who">Для кого: <span class="chip keeper">Кладовщик</span><span class="chip keeper">Ответственный за уборку</span><span class="chip owner">Владелец</span></div>
+    <p>У склада теперь два ответственных, у каждого своя учётная запись и свой участок:</p>
+    <ul class="points">
+      <li><b>Кладовщик</b> — инструмент, оборудование и материалы для ремонта.</li>
+      <li><b>Ответственный за уборку</b> — средства для уборки, гигиены и химия (в том числе для бассейна).</li>
+    </ul>
+    <p>Каждый сразу попадает на страницу «Склад» и видит только свой участок: принимает товар, выдаёт сотрудникам, принимает возврат и списывает. Список сотрудников общий. Владелец и администратор по-прежнему видят весь склад.</p>
+    <div class="note">Пароли для этих учётных записей задаёт владелец в «Настройки доступа». Пока пароль не задан, войти нельзя.</div>
+    <figure><div class="shot"><img src="/novoe/img/keeper.png" alt="Склад глазами кладовщика: строка «Ваш участок», только его позиции" loading="lazy"></div><figcaption>Так склад выглядит у кладовщика. Пример на тестовых данных.</figcaption></figure>
+  </section>
+
+  <section class="upd" id="proekty">
+    <div class="area">Бюджет · Обслуживание территории</div>
+    <h2>📁 Проекты и статьи расходов</h2>
+    <div class="who">Для кого: <span class="chip owner">Владелец</span><span class="chip admin">Администратор</span><span class="chip admin">Администратор 2</span></div>
+    <p>Проект объединяет расходы из разных бюджетов и отчёты о работах по одному объекту — например, «Забор» или «Котельная». В форме расхода и в форме работы есть поле <span class="ui">📁 Проект</span>; новый проект можно создать прямо оттуда. Для расходов добавлено поле <span class="ui">Статья расхода</span>: материалы, работы и зарплата, транспорт и другие.</p>
+    <p>Кнопка <span class="ui">📁 Проекты</span> в бюджете и в «Обслуживании территории» открывает страницу проекта: сколько он стоил всего, сколько оплачено и сколько ещё нет, разбивка по статьям, все расходы и все отчёты о работах.</p>
+    <figure><div class="shot"><img src="/novoe/img/project.png" alt="Страница проекта «Забор»: итог расходов, оплачено, не оплачено, разбивка по статьям" loading="lazy"></div><figcaption>Страница проекта. Пример на тестовых данных.</figcaption></figure>
+  </section>
+
+  <section class="upd" id="vozmeshchenie">
+    <div class="area">Личный бюджет · фонд «Наличные»</div>
+    <h2>💵 Возмещение чеков сотрудникам</h2>
+    <div class="who">Для кого: <span class="chip owner">Владелец</span><span class="chip admin">Администратор</span><span class="chip admin">Администратор 2</span></div>
+    <p>Когда сотрудник оплатил покупку из своих денег, это теперь видно и закрывается по порядку:</p>
+    <ol class="steps">
+      <li>В форме расхода Личного бюджета с фондом «Наличные» отметьте <span class="ui">💵 Оплачено сотрудником — к возмещению</span> и укажите сотрудника. Чек проходит согласование как обычно.</li>
+      <li>Когда деньги выдаются сотруднику, откройте <span class="ui">💵 Выплаты по чекам</span> (вкладка «Личный бюджет»), отметьте чеки, введите сумму расписки и приложите скан расписки или акта.</li>
+      <li>Система сама считает: «Выбрано чеков: X на сумму Y — сумма расписки Z» и показывает разницу. После сохранения каждый чек помечен «Закрыт распиской № … от … — ФИО».</li>
+    </ol>
+    <div class="note">Сама выплата отдельным расходом не учитывается — иначе одни и те же деньги посчитались бы дважды. Бухгалтер в этом не участвует: такие чеки не попадают в её очередь на оплату.</div>
+    <div class="pair">
+      <figure><div class="shot"><img src="/novoe/img/settle.png" alt="Форма «Выплата по чекам»: сотрудник, сумма, отмеченные чеки, разница" loading="lazy"></div><figcaption>Выплата по чекам. Пример на тестовых данных.</figcaption></figure>
+      <figure><div class="shot"><img src="/novoe/img/budgetcards.png" alt="Карточки расходов с метками «К возмещению» и кнопкой «Выплатить по расписке»" loading="lazy"></div><figcaption>Чеки к возмещению в бюджете. Пример на тестовых данных.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="upd" id="otchety">
+    <div class="area">Обслуживание территории</div>
+    <h2>🔗 Связанные отчёты</h2>
+    <div class="who">Для кого: <span class="chip owner">Владелец</span><span class="chip admin">Администратор</span></div>
+    <p>Этапы одной работы теперь связаны между собой: приёмка материалов, закупка инструмента, сами работы, итог. Нажмите на название работы — откроется её карточка с блоком <span class="ui">🔗 Связанные отчёты</span>. Кнопка <span class="ui">Связать с другими отчётами</span> открывает поиск по всем отчётам за все месяцы, можно отметить сразу несколько. Связь появляется в обоих отчётах и убирается из обоих сразу.</p>
+    <div class="pair">
+      <figure><div class="shot"><img src="/novoe/img/maint.png" alt="Карточка отчёта с блоком «Связанные отчёты»" loading="lazy"></div><figcaption>Карточка отчёта со связанными этапами. Пример на тестовых данных.</figcaption></figure>
+      <figure><div class="shot"><img src="/novoe/img/picker.png" alt="Окно выбора отчётов для связи с поиском и отметками" loading="lazy"></div><figcaption>Выбор отчётов для связи. Пример на тестовых данных.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="upd" id="prochee">
+    <div class="area">Работает само</div>
+    <h2>⚙️ Чтение счетов и резервная копия</h2>
+    <p><b>Чтение счетов ИИ стало надёжнее.</b> Длинные счета (десятки позиций) раньше иногда не успевали прочитаться и выдавали ошибку «HTTP 504». Теперь ИИ читает быстрее, а если документ всё-таки слишком длинный, система скажет об этом понятными словами.</p>
+    <p><b>Резервная копия каждую неделю.</b> Каждое воскресенье ночью система сохраняет копию всех данных и всех файлов — фото, сканов, документов. Копии данных хранятся год, файлы — без срока, даже удалённые из системы. Владелец видит дату последней копии вверху «Настройки доступа».</p>
+    <figure class="small"><div class="shot"><img src="/novoe/img/backup.png" alt="Строка «Резервная копия» в настройках" loading="lazy"></div><figcaption>Так владелец видит последнюю резервную копию.</figcaption></figure>
+  </section>
+
+  <footer class="end">Вопросы и пожелания по системе — владельцу. Все снимки экрана на этой странице сделаны на тестовых данных.</footer>
+</div>
+</body>
+</html>

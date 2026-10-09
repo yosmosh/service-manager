@@ -20,7 +20,7 @@ $bucket = 'sad-budushego-site'
 $root = Split-Path -Parent $PSScriptRoot
 
 $types = @{ '.html' = 'text/html; charset=utf-8'; '.js' = 'application/javascript; charset=utf-8';
-            '.css' = 'text/css; charset=utf-8'; '.woff2' = 'font/woff2' }
+            '.css' = 'text/css; charset=utf-8'; '.woff2' = 'font/woff2'; '.png' = 'image/png' }
 $noCache = 'no-store, no-cache, must-revalidate'
 $forever = 'public, max-age=31536000, immutable'
 
@@ -30,6 +30,12 @@ $files = @(
 )
 Get-ChildItem -Path (Join-Path $root 'vendor') -Recurse -File | ForEach-Object {
   $files += @{ path = $_.FullName.Substring($root.Length + 1).Replace('\', '/'); cache = $forever }
+}
+# The staff guide to what's new, open to anyone with the link at /novoe (no sign-in; kept out
+# of search engines by its own robots tag). Its pictures may be cached for a day.
+$files += @{ path = 'novoe/index.html'; key = 'novoe'; cache = $noCache }
+Get-ChildItem -Path (Join-Path $root 'novoe\img') -File | ForEach-Object {
+  $files += @{ path = 'novoe/img/' + $_.Name; cache = 'public, max-age=86400' }
 }
 
 if ($Rehearsal) {
@@ -53,18 +59,19 @@ if ($Rehearsal) {
 
 foreach ($f in $files) {
   $full = Join-Path $root $f.path
+  $key = if ($f.key) { $f.key } else { $f.path }
   $type = $types[[IO.Path]::GetExtension($full).ToLower()]
   if (-not $type) { throw "No content type for $($f.path)" }
   # A dropped connection to Yandex's API is retried a few times before giving up.
   $ok = $false
   for ($try = 1; $try -le 4 -and -not $ok; $try++) {
     $ErrorActionPreference = 'Continue'
-    & $yc storage s3api put-object --bucket $bucket --key $f.path --body $full --content-type $type --cache-control $f.cache 2>&1 | Out-Null
+    & $yc storage s3api put-object --bucket $bucket --key $key --body $full --content-type $type --cache-control $f.cache 2>&1 | Out-Null
     $ok = ($LASTEXITCODE -eq 0)
     $ErrorActionPreference = 'Stop'
     if (-not $ok) { Start-Sleep -Seconds (3 * $try) }
   }
   if (-not $ok) { throw "Upload failed: $($f.path)" }
-  Write-Output ("uploaded  {0,-60} {1}" -f $f.path, $f.cache)
+  Write-Output ("uploaded  {0,-60} {1}" -f $key, $f.cache)
 }
 Write-Output "Done: $($files.Count) files."
