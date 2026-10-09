@@ -8441,6 +8441,8 @@ function openWhMove(type, preset) {
       ${type === 'writeoff' ? `<div class="form-group"><label>Причина</label><select class="form-control" id="whm-reason">${WH_WRITEOFF_REASONS.map(r => `<option>${r}</option>`).join('')}</select></div>` : ''}
     </div>
     <div style="font-weight:700;font-size:13px;margin-bottom:6px">Позиции</div>
+    ${type !== 'return' ? `<div style="margin-bottom:8px"><input class="form-control" id="whm-find" autocomplete="off" placeholder="🔍 Найти: название, инв. номер, место, категория…" oninput="_whmFind('${type}')" onkeydown="if(event.key==='Enter'){event.preventDefault();_whmFindPick('${type}',0)}">
+      <div id="whm-find-res"></div></div>` : ''}
     <div id="whm-lines" ${type === 'receipt' ? 'oninput="_whReceiptTotal()"' : ''}></div>
     ${type !== 'return' ? `<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;margin-bottom:12px" onclick="_whAddLine('${type}')">+ Добавить позицию</button>` : ''}
     ${type === 'receipt' ? `<div id="whm-total" data-invoice="${bt ? Number(bt.amount) || 0 : ''}" style="font-size:12px;color:#475569;margin:-4px 0 12px"></div>` : ''}
@@ -8631,6 +8633,63 @@ function _whReceiptTotal() {
       : ' ✓');
   }
   el.innerHTML = html;
+}
+
+// ---------- finding an item in a form ----------
+// Typing in the form's search lists the matching items — the same ones its lines offer — with
+// their picture and what's on the shelf; a tap (or Enter for the first) puts the item on a line:
+// the line it's already on, the first empty one, or a new one. A receipt can also take something
+// not in the catalogue yet, under the name typed.
+let _whmResults = [];
+function _whmFind(type) {
+  const box = document.getElementById('whm-find-res');
+  const q = String((document.getElementById('whm-find') || {}).value || '').trim().toLowerCase();
+  if (!box) return;
+  if (!q) { box.innerHTML = ''; _whmResults = []; return; }
+  const stock = _whStockMap();
+  const words = q.split(/\s+/);
+  _whmResults = getWhItems().filter(i => _whMine(i) && (type === 'receipt' || (stock[i.id] || 0) > 0))
+    .filter(i => { const hay = [i.name, i.invNo, i.location, i.supplier, _whCatName(i.category)].join(' ').toLowerCase().replace(/ё/g, 'е'); return words.every(w => hay.includes(w.replace(/ё/g, 'е'))); })
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru')).slice(0, 8)
+    .map(i => ({ item: i }));
+  if (type === 'receipt') _whmResults.push({ newName: String(document.getElementById('whm-find').value).trim() });
+  box.innerHTML = `<div style="border:1px solid #e2e8f0;border-radius:10px;margin-top:4px;overflow:hidden;background:#fff">${_whmResults.map((r, k) => {
+    if (r.newName) return `<div class="whm-hit" onclick="_whmFindPick('${type}',${k})" style="padding:8px 10px;cursor:pointer;font-size:13px;color:#1d4ed8;border-top:${k ? '1px solid #f1f5f9' : '0'}">➕ Новая позиция в каталог: «${_escHtml(r.newName)}»</div>`;
+    const i = r.item, img = _whMainImg(i);
+    return `<div class="whm-hit" onclick="_whmFindPick('${type}',${k})" style="display:flex;gap:10px;align-items:center;padding:6px 10px;cursor:pointer;border-top:${k ? '1px solid #f1f5f9' : '0'}">
+      ${img ? `<img class="whthumb" data-fid="${img}" style="width:40px;height:40px;object-fit:contain;border-radius:6px;background:#f8fafc;flex-shrink:0">` : `<div style="width:40px;height:40px;border-radius:6px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">${_whIcon(i.category)}</div>`}
+      <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escHtml(i.name)}</div>
+        <div style="font-size:11px;color:#64748b">${_escHtml(i.invNo || '')}${i.location ? ' · 📍 ' + _escHtml(i.location) : ''}</div></div>
+      <div style="font-size:12px;color:#475569;white-space:nowrap">есть ${_whFmtQ(stock[i.id] || 0)} ${_escHtml(i.unit || '')}</div></div>`;
+  }).join('') || '<div style="padding:10px;font-size:13px;color:#94a3b8">Ничего не найдено</div>'}</div>`;
+  loadWhImages();
+}
+function _whmFindPick(type, k) {
+  const r = _whmResults[k];
+  if (!r) return;
+  const rows = Array.from(document.querySelectorAll('#whm-lines .whm-line'));
+  let row = null;
+  if (r.item) {
+    // Already on a line: one more of it there.
+    row = rows.find(x => (x.querySelector('.whm-item') || {}).value === r.item.id);
+    if (row) { const q = row.querySelector('.whm-qty'); if (q) q.value = _whQ(Number(q.value || 0) + 1); }
+    else {
+      row = rows.find(x => !(x.querySelector('.whm-item') || {}).value);
+      if (row) { const sel = row.querySelector('.whm-item'); sel.value = r.item.id; if (type === 'receipt') _whLineItemChanged(sel); }
+      else { _whAddLine(type, r.item.id); row = document.querySelector('#whm-lines .whm-line:last-child'); if (type === 'receipt') _whLineItemChanged(row.querySelector('.whm-item')); }
+    }
+  } else {
+    const empty = rows.find(x => !(x.querySelector('.whm-item') || {}).value);
+    if (empty) empty.remove();
+    _whAddLine('receipt', '__new', { name: r.newName });
+    row = document.querySelector('#whm-lines .whm-line:last-child');
+  }
+  const f = document.getElementById('whm-find');
+  if (f) f.value = '';
+  _whmFind(type);
+  const qty = row && row.querySelector('.whm-qty');
+  if (qty) { qty.focus(); qty.select && qty.select(); }
+  _whReceiptTotal();
 }
 
 // Items a line may pick, for that kind of document.
