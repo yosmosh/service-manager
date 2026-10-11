@@ -147,10 +147,15 @@ try {
     & (Join-Path $PSScriptRoot 'selfhost-windows.ps1')
     Say '== waiting for https://www.sad-budushego.ru (up to 5 minutes)'
     $deadline = (Get-Date).AddMinutes(5); $ok = $false
+    $locals = @(Get-NetAdapter -Physical | Where-Object Status -eq 'Up' | ForEach-Object { Get-NetIPAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue } | ForEach-Object IPAddress)
     do {
       Start-Sleep -Seconds 15
-      $code = & (Join-Path $env:SystemRoot 'System32\curl.exe') -s -o NUL -m 15 -w '%{http_code}' 'https://www.sad-budushego.ru/healthz' 2>$null
-      $ok = "$code" -eq '200'
+      # Through this house's own router, to its internet address — not through the VPN, whose
+      # server may not reach a home address at all. The certificate is checked as any browser does.
+      foreach ($l in $locals) {
+        $code = & (Join-Path $env:SystemRoot 'System32\curl.exe') -s -o NUL -m 15 -w '%{http_code}' --interface $l --resolve "www.sad-budushego.ru:443:$ip" 'https://www.sad-budushego.ru/healthz' 2>$null
+        if ("$code" -eq '200') { $ok = $true; break }
+      }
     } while (-not $ok -and (Get-Date) -lt $deadline)
     Say $(if ($ok) { '== https://www.sad-budushego.ru answers from this computer' } else { "== not answering yet over HTTPS — see C:\SadBudushego\logs\caddy.log" })
 
