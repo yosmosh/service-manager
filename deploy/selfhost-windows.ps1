@@ -26,7 +26,8 @@
 # The scheduled task «SadBudushego Server» starts it at boot, before anyone signs in, as the
 # low-rights account LOCAL SERVICE (selfhost/windows-service.js keeps the server and Caddy
 # running); a firewall rule lets the internet reach Caddy on ports 80 and 443; and the power
-# settings keep the computer awake while it is on mains power, lid closed or not.
+# settings keep the computer awake (mains or battery, lid closed or not), its network adapter on,
+# and Windows Update restarts between 00:00 and 06:00 only.
 
 param(
   [switch]$ImportData,
@@ -272,12 +273,26 @@ www.sad-budushego.ru, sad-budushego.ru {
       Get-NetFirewallRule -Name 'SadBudushego-Web' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
       New-NetFirewallRule -Name 'SadBudushego-Web' -DisplayName 'Сад Будущего — сайт (80, 443)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 80, 443 -Program $caddyExe -Profile Any | Out-Null
 
-      # Awake on mains power, lid closed or not. (On battery as before.)
-      Write-Output '== power: no sleep on mains power, closing the lid does nothing'
-      & powercfg.exe /change standby-timeout-ac 0
-      & powercfg.exe /change hibernate-timeout-ac 0
+      # Never asleep — on the battery either: a power cut takes the router down too, and when the
+      # power comes back the computer must still be awake, or it serves nobody until someone wakes
+      # it. (A battery run flat still hibernates, as before.) The lid does nothing; the USB network
+      # adapter is never put to sleep to save power.
+      Write-Output '== power: never asleep (mains or battery), the lid does nothing, the network adapter always on'
+      foreach ($k in 'standby-timeout-ac', 'standby-timeout-dc', 'hibernate-timeout-ac', 'hibernate-timeout-dc') { & powercfg.exe /change $k 0 }
       & powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0
+      & powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0
+      & powercfg.exe /setacvalueindex SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 0
+      & powercfg.exe /setdcvalueindex SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 0
       & powercfg.exe /setactive SCHEME_CURRENT
+      Get-NetAdapter -Physical | ForEach-Object { try { Disable-NetAdapterPowerManagement -Name $_.Name -NoRestart -ErrorAction Stop } catch { } }
+
+      # Windows Update restarts the computer only between 00:00 and 06:00, not in the working day.
+      Write-Output '== Windows Update: restarts only between 00:00 and 06:00'
+      $wu = 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings'
+      if (-not (Test-Path $wu)) { New-Item -Path $wu -Force | Out-Null }
+      Set-ItemProperty -Path $wu -Name ActiveHoursStart -Value 6 -Type DWord
+      Set-ItemProperty -Path $wu -Name ActiveHoursEnd -Value 0 -Type DWord
+      Set-ItemProperty -Path $wu -Name SmartActiveHoursState -Value 0 -Type DWord
     }
 
     # ---- first data ----
