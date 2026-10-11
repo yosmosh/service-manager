@@ -1615,10 +1615,11 @@ async function openSettingsModal() {
   if (isOwner && _YDB) _showBackupStatus();
 }
 
-// The weekly backup (Yandex function «backup», Sundays 03:00 Moscow) leaves its report in
+// The nightly backup (Yandex function «backup», 03:00 Moscow) leaves its report in
 // appdata/backup_status: the last run, and the last one that went well. Shown to the owner in
 // Настройки, so a backup that silently stopped working is noticed.
-const _BACKUP_STALE_DAYS = 9;
+// A night may be missed (an outage); two in a row turn the line red.
+const _BACKUP_STALE_DAYS = 2;
 async function _showBackupStatus() {
   const box = document.getElementById('backup-status-box');
   if (!box) return;
@@ -1636,9 +1637,9 @@ async function _showBackupStatus() {
   el.style.color = fresh ? '#166534' : '#991b1b';
   el.innerHTML = !ok
     ? '💾 <b>Резервной копии ещё нет</b>' + (last && last.error ? ' — ошибка: ' + _escHtml(last.error) : '')
-    : `💾 <b>Резервная копия: ${when(ok.at)}</b>${files}${fresh ? ' ✅' : ' — <b>больше недели назад, проверьте!</b>'}`
+    : `💾 <b>Резервная копия: ${when(ok.at)}</b>${files}${fresh ? ' ✅' : ' — <b>давно не обновлялась, проверьте!</b>'}`
       + (last && !last.ok && last.at !== ok.at ? `<div style="margin-top:4px">⚠️ Последний запуск ${when(last.at)} с ошибкой: ${_escHtml(last.error || '')}</div>` : '')
-      + '<div style="margin-top:4px;font-size:11px;opacity:.8">Каждое воскресенье ночью; копии данных хранятся год, файлы — без срока.</div>';
+      + '<div style="margin-top:4px;font-size:11px;opacity:.8">Каждую ночь; копии данных хранятся год, файлы — без срока. Копия также скачивается на компьютер владельца.</div>';
 }
 
 function saveNotifyConfig() {

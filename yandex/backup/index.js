@@ -1,4 +1,4 @@
-// Yandex Cloud Function «backup», run every Sunday night by a timer trigger (and by hand when
+// Yandex Cloud Function «backup», run every night by a timer trigger (and by hand when
 // needed). backup.js does the work; this file connects it to YDB and the two buckets.
 //
 // It runs as service account «backup»: it may read the database and the files, write the

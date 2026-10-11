@@ -9,7 +9,7 @@
 #       storage.uploader         read the files, add objects to the backup bucket (no deleting)
 #       functions.functionInvoker  so the timer may start the function
 #   - Cloud Function «backup» (its code goes up with deploy\yandex-backup.ps1)
-#   - timer trigger «backup-weekly»: Sundays 00:00 UTC (03:00 Moscow)
+#   - timer trigger «backup-weekly» (the name stays): every night 00:00 UTC (03:00 Moscow)
 # The bucket sad-budushego-backup (private, versioning on, data snapshots kept a year, old
 # versions 90 days) was created on 2026-10-09.
 # (The yc CLI's serverless commands fail on this machine — see deploy\yandex-data-api.ps1 — so
@@ -62,9 +62,9 @@ $trs = Invoke-RestMethod -Uri "https://serverless-triggers.api.cloud.yandex.net/
 $tr = @($trs.triggers) | Where-Object { $_.name -eq 'backup-weekly' } | Select-Object -First 1
 if (-not $tr) {
   $body = @{
-    folderId = $folderId; name = 'backup-weekly'; description = 'Sundays 03:00 Moscow'
+    folderId = $folderId; name = 'backup-weekly'; description = 'Every night 03:00 Moscow'
     rule = @{ timer = @{
-      cronExpression = '0 0 ? * SUN *'
+      cronExpression = '0 0 ? * * *'
       invokeFunctionWithRetry = @{ functionId = $fn.id; functionTag = '$latest'; serviceAccountId = $sa.id
         retrySettings = @{ retryAttempts = '2'; interval = '60s' } }   # Yandex allows 10s-1m
     } }
