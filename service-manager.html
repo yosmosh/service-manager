@@ -742,7 +742,7 @@ const PROVIDERS = [
     },
     schedules:[{desc:'ТО холодильного оборудования (ежемесячно)', months:[1,2,3,4,5,6,7,8,9,10,11,12]}] },
 
-  { id:'leshtaev', name:'Лештаев В.Б. ИП', cat:'Вентиляция / Кондиционирование', emoji:'💨', color:'#78716c', bg:'#fafaf9',
+  { id:'leshtaev', name:'Лештаев В.Б. ИП', cat:'Вентиляция / Кондиционирование', emoji:'💨', color:'#78716c', bg:'#fafaf9', ended:'2026-07',
     details:{
       description:'Техническое обслуживание вентиляционных систем столовой и бассейна, а также климатических систем кондиционирования.',
       services:['ТО приточно-вытяжных вентиляционных установок столовой','ТО кондиционирующих блоков (К/К) столовой','ТО системы вентиляции бассейна (приток и вытяжка)','Замена фильтров и расходных элементов','Проверка и балансировка воздухообмена в помещениях'],
@@ -796,6 +796,19 @@ const PROVIDERS = [
     },
     schedules:[{desc:'ТО систем видеонаблюдения (СВН) и структурированной кабельной сети (4 выезда в месяц)', months:[1,2,3,4,5,6,7,8,9,10,11,12], visits:4}] }
 ];
+
+// A provider we no longer work with: `ended: 'YYYY-MM'`, the first month nothing is due from it.
+// Its earlier months stay exactly as they were; from that month on no visit is expected of it
+// anywhere — dashboard, provider page, reports, journal, payments — so it never shows as a
+// missed service, and it leaves the lists of current providers (the menu keeps it under
+// «Завершённые», for its history).
+function provEnded(p, y, m) {
+  if (!p || !p.ended) return false;
+  const [ey, em] = p.ended.split('-').map(Number);
+  return y > ey || (y === ey && m >= em);
+}
+const provDue = (p, s, y, m) => s.months.includes(m) && !provEnded(p, y, m);
+const provIsCurrent = p => { const d = new Date(); return !provEnded(p, d.getFullYear(), d.getMonth() + 1); };
 
 const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 const MONTHS_SHORT = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
@@ -3974,6 +3987,7 @@ function renderDashboard() {
   PROVIDERS.forEach(p => {
     p.schedules.forEach(s => {
       s.months.forEach(m => {
+        if (provEnded(p, cy, m)) return;
         const required = s.visits || 1;
         total += required;
         const visits = getVisitData(p.id, cy, m, required);
@@ -3990,7 +4004,7 @@ function renderDashboard() {
   const thisMonth = [];
   PROVIDERS.forEach(p => {
     p.schedules.forEach(s => {
-      if (s.months.includes(realCm) && cy === realCy) {
+      if (cy === realCy && provDue(p, s, cy, realCm)) {
         const required = s.visits || 1;
         const visits = getVisitData(p.id, cy, realCm, required);
         const doneCnt = visits.filter(v => v.completed).length;
@@ -4032,7 +4046,7 @@ function renderDashboard() {
     const uY = dObj.getFullYear();
     PROVIDERS.forEach(function(pp) {
       pp.schedules.forEach(function(ss) {
-        if (!ss.months.includes(uM)) return;
+        if (!provDue(pp, ss, uY, uM)) return;
         const reqd = ss.visits || 1;
         const vdata = getVisitData(pp.id, uY, uM, reqd);
         const done2 = vdata.filter(function(v){ return v.completed; }).length;
@@ -4107,7 +4121,7 @@ function renderDashboard() {
         <div class="card">
           <div class="card-header"><h3>Все поставщики</h3></div>
           <div class="prov-grid">
-            ${PROVIDERS.map(p => `
+            ${PROVIDERS.filter(provIsCurrent).map(p => `
               <div class="prov-tile" onclick="showView('provider','${p.id}')">
                 <span style="font-size:16px;flex-shrink:0">${p.emoji}</span>
                 <div style="flex:1;min-width:0;overflow:hidden">
@@ -4134,12 +4148,12 @@ function renderProvider(p) {
 
   const cards = Array.from({length:12}, (_,i) => {
     const m = i + 1;
-    const sched = p.schedules.find(s => s.months.includes(m));
+    const sched = p.schedules.find(s => provDue(p, s, displayYear, m));
     const requiredVisits = sched ? (sched.visits || 1) : 0;
     const r = getRecord(p.id, displayYear, m);
     const visits = getVisitData(p.id, displayYear, m, requiredVisits);
     const doneCnt = visits.filter(v => v.completed).length;
-    const desc = sched?.desc || (r.description ? r.description : '');
+    const desc = sched?.desc || (r.description ? r.description : '') || (provEnded(p, displayYear, m) ? 'Договор завершён' : '');
 
     let status = 'none';
     if (requiredVisits === 0 && !r.description) status = 'none';
@@ -4173,6 +4187,7 @@ function renderProvider(p) {
 
   let pDone=0, pPending=0, pOver=0;
   p.schedules.forEach(s => s.months.forEach(m => {
+    if (provEnded(p, displayYear, m)) return;
     const required = s.visits || 1;
     const visits = getVisitData(p.id, displayYear, m, required);
     const doneCnt = visits.filter(v => v.completed).length;
@@ -4200,6 +4215,8 @@ function renderProvider(p) {
         </div>
       </div>
     </div>
+    ${p.ended ? `<div style="margin-bottom:14px;padding:10px 14px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;font-size:13px;color:#334155">
+      🛑 Сотрудничество завершено с ${p.ended.slice(5)}.${p.ended.slice(0, 4)} — с этого месяца визиты не ожидаются и в отчётах не учитываются. Прежние месяцы — без изменений.</div>` : ''}
 
     <div class="card">
       <div class="card-header">
@@ -4217,7 +4234,7 @@ function renderProvider(p) {
 // ==============================
 function openRecordModal(pid, yr, mo) {
   const p = PROVIDERS.find(x => x.id === pid);
-  const sched = p.schedules.find(s => s.months.includes(mo));
+  const sched = p.schedules.find(s => provDue(p, s, yr, mo));
   const requiredVisits = sched ? (sched.visits || 1) : 1;
   const visits = getVisitData(pid, yr, mo, requiredVisits);
   pendingFiles = [];
@@ -5649,7 +5666,7 @@ function _buildReportHTML() {
   // ── JOURNAL ──
   const jRows = [];
   PROVIDERS.forEach(p => {
-    const sched = p.schedules.find(s => s.months.includes(mo));
+    const sched = p.schedules.find(s => provDue(p, s, yr, mo));
     const r = getRecord(p.id, yr, mo);
     const req = sched ? (sched.visits||1) : 0;
     const visits = r.visits ? [...r.visits] : (r.completed !== undefined ? [{...r}] : []);
@@ -6488,7 +6505,7 @@ function openMaintModal(editId) {
       <label>📌 Добавить в журнал визитов поставщика</label>
       <select class="form-control" id="maint-provider">
         <option value="">— Не привязывать —</option>
-        ${PROVIDERS.map(p => `<option value="${p.id}" ${ex?.linkedProviderId===p.id?'selected':''}>${p.emoji} ${p.name}</option>`).join('')}
+        ${PROVIDERS.filter(p => provIsCurrent(p) || ex?.linkedProviderId === p.id).map(p => `<option value="${p.id}" ${ex?.linkedProviderId===p.id?'selected':''}>${p.emoji} ${p.name}</option>`).join('')}
       </select>
     </div>
     <div class="form-group">
@@ -7067,7 +7084,7 @@ function renderJournal() {
   // Gather all providers that have any activity or schedule in journalMonth/Year
   const rows = [];
   PROVIDERS.forEach(p => {
-    const sched = p.schedules.find(s => s.months.includes(journalMonth));
+    const sched = p.schedules.find(s => provDue(p, s, journalYear, journalMonth));
     const r = getRecord(p.id, journalYear, journalMonth);
     const required = sched ? (sched.visits || 1) : 0;
     const visits = r.visits
@@ -7293,10 +7310,12 @@ function renderPaymentTracker() {
     if (varIds.includes(p.id)) return ''; // skip variable-cost providers
     var price = getProviderMonthlyPrice(p.id);
     if (!price) return '';
+    if (months3.every(function(mo){ var k = p.id+'_'+mo.y+'_'+mo.m; return provEnded(p, mo.y, mo.m) && !(recs[k] && recs[k].paid); })) return '';
     var cells = months3.map(function(mo) {
       var key = p.id+'_'+mo.y+'_'+mo.m;
       var paid = recs[key] && recs[key].paid;
       if (paid) totalPaidByMonth[mo.y+'_'+mo.m] += price;
+      if (!paid && provEnded(p, mo.y, mo.m)) return '<td style="text-align:center;color:#94a3b8" title="Договор завершён">—</td>';
       var label = paid ? '✅' : '○';
       var bg = paid ? '#dcfce7' : '#fef2f2';
       var border = paid ? '#86efac' : '#fca5a5';
@@ -7341,7 +7360,7 @@ function renderFinance() {
   let knownCount = 0;
   const varIds = ['ruskhem','ekoregion','ruzoperator','licard'];
 
-  const rows = PROVIDERS.map(p => {
+  const rows = PROVIDERS.filter(provIsCurrent).map(p => {
     const price = getProviderMonthlyPrice(p.id);
     if (price !== null && price > 0) { monthlyTotal += price; knownCount++; }
     const isVariable = varIds.includes(p.id);
@@ -10770,10 +10789,13 @@ async function init() {
 
   // Build sidebar nav
   const nav = document.getElementById('providers-nav');
-  nav.innerHTML = PROVIDERS.map(p => `
-    <div class="nav-item" id="nav-${p.id}" onclick="showView('provider','${p.id}')">
+  const navItem = p => `
+    <div class="nav-item" id="nav-${p.id}" onclick="showView('provider','${p.id}')"${provIsCurrent(p) ? '' : ' style="opacity:.55"'}>
       <span>${p.emoji}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</span>
-    </div>`).join('');
+    </div>`;
+  const endedProvs = PROVIDERS.filter(p => !provIsCurrent(p));
+  nav.innerHTML = PROVIDERS.filter(provIsCurrent).map(navItem).join('')
+    + (endedProvs.length ? '<div class="sidebar-section-title" style="opacity:.7">Завершённые</div>' + endedProvs.map(navItem).join('') : '');
 
   // Back where they were, still logged in, if this load is the automatic post-deploy reload.
   _resumeAfterUpdate();
@@ -10922,7 +10944,7 @@ function renderContacts() {
   var canEdit = currentUser === 'admin' || currentUser === 'owner';
   var now2 = new Date();
 
-  var cards = PROVIDERS.map(function(p) {
+  var cards = PROVIDERS.filter(provIsCurrent).map(function(p) {
     var c = contacts[p.id] || {};
     var contractHtml = '';
     if (c.contract_end) {
@@ -10955,6 +10977,7 @@ function renderContacts() {
 
   // Expiring contracts alert
   var expiring = PROVIDERS.filter(function(p){
+    if (!provIsCurrent(p)) return false;
     var c = contacts[p.id]||{};
     if (!c.contract_end) return false;
     var d = Math.round((new Date(c.contract_end)-now2)/86400000);
@@ -11024,6 +11047,7 @@ function renderReports() {
     p.schedules.forEach(function(s) {
       s.months.forEach(function(m) {
         if (cy === now3.getFullYear() && m > cm) return;
+        if (provEnded(p, cy, m)) return;
         var reqd = s.visits || 1;
         total += reqd;
         var vdata = getVisitData(p.id, cy, m, reqd);

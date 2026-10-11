@@ -195,6 +195,9 @@ try {
       if (Test-Path $app) { Rename-Item $app 'app.old' }
       Rename-Item $new 'app'
       Remove-Item "$app.old" -Recurse -Force -ErrorAction SilentlyContinue
+      # The page itself (only the page — not the server's code) may be replaced by you without
+      # administrator rights: deploy\selfhost-page.ps1.
+      Grant (Join-Path $app 'service-manager.html') @("$($sid.Me):M")
 
       # Settings, made once. The service key is the one the Vercel functions use (Lockbox) —
       # read into memory, written to env, never shown.
