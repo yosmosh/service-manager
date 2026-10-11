@@ -7,16 +7,39 @@
 // request is answered — to a temporary file first, flushed to disk, then renamed over the old
 // one, so a power cut leaves either the old document or the new, never half of one.
 // Changes to one document run one at a time, in order.
+//
+// A file's name is the document's path with every character but a-z 0-9 - _ . written as %XX —
+// capitals too: Windows does not tell "Ab" from "ab" in a file name, so neither may we.
 
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 
+function nameOf(p) {
+  let out = '';
+  for (const b of Buffer.from(p, 'utf8')) {
+    out += (b >= 0x61 && b <= 0x7a) || (b >= 0x30 && b <= 0x39) || b === 0x2d || b === 0x5f || b === 0x2e
+      ? String.fromCharCode(b) : '%' + b.toString(16).toUpperCase().padStart(2, '0');
+  }
+  return out;
+}
+
+// Windows: a virus scanner, or the nightly snapshot reading the old file, can hold it for a
+// moment — try again for up to a second before giving up.
+function retrying(fn) {
+  for (let i = 1; ; i++) {
+    try { return fn(); } catch (e) {
+      if (process.platform !== 'win32' || i > 10 || !['EPERM', 'EACCES', 'EBUSY'].includes(e.code)) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20 * i);
+    }
+  }
+}
+
 function createFileStore(dir) {
   fs.mkdirSync(dir, { recursive: true });
   const docs = new Map();
-  const fileOf = p => path.join(dir, encodeURIComponent(p) + '.json');
+  const fileOf = p => path.join(dir, nameOf(p) + '.json');
   for (const f of fs.readdirSync(dir)) {
     if (!f.endsWith('.json')) continue;
     docs.set(decodeURIComponent(f.slice(0, -5)), JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')));
@@ -24,11 +47,11 @@ function createFileStore(dir) {
 
   function persist(p, d) {
     const f = fileOf(p);
-    if (!d) { try { fs.unlinkSync(f); } catch (e) { if (e.code !== 'ENOENT') throw e; } return; }
+    if (!d) { try { retrying(() => fs.unlinkSync(f)); } catch (e) { if (e.code !== 'ENOENT') throw e; } return; }
     const tmp = f + '.tmp';
     const fd = fs.openSync(tmp, 'w');
     try { fs.writeSync(fd, JSON.stringify(d)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    fs.renameSync(tmp, f);
+    retrying(() => fs.renameSync(tmp, f));
   }
 
   // One change at a time per document.
@@ -94,4 +117,4 @@ function createFileStore(dir) {
   };
 }
 
-module.exports = { createFileStore };
+module.exports = { createFileStore, nameOf };

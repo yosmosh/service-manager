@@ -7,8 +7,9 @@
 //   /files/<id>, PUT /files-upload/<id>        photos and documents
 //   /api/…                                     passed on to Vercel (the AI, the Telegram bot)
 //
-// Caddy sits in front of it for HTTPS (selfhost/Caddyfile). Settings come from the
-// environment (selfhost/setup.sh writes /etc/sad-budushego/env):
+// Caddy sits in front of it for HTTPS. Settings come from the environment (on Ubuntu
+// selfhost/setup.sh writes /etc/sad-budushego/env; on Windows deploy/selfhost-windows.ps1
+// writes <root>\env and selfhost/windows-service.js starts this):
 //   PORT, DATA_DIR, APP_DIR, PUBLIC_ORIGIN, API_ORIGIN, AUTH_SECRET, SERVICE_KEY
 
 'use strict';
@@ -143,3 +144,9 @@ const server = http.createServer(async (req, res) => {
 });
 server.requestTimeout = 0; // uploads of large videos
 server.listen(PORT, HOST, () => console.log(`Sad Budushego on http://${HOST}:${PORT} — app ${APP_DIR}, data ${DATA_DIR}, ${store.docs.size} documents`));
+// Started by selfhost/windows-service.js: gone with it, so a new one finds the port free.
+if (env.SADB_PARENT_PID) {
+  setInterval(() => {
+    try { process.kill(Number(env.SADB_PARENT_PID), 0); } catch (e) { if (e.code === 'ESRCH') process.exit(0); }
+  }, 3000).unref();
+}

@@ -76,6 +76,21 @@ function req(port, method, p, { headers, body } = {}) {
     fs.mkdirSync(filesDir);
     fs.writeFileSync(path.join(filesDir, FILE_ID), Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
 
+    await t('file store: names differing only in capitals stay two documents (Windows), and come back', async () => {
+      const { createFileStore, nameOf } = require('../store-file');
+      const dir = path.join(tmp, 'case');
+      const s = createFileStore(dir);
+      const put = (p, v) => s.transact(p, tx => tx.write({ collection: 'c', upserts: { v: JSON.stringify({ stringValue: v }) }, deletes: null, createTime: 't', updateTime: 't', qdate: null }));
+      await put('c/AbC', 'upper');
+      await put('c/abc', 'lower');
+      await put('c/Ж*:?', 'odd');
+      assert.strictEqual(fs.readdirSync(dir).length, 3);
+      assert.ok(fs.readdirSync(dir).every(f => /^[a-z0-9._%A-F-]+$/.test(f)), fs.readdirSync(dir).join(' '));
+      assert.strictEqual(nameOf('appdata/state'), 'appdata%2Fstate');
+      const again = createFileStore(dir);
+      assert.deepStrictEqual(['c/AbC', 'c/abc', 'c/Ж*:?'].map(p => JSON.parse(again.docs.get(p).fields.v).stringValue), ['upper', 'lower', 'odd']);
+    });
+
     await t('import: documents, files, file addresses moved here', async () => {
       const r = admin('import', snapFile, '--files', filesDir);
       assert.strictEqual(r.status, 0, r.stderr);
