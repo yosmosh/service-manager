@@ -15,7 +15,9 @@
 // move of 2026-10-06; the Vercel variable DATA_BACKEND=firebase would take it back.
 const BACKEND = process.env.DATA_BACKEND || 'yandex';
 const YANDEX = BACKEND === 'yandex';
-const DATA_API = String(process.env.DATA_API_URL || 'https://d5do4n0o23evidqovr16.jki8ffxa.apigw.yandexcloud.net/db').replace(/\/+$/, '');
+// Through the site's own address, so these functions follow it to whichever server it points
+// at — Yandex's gateway, or our own computer (selfhost/) when Yandex is down.
+const DATA_API = String(process.env.DATA_API_URL || 'https://www.sad-budushego.ru/db').replace(/\/+$/, '');
 const DOCS = YANDEX ? DATA_API + '/v1/documents'
   : 'https://firestore.googleapis.com/v1/projects/sad-budushego/databases/(default)/documents';
 const RUN_QUERY_URL = DOCS + ':runQuery';
@@ -61,6 +63,9 @@ async function uploadPhoto(buf, ext) {
 const OWN_FILE_PREFIXES = [
   `https://firebasestorage.googleapis.com/v0/b/${FIREBASE_BUCKET}/o/files%2F`,
   'https://storage.yandexcloud.net/sad-budushego-files/files/',
+  // Our own server's (selfhost/files-local.js), on either of the site's addresses.
+  'https://www.sad-budushego.ru/files/',
+  'https://sad-budushego.ru/files/',
 ];
 
 function fsString(v) { return { stringValue: v == null ? '' : String(v) }; }

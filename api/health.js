@@ -18,7 +18,9 @@ module.exports = async (req, res) => {
         yandexKey = j.role === 'service' ? 'ok' : 'rejected';
       } catch (e) { yandexKey = 'unreachable'; }
     }
-    cached = { at: Date.now(), body: { dataBackend: BACKEND, yandexKey, checkedAt: new Date().toISOString() } };
+    // dataHost: where the functions send data requests (not secret) — the site's address, or an
+    // address set in the Vercel variable DATA_API_URL.
+    cached = { at: Date.now(), body: { dataBackend: BACKEND, dataHost: (() => { try { return new URL(DATA_API).host; } catch (e) { return ''; } })(), yandexKey, checkedAt: new Date().toISOString() } };
   }
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).json(cached.body);
