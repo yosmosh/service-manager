@@ -6,8 +6,9 @@
 //
 // It runs the server (selfhost/server.js, settings from <root>\env) and Caddy in front of it
 // for HTTPS (<root>\caddy\caddy.exe, <root>\Caddyfile), starts either again whenever it stops,
-// keeps their output in <root>\logs, and takes a snapshot of the data every night at 00:30
-// (<root>\data\backups, sixty kept) — and soon after starting, if the last is over a day old.
+// keeps their output in <root>\logs, takes a snapshot of the data every night at 00:30
+// (<root>\data\backups, sixty kept) — and soon after starting, if the last is over a day old —
+// and keeps ports 80 and 443 of the router in front open to this computer (selfhost/upnp.js).
 
 'use strict';
 
@@ -127,3 +128,14 @@ keep('server', process.execPath, [path.join(APP, 'selfhost', 'server.js')], Obje
 keep('caddy', CADDY, ['run', '--config', path.join(ROOT, 'Caddyfile'), '--adapter', 'caddyfile'], caddyEnv);
 nightly();
 if (snapshotOverdue()) setTimeout(snapshot, 2 * 60 * 1000);
+
+// The router in front of this computer keeps 80 and 443 open to it (selfhost/upnp.js) — checked
+// soon after starting and every ten minutes. UPNP_PORTS=off in <root>\env turns it off.
+const upnpPorts = String(settings.UPNP_PORTS || '80,443');
+if (upnpPorts !== 'off') {
+  const { ensurePorts } = require('./upnp');
+  const ports = upnpPorts.split(',').map(Number).filter(Boolean);
+  const check = () => ensurePorts(ports).then(lines => lines.forEach(l => say('router: ' + l)), e => say('router check failed: ' + e.message));
+  setTimeout(check, 15000);
+  setInterval(check, 10 * 60 * 1000);
+}

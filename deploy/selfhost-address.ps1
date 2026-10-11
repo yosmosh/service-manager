@@ -7,8 +7,8 @@
 #   ... -Here     www.sad-budushego.ru and sad-budushego.ru → this house's internet address;
 #                 the task «SadBudushego Address» (every 5 minutes and at boot, as you, also
 #                 before anyone signs in) moves them along when that address changes; and once
-#                 the world sees the new address, the server is restarted so that Caddy fetches
-#                 its HTTPS certificates at once
+#                 the world sees the new address, the server is updated and restarted so that
+#                 Caddy fetches its HTTPS certificates at once
 #   ... -Yandex   both back at the Yandex Cloud gateway, as they were; the task removed. Only
 #                 after what was entered here has been carried to Yandex — never two places
 #                 taking data at once
@@ -143,8 +143,8 @@ try {
       })
       Say ("   " + (($seen | ForEach-Object { if ($_) { 'yes' } else { 'not yet' } }) -join ' / '))
     } while ((@($seen | Where-Object { -not $_ }).Count) -and (Get-Date) -lt $deadline)
-    Say '== restarting the server, so Caddy fetches the certificates now'
-    & (Join-Path $PSScriptRoot 'selfhost-windows.ps1') -Restart
+    Say '== updating and restarting the server, so Caddy fetches the certificates now'
+    & (Join-Path $PSScriptRoot 'selfhost-windows.ps1')
     Say '== waiting for https://www.sad-budushego.ru (up to 5 minutes)'
     $deadline = (Get-Date).AddMinutes(5); $ok = $false
     do {
