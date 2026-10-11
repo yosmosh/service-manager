@@ -9,6 +9,9 @@
 #                          only when there is no data here yet
 #   ... -SetOwnerPassword  asks for the owner's name and new password and sets them — typed in
 #                          the window, never shown, never stored
+#   ... -ResetPasswords    also give every employee and provider (not the owner) a new, easy
+#                          password; the list opens in Notepad from a file only you can read,
+#                          and the file is deleted when you press Enter
 #   ... -Restart           only start it all again (right after the site's address has been
 #                          pointed here, so that the HTTPS certificates are fetched at once)
 #   ... -Stop              stop it and keep it stopped, also after a restart of the computer
@@ -28,6 +31,7 @@
 param(
   [switch]$ImportData,
   [switch]$SetOwnerPassword,
+  [switch]$ResetPasswords,
   [switch]$Restart,
   [switch]$Stop,
   [string]$Root = 'C:\SadBudushego',
@@ -48,7 +52,7 @@ $installLog = Join-Path $logs 'install.log'
 $me = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not ([Security.Principal.WindowsPrincipal]$me).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Elevated', '-Root', "`"$Root`"")
-  foreach ($s in 'ImportData', 'SetOwnerPassword', 'Restart', 'Stop') { if ((Get-Variable $s).Value) { $a += "-$s" } }
+  foreach ($s in 'ImportData', 'SetOwnerPassword', 'ResetPasswords', 'Restart', 'Stop') { if ((Get-Variable $s).Value) { $a += "-$s" } }
   Write-Output 'Windows will ask for permission; the work goes on in a new window.'
   $p = Start-Process powershell.exe -Verb RunAs -ArgumentList $a -Wait -PassThru
   if (Test-Path $installLog) { Get-Content $installLog -Encoding UTF8 | Where-Object { $_ -notmatch '^\*{10}|^(Start|End) time|^(Username|RunAs User|Configuration Name|Machine|Host Application|Process ID|PSVersion|PSEdition|PSCompatibleVersions|BuildVersion|CLRVersion|WSManStackVersion|PSRemotingProtocolVersion|SerializationVersion|Windows PowerShell transcript)' } }
@@ -154,7 +158,7 @@ try {
     Stop-App
     Start-App
   } else {
-    if ($SetOwnerPassword -and -not $ImportData) {
+    if ($SetOwnerPassword -and -not $ImportData -and -not $ResetPasswords) {
       Stop-App
     } else {
       # ---- install / update ----
@@ -297,7 +301,24 @@ www.sad-budushego.ru, sad-budushego.ru {
       Write-Output $(if ($p.ExitCode -eq 0) { '== the owner''s password is set' } else { '== the owner''s password was NOT changed' })
     }
 
+    # ---- new passwords for everyone but the owner: the list only in a file only you can read ----
+    $passList = $null
+    if ($ResetPasswords) {
+      $passList = Join-Path $Root ('passwords-' + (Get-Date -Format 'yyyy-MM-dd-HHmm') + '.txt')
+      Write-Output '== new passwords for every employee and provider (not the owner)'
+      Invoke-Admin @('reset-passwords', $passList)
+      Grant $passList @("$($sid.System):F", "$($sid.Admins):F", "$($sid.Me):F") -Only
+    }
+
     Start-App
+
+    if ($passList) {
+      Start-Process notepad.exe -ArgumentList "`"$passList`""
+      Write-Output '== the list is open in Notepad: send each one only their own line, privately'
+      Read-Host 'Когда разошлёте пароли — нажмите Enter, и файл со списком будет удалён' | Out-Null
+      Remove-Item $passList -Force
+      Write-Output '== the list file is deleted'
+    }
   }
 } catch {
   $failed = $true

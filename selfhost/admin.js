@@ -10,6 +10,9 @@
 //        backup holds no passwords. Then set the owner's, and the owner sets the rest in Настройки.
 //   sadb-admin set-password <account>      e.g. owner, admin, storekeeper, mosoblgaz
 //        Asks for the name and the new password (typed, never shown).
+//   sadb-admin reset-passwords <file>      new easy passwords for every account but the owner's,
+//        staff and providers; the list goes to <file> only (deploy\selfhost-windows.ps1
+//        -ResetPasswords opens it for the owner and deletes it after)
 //   sadb-admin accounts                    the account names (no passwords)
 //   sadb-admin snapshot [<dir>]            a backup in the same format; run nightly by cron
 
@@ -146,6 +149,64 @@ async function cmdAccounts() {
   for (const [k, v] of Object.entries(r.body.providers || {})) console.log('provider ' + k.padEnd(16) + v.user);
 }
 
+// New passwords for every account but the owner's — staff and providers — easy to read out
+// over the phone (word-five digits-word), all set at once; names stay as they are. The list
+// goes to <file> only, for the owner to hand out and then delete — nothing of it is printed.
+const WORDS = ['sun', 'sky', 'oak', 'fox', 'owl', 'bee', 'cat', 'dog', 'sea', 'tea', 'box', 'pen', 'cup', 'map', 'key', 'car',
+  'bus', 'hat', 'egg', 'ice', 'jam', 'kit', 'leaf', 'lime', 'milk', 'moon', 'nest', 'note', 'park', 'pear', 'pine', 'plum',
+  'rain', 'rock', 'rose', 'salt', 'sand', 'ship', 'snow', 'star', 'tree', 'wave', 'wind', 'wolf', 'yard', 'lake', 'hill', 'bird',
+  'fish', 'frog', 'gold', 'iron', 'lamp', 'lion', 'mint', 'nut', 'pearl', 'reed', 'seed', 'silk', 'swan', 'tide', 'vine', 'bell'];
+const easyPassword = () => {
+  const w = () => WORDS[crypto.randomInt(WORDS.length)];
+  return `${w()}-${String(crypto.randomInt(100000)).padStart(5, '0')}-${w()}`;
+};
+const ROLE_LABELS = { admin: 'Администратор', kitchen: 'Менеджер кухни', kitchen_worker: 'Сотрудник кухни (приём доставки)',
+  alexander: 'Александр (согласование)', accountant: 'Бухгалтер', management: 'Руководство (только просмотр)',
+  admin2: 'admin2 (ТО и зарплаты + Личный бюджет)', storekeeper: 'Склад: инструменты и оборудование', cleaning_head: 'Склад: клининг и химия' };
+
+// The providers' names, as the page lists them (PROVIDERS in service-manager.html).
+function providerNames() {
+  const out = {};
+  try {
+    const html = fs.readFileSync(path.join(APP_DIR, 'service-manager.html'), 'utf8');
+    const start = html.indexOf('const PROVIDERS = [');
+    for (const m of html.slice(start, start + 30000).matchAll(/id:\s*'([a-z0-9_]+)'[^\n]*?name:\s*'([^']*)'/g)) {
+      if (PROVIDER_IDS.includes(m[1]) && !out[m[1]]) out[m[1]] = m[2];
+    }
+  } catch (e) {}
+  return out;
+}
+
+async function cmdResetPasswords(args) {
+  const file = args[0];
+  if (!file) die('Usage: reset-passwords <file for the list>');
+  const store = openStore();
+  const accounts = createAccounts({ store, auth });
+  const list = await accounts.list('owner');
+  if (list.status !== 200) die(list.body && list.body.error);
+  const names = providerNames();
+  const plan = [];
+  for (const a of ACCOUNTS) if (a.role !== 'owner') plan.push({ kind: 'role', id: a.role, label: ROLE_LABELS[a.role] || a.role, user: (list.body.roles[a.role] || {}).user || a.defUser });
+  for (const pid of PROVIDER_IDS) plan.push({ kind: 'provider', id: pid, label: names[pid] || pid, user: (list.body.providers[pid] || {}).user || pid });
+  for (const p of plan) p.password = easyPassword();
+  // The list first: a password set but never written down would lock its account.
+  const row = p => `${p.label.padEnd(42)} логин: ${p.user.padEnd(14)} пароль: ${p.password}`;
+  const lines = [`Сад Будущего — новые пароли, ${new Date().toISOString().slice(0, 10)}. Вход: https://www.sad-budushego.ru`,
+    'Каждому — только его строку, лично. Затем этот файл удалить.', '', 'СОТРУДНИКИ'];
+  plan.filter(p => p.kind === 'role').forEach(p => lines.push(row(p)));
+  lines.push('', 'ПОСТАВЩИКИ');
+  plan.filter(p => p.kind === 'provider').forEach(p => lines.push(row(p)));
+  fs.writeFileSync(file, '﻿' + lines.join('\r\n') + '\r\n', { mode: 0o600 });
+  const failed = [];
+  for (const p of plan) {
+    const r = await accounts.setAccount('owner', { kind: p.kind, id: p.id, user: p.user, password: p.password });
+    if (r.status !== 200) failed.push(`${p.label}: ${r.body && r.body.error}`);
+  }
+  if (failed.length) fs.appendFileSync(file, '\r\nНЕ СОХРАНЕНО (у этих остался прежний пароль):\r\n' + failed.join('\r\n') + '\r\n');
+  console.log(`New passwords set: ${plan.length - failed.length} of ${plan.length} accounts (staff and providers; not the owner). The list: ${file}`);
+  if (failed.length) die('Not set: ' + failed.join('; '));
+}
+
 // The same format as the cloud backup (yandex/backup): every document but the passwords.
 async function cmdSnapshot(args) {
   const store = openStore();
@@ -170,7 +231,7 @@ async function cmdSnapshot(args) {
 
 (async () => {
   const [cmd, ...args] = process.argv.slice(2);
-  const cmds = { import: cmdImport, 'init-credentials': cmdInitCredentials, 'set-password': cmdSetPassword, accounts: cmdAccounts, snapshot: cmdSnapshot };
+  const cmds = { import: cmdImport, 'init-credentials': cmdInitCredentials, 'set-password': cmdSetPassword, 'reset-passwords': cmdResetPasswords, accounts: cmdAccounts, snapshot: cmdSnapshot };
   if (!cmds[cmd]) die('Commands: ' + Object.keys(cmds).join(', '));
   await cmds[cmd](args);
 })().catch(e => die(e && e.stack || String(e)));

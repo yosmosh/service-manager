@@ -123,6 +123,29 @@ function req(port, method, p, { headers, body } = {}) {
       assert.ok(/role     owner\s+yosef/.test(list.stdout) && /provider mosoblgaz\s+mosoblgaz/.test(list.stdout), list.stdout);
     });
 
+    await t('reset-passwords: everyone but the owner, names kept, the list only in its file', async () => {
+      const file = path.join(tmp, 'passwords.txt');
+      const r = admin('reset-passwords', file);
+      assert.strictEqual(r.status, 0, r.stderr);
+      const text = fs.readFileSync(file, 'utf8');
+      const rows = text.split(/\r\n/).filter(l => /логин: /.test(l));
+      const { ACCOUNTS, PROVIDER_IDS } = require(path.join(ROOT, 'yandex', 'data-api', 'accounts'));
+      assert.strictEqual(rows.length, ACCOUNTS.length - 1 + PROVIDER_IDS.length, text);
+      assert.ok(!rows.some(l => /логин: yosef/.test(l)), 'the owner keeps his');
+      const pw = l => /пароль: (\S+)/.exec(l)[1];
+      const keeper = rows.find(l => /логин: sklad1 /.test(l));
+      assert.ok(keeper && /^Склад: инструменты/.test(keeper), 'the keeper keeps the name sklad1');
+      assert.ok(rows.some(l => /^Мособлгаз АО\s+логин: mosoblgaz /.test(l)), 'providers by their names');
+      assert.ok(rows.every(l => /^[a-z]+-\d{5}-[a-z]+$/.test(pw(l))), 'word-digits-word');
+      assert.ok(!rows.some(l => r.stdout.includes(pw(l)) || r.stderr.includes(pw(l))), 'no password is printed');
+      const { createFileStore } = require('../store-file');
+      const { createAccounts } = require(path.join(ROOT, 'yandex', 'data-api', 'accounts'));
+      const acc = createAccounts({ store: createFileStore(path.join(DATA, 'db')), auth: require(path.join(ROOT, 'yandex', 'data-api', 'auth')) });
+      assert.strictEqual((await acc.login({ username: 'sklad1', password: pw(keeper), ip: '1.1.1.1' })).status, 200);
+      assert.strictEqual((await acc.login({ username: 'sklad1', password: 'store-pass-123', ip: '1.1.1.1' })).status, 401, 'the old one no longer works');
+      assert.strictEqual((await acc.login({ username: 'yosef', password: 'owner-test-pass', ip: '1.1.1.1' })).status, 200, 'the owner\'s unchanged');
+    });
+
     // The server, started after the data is in place (it reads it once, at start).
     env.PORT = '0';
     server = spawn(node, [path.join(ROOT, 'selfhost', 'server.js')], { env: Object.assign({}, env, { PORT: String(40000 + Math.floor(Math.random() * 20000)) }) });
@@ -133,7 +156,7 @@ function req(port, method, p, { headers, body } = {}) {
       server.on('exit', c => reject(new Error('server exited ' + c + ': ' + out)));
       setTimeout(() => reject(new Error('server did not start: ' + out)), 10000);
     });
-    assert.ok(/5 documents|6 documents/.test(out), out);
+    assert.ok(/ [5-7] documents/.test(out), out); // + _auth/credentials, _auth/throttle
 
     await t('the page, its update check, its libraries; nothing outside the app', async () => {
       const page = await req(port, 'GET', '/');
