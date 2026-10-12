@@ -353,6 +353,8 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 @media(max-width:768px){.ff-cell{width:80px;height:80px}.ff-del{width:28px;height:28px;font-size:14px}}
 /* Warehouse cards carry more buttons than fit in one row on a phone */
 .wh-foot{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;width:100%}
+/* The box an employee signs an act in: nothing to press until there is a signature */
+#wh-sign-save:disabled{opacity:.45;cursor:not-allowed}
 /* Warehouse catalogue, laid out like a shop's */
 .wh-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
 .wh-search{flex:1;min-width:200px;max-width:420px;font-size:15px;padding:10px 14px}
@@ -2130,7 +2132,9 @@ const LEDGER_KEYS = ['finance_tx_maintenance', 'finance_tx_personal', 'finance_s
 // Items, people and settings in one document; the movement documents (acts), the part that
 // only ever grows, in another.
 const WAREHOUSE_KEYS = ['wh_items', 'wh_employees', 'wh_settings'];
-const WAREHOUSE_DOC_KEYS = ['wh_docs'];
+// wh_docs_deleted: acts the owner deleted — out of every count and list, kept so that they can be
+// brought back and so that their numbers are never given out again.
+const WAREHOUSE_DOC_KEYS = ['wh_docs', 'wh_docs_deleted'];
 
 // Every key kept in a document other than appdata/state, by document. getLS/setLS don't
 // care where a key lives; loading, saving and the poll route each key by this table.
@@ -2178,7 +2182,7 @@ const TX_KEYS = [
   'sos_items', 'maint_works', 'purchase_requests', 'activity_log',
   'telegram_drafts', 'telegram_log',
   'kitchen_invoices', 'kitchen_deliveries', 'kitchen_inventory', 'kitchen_writeoffs',
-  'wh_items', 'wh_employees', 'wh_docs',
+  'wh_items', 'wh_employees', 'wh_docs', 'wh_docs_deleted',
   'projects', 'finance_settlements',
 ];
 // payment_records is the same hazard in map form: it's the "Журнал оплат" tick-list,
@@ -7779,6 +7783,7 @@ const WH_TG_TOPIC_LABEL = '«Хозчасть и Ремонт»';
 const getWhItems     = () => getLS('wh_items') || [];
 const getWhEmployees = () => getLS('wh_employees') || [];
 const getWhDocs      = () => getLS('wh_docs') || [];
+const getWhDocsDeleted = () => getLS('wh_docs_deleted') || [];
 const getWhSettings  = () => Object.assign({
   orgName: 'Сад Будущего', legalName: '', inn: '', kpp: '', address: '', city: '',
   directorName: '', directorPosition: 'Директор', issuerName: '', issuerPosition: 'Администратор',
@@ -7837,11 +7842,12 @@ function _whNextInvNo(kind, list) {
   const max = (list || getWhItems()).reduce((m, i) => { const mm = String(i.invNo || '').match(re); return mm ? Math.max(m, Number(mm[1])) : m; }, 0);
   return prefix + '-' + String(max + 1).padStart(4, '0');
 }
-// Document numbers restart each year: АПП-2026-001, АВ-2026-001, …
+// Document numbers restart each year: АПП-2026-001, АВ-2026-001, … A deleted act's number
+// is never given out again — its paper copy may be somewhere.
 function _whNextDocNo(type, date) {
   const p = WH_DOC_TYPES[type].prefix, y = String(date || _todayLocal()).slice(0, 4);
   const re = new RegExp('^' + p + '-' + y + '-(\\d+)$');
-  const max = getWhDocs().reduce((m, d) => { const mm = String(d.no || '').match(re); return mm ? Math.max(m, Number(mm[1])) : m; }, 0);
+  const max = getWhDocs().concat(getWhDocsDeleted()).reduce((m, d) => { const mm = String(d.no || '').match(re); return mm ? Math.max(m, Number(mm[1])) : m; }, 0);
   return `${p}-${y}-${String(max + 1).padStart(3, '0')}`;
 }
 
@@ -8133,7 +8139,7 @@ function openWhItem(id) {
     ${row('Примечание', _escHtml(it.notes || ''))}
     ${hold.length ? `<div style="font-weight:700;margin:14px 0 6px">👷 Сейчас на руках</div>${hold.map(h => { const e = _whEmp(h.employeeId) || {}; return `<div style="font-size:13px;padding:5px 0;border-bottom:1px solid #f1f5f9;${_whIsOverdue(h) ? 'color:#b91c1c' : ''}">${_whLink(_escHtml(e.name || '?'), `openWhEmployee('${h.employeeId}')`)} — ${_whFmtQ(h.qty)} ${_escHtml(it.unit || '')}, с ${fmtDate(h.date)} (${_escHtml(h.no)})${h.dueDate ? ', вернуть до ' + fmtDate(h.dueDate) + (_whIsOverdue(h) ? ' ⏰' : '') : ''}</div>`; }).join('')}` : ''}
     <div style="font-weight:700;margin:14px 0 6px">🕘 История</div>
-    ${history.length ? history.map(d => { const l = d.lines.filter(x => x.itemId === id).reduce((s, x) => s + _whQ(x.qty), 0); const e = d.employeeId ? (_whEmp(d.employeeId) || {}).name : ''; const t = WH_DOC_TYPES[d.type] || {}; return `<div style="font-size:12px;padding:4px 0;border-bottom:1px solid #f1f5f9;display:flex;gap:8px;flex-wrap:wrap"><span style="color:#6b7280;min-width:78px">${fmtDate(d.date)}</span><span>${t.icon || ''} ${t.label || d.type} ${_whFmtQ(l)} ${_escHtml(it.unit || '')}${e ? ' — ' + _escHtml(e) : ''}</span>${_whLink(_escHtml(d.no), `printWhDoc('${d.id}')`)}</div>`; }).join('') : '<div style="font-size:12px;color:#94a3b8">Движений нет</div>'}`;
+    ${history.length ? history.map(d => { const l = d.lines.filter(x => x.itemId === id).reduce((s, x) => s + _whQ(x.qty), 0); const e = d.employeeId ? (_whEmp(d.employeeId) || {}).name : ''; const t = WH_DOC_TYPES[d.type] || {}; return `<div style="font-size:12px;padding:4px 0;border-bottom:1px solid #f1f5f9;display:flex;gap:8px;flex-wrap:wrap"><span style="color:#6b7280;min-width:78px">${fmtDate(d.date)}</span><span>${t.icon || ''} ${t.label || d.type} ${_whFmtQ(l)} ${_escHtml(it.unit || '')}${e ? ' — ' + _escHtml(e) : ''}</span>${_whLink(_escHtml(d.no), `openWhDoc('${d.id}')`)}</div>`; }).join('') : '<div style="font-size:12px;color:#94a3b8">Движений нет</div>'}`;
   document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
     <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
     <button class="btn btn-outline" onclick="openWhLabels(['${id}'])">🏷️ Наклейка</button>
@@ -8495,7 +8501,7 @@ function openWhEmployee(id) {
     ${mine.length ? mine.map(h => { const it = _whItem(h.itemId) || {}; return `<div style="font-size:13px;padding:6px 0;border-bottom:1px solid #f1f5f9;${_whIsOverdue(h) ? 'color:#b91c1c;font-weight:600' : ''}">${_whLink(_escHtml((it.invNo || '') + ' · ' + (it.name || '?')), `openWhItem('${h.itemId}')`)} × ${_whFmtQ(h.qty)} ${_escHtml(it.unit || '')} — с ${fmtDate(h.date)}${h.dueDate ? ', вернуть до ' + fmtDate(h.dueDate) + (_whIsOverdue(h) ? ' ⏰' : '') : ''}</div>`; }).join('') : '<div style="font-size:12px;color:#94a3b8">Ничего не числится</div>'}
     ${consumed.length ? `<div style="font-weight:700;margin:14px 0 6px">📦 Получено материалов</div>${consumed.slice(0, 30).map(x => `<div style="font-size:12px;padding:3px 0">${fmtDate(x.d.date)} — ${_escHtml(x.it.name)} × ${_whFmtQ(x.l.qty)} ${_escHtml(x.it.unit || '')} (${_escHtml(x.d.no)})</div>`).join('')}` : ''}
     <div style="font-weight:700;margin:14px 0 6px">📄 Акты</div>
-    ${docs.length ? docs.map(d => `<div style="font-size:12px;padding:3px 0">${fmtDate(d.date)} · ${(WH_DOC_TYPES[d.type] || {}).icon || ''} ${_whLink(_escHtml(d.no), `printWhDoc('${d.id}')`)}</div>`).join('') : '<div style="font-size:12px;color:#94a3b8">Актов нет</div>'}`;
+    ${docs.length ? docs.map(d => `<div style="font-size:12px;padding:3px 0">${fmtDate(d.date)} · ${(WH_DOC_TYPES[d.type] || {}).icon || ''} ${_whLink(_escHtml(d.no), `openWhDoc('${d.id}')`)}${_whSignable(d) ? ` <span style="color:${_whSignedHow(d) ? '#16a34a' : '#b45309'}">${_whSignStatus(d)}</span>` : ''}</div>`).join('') : '<div style="font-size:12px;color:#94a3b8">Актов нет</div>'}`;
   document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
     <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
     <button class="btn btn-outline" onclick="openWhEmployeeForm('${id}')">✏️ Изменить</button>
@@ -8974,30 +8980,371 @@ async function _saveWhMoveInner(type) {
   document.getElementById('modal-body').innerHTML = `<div style="text-align:center;padding:10px 0">
     <div style="font-size:40px">${WH_DOC_TYPES[type].icon}</div>
     <div style="font-size:15px;font-weight:700;margin:6px 0">${WH_DOC_TYPES[type].label} проведена — ${_escHtml(doc.no)}</div>
-    <div style="font-size:12px;color:#6b7280">${type === 'issue' || type === 'return' ? 'Распечатайте акт и дайте подписать обеим сторонам.' : 'Документ можно распечатать.'}</div>
+    <div style="font-size:12px;color:#6b7280">${_whSignable(doc) ? 'Как подписать: сотрудник расписывается на экране — пальцем или мышью; или распечатайте акт, подпишите на бумаге и загрузите скан.' : 'Документ можно распечатать, а подписанный — загрузить сканом.'}</div>
     ${created.length ? `<div style="font-size:12px;color:#1e40af;background:#eff6ff;border-radius:8px;padding:8px 10px;margin-top:12px;text-align:left">➕ В каталог добавлено новых позиций: ${created.length} (${created.map(i => _escHtml(i.invNo)).join(', ')}). Фото и место хранения можно добавить в карточке позиции.</div>` : ''}</div>`;
   document.getElementById('modal-footer').innerHTML = `<div class="wh-foot"><button class="btn btn-outline" onclick="closeModal()">Готово</button>
     ${created.length ? `<button class="btn btn-outline" onclick="openWhLabels(${_escHtml(JSON.stringify(created.map(i => i.id)))})">🏷️ Наклейки для новых</button>` : ''}
-    <button class="btn btn-primary" onclick="printWhDoc('${doc.id}')">🖨️ Печать ${type === 'issue' || type === 'return' ? 'акта' : 'документа'}</button></div>`;
+    ${_whSignable(doc) ? `<button class="btn btn-outline" onclick="printWhDoc('${doc.id}')">🖨️ Печать акта</button>
+    <button class="btn btn-outline" onclick="_whScanPick('${doc.id}')">📎 Загрузить скан</button>
+    <button class="btn btn-primary" onclick="openWhSign('${doc.id}')">✍️ Подписать на экране</button>`
+    : `<button class="btn btn-outline" onclick="_whScanPick('${doc.id}')">📎 Загрузить скан</button>
+    <button class="btn btn-primary" onclick="printWhDoc('${doc.id}')">🖨️ Печать документа</button>`}</div>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+// ---------- signing on the screen ----------
+// An issue or return act signed by the employee with a finger on the phone, in place of the
+// printed copy: they see what they take (or hand back), sign in the box, and the signature is
+// kept with the act as a picture — on the act it stands on the employee's line. One signature
+// per act: once signed, it stays signed. The act can still be printed and signed on paper.
+const _whSignable = d => !!d && (d.type === 'issue' || d.type === 'return') && !!d.employeeId;
+const _whSignedAt = iso => new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+// A tap or a stray touch is not a signature: this much line, in screen pixels, at least.
+const _WH_MIN_INK = 60;
+let _whPad = null; // the box being signed in: { docId, gen, canvas, strokes: [[[x, y], …], …] }
+
+function openWhSign(id) {
+  if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
+  const d = getWhDocs().find(x => x.id === id);
+  if (!_whSignable(d) || !_whDocIsMine(d)) return;
+  if (_whSignedHow(d)) { alert(`Акт ${d.no} уже подписан${_whSignedHow(d) === 'scan' ? ' — загружен скан' : ''}.`); return; }
+  _modalGen++;
+  const e = _whEmp(d.employeeId) || {}, items = getWhItems();
+  const lines = (d.lines || []).map(l => {
+    const it = items.find(i => i.id === l.itemId) || { name: '(позиция удалена)' };
+    return `<div style="padding:4px 0;border-bottom:1px solid #f1f5f9">${_escHtml(it.name)} — <b>${_whFmtQ(l.qty)} ${_escHtml(it.unit || '')}</b>${d.type === 'return' && l.condition ? ` <span style="color:#6b7280">(${_escHtml(WH_COND[l.condition] || '')})</span>` : ''}</div>`;
+  }).join('');
+  document.getElementById('modal-title').textContent = `✍️ Подпись — ${d.no}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-size:14px;margin-bottom:6px"><b>${_escHtml(e.name || '')}</b> ${d.type === 'issue' ? 'получает со склада' : 'сдаёт на склад'}:</div>
+    <div style="font-size:13px;margin-bottom:8px">${lines}</div>
+    ${d.dueDate ? `<div style="font-size:13px;font-weight:600;margin-bottom:8px">Вернуть до ${fmtDate(d.dueDate)}</div>` : ''}
+    ${d.type === 'issue' ? `<div style="font-size:11px;color:#475569;background:#f8fafc;border-radius:8px;padding:8px 10px;margin-bottom:8px">${_escHtml(getWhSettings().responsibilityText)}</div>` : ''}
+    <div style="font-size:12px;margin-bottom:12px">${_whLink('📄 Открыть акт целиком', `printWhDoc('${d.id}')`)}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">
+      <span style="font-weight:700;font-size:13px">Подпись: ${_escHtml(e.name || '')}</span>
+      <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="_whPadClear()">Стереть</button></div>
+    <canvas id="wh-pad" style="display:block;width:100%;height:190px;background:#fff;border:2px dashed #94a3b8;border-radius:12px;touch-action:none;cursor:crosshair"></canvas>
+    <div style="font-size:11px;color:#6b7280;margin-top:4px;text-align:center">Распишитесь в рамке — пальцем или мышью</div>`;
+  document.getElementById('modal-footer').innerHTML = `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" id="wh-sign-save" onclick="saveWhSign('${d.id}')" disabled>✍️ Подписать акт</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  _whPadStart(d.id);
+}
+
+function _whPadStart(docId) {
+  const canvas = document.getElementById('wh-pad');
+  const pad = _whPad = { docId, gen: _modalGen, canvas, strokes: [] };
+  let cur = null;
+  const at = ev => { const r = canvas.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
+  canvas.addEventListener('pointerdown', ev => {
+    ev.preventDefault();
+    try { canvas.setPointerCapture(ev.pointerId); } catch (e) {}
+    cur = [at(ev)]; pad.strokes.push(cur); _whPadDraw(pad);
+  });
+  canvas.addEventListener('pointermove', ev => {
+    if (!cur) return;
+    ev.preventDefault();
+    const evs = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [];
+    (evs.length ? evs : [ev]).forEach(x => cur.push(at(x)));
+    _whPadDraw(pad);
+  });
+  const end = () => { cur = null; _whPadReady(pad); };
+  canvas.addEventListener('pointerup', end);
+  canvas.addEventListener('pointercancel', end);
+  _whPadDraw(pad);
+}
+// Drawn whole each time, at the screen's own sharpness — the box may have changed size.
+function _whPadDraw(pad) {
+  const c = pad.canvas, dpr = window.devicePixelRatio || 1;
+  const w = Math.round(c.clientWidth * dpr), h = Math.round(c.clientHeight * dpr);
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const g = c.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, c.clientWidth, c.clientHeight);
+  _whInk(g, pad.strokes);
+}
+// The strokes as smooth lines, in ink blue.
+function _whInk(g, strokes) {
+  g.strokeStyle = g.fillStyle = '#1e3a8a'; g.lineWidth = 2.6; g.lineCap = g.lineJoin = 'round';
+  strokes.forEach(s => {
+    if (s.length === 1) { g.beginPath(); g.arc(s[0][0], s[0][1], 1.3, 0, Math.PI * 2); g.fill(); return; }
+    g.beginPath(); g.moveTo(s[0][0], s[0][1]);
+    for (let k = 1; k < s.length - 1; k++) g.quadraticCurveTo(s[k][0], s[k][1], (s[k][0] + s[k + 1][0]) / 2, (s[k][1] + s[k + 1][1]) / 2);
+    g.lineTo(s[s.length - 1][0], s[s.length - 1][1]); g.stroke();
+  });
+}
+const _whPadLength = strokes => strokes.reduce((sum, s) => sum + s.reduce((a, p, k) => k ? a + Math.hypot(p[0] - s[k - 1][0], p[1] - s[k - 1][1]) : 0, 0), 0);
+function _whPadReady(pad) {
+  const b = document.getElementById('wh-sign-save');
+  if (b && pad === _whPad && pad.gen === _modalGen) b.disabled = _whPadLength(pad.strokes) < _WH_MIN_INK;
+}
+function _whPadClear() {
+  if (!_whPad || _whPad.gen !== _modalGen) return;
+  _whPad.strokes = []; _whPadDraw(_whPad); _whPadReady(_whPad);
+}
+// The signature as a picture: cropped to the ink, at most 800×260, transparent around it.
+function _whPadPNG(strokes) {
+  const pts = [].concat(...strokes), m = 6;
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const x0 = Math.min(...xs) - m, y0 = Math.min(...ys) - m;
+  const bw = Math.max(...xs) + m - x0, bh = Math.max(...ys) + m - y0;
+  const k = Math.min(2, 800 / bw, 260 / bh);
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(bw * k)); c.height = Math.max(1, Math.round(bh * k));
+  const g = c.getContext('2d');
+  g.setTransform(k, 0, 0, k, -x0 * k, -y0 * k);
+  _whInk(g, strokes);
+  return c.toDataURL('image/png');
+}
+
+async function saveWhSign(id) { return _onceAtATime('whSign', () => _saveWhSignInner(id)); }
+async function _saveWhSignInner(id) {
+  const pad = _whPad;
+  if (!_WAREHOUSE_ROLES.includes(currentUser) || !pad || pad.docId !== id || pad.gen !== _modalGen) return;
+  if (_whPadLength(pad.strokes) < _WH_MIN_INK) { alert('Распишитесь в рамке'); return; }
+  const d0 = getWhDocs().find(x => x.id === id);
+  if (!_whSignable(d0)) return;
+  const btn = document.getElementById('wh-sign-save'), label = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '⏳ Сохраняю…';
+  const data = _whPadPNG(pad.strokes);
+  let fid;
+  try {
+    fid = await dbSave({ name: `Подпись ${d0.no}.png`, type: 'image/png', size: Math.round((data.length - data.indexOf(',') - 1) * 3 / 4), data }, 1, 1);
+  } catch (e) {
+    if (pad.gen === _modalGen) { btn.disabled = false; btn.innerHTML = label; }
+    alert('⚠️ Подпись не сохранилась: ' + ((e && e.message) || 'нет связи с сервером') + '.\n\nНе закрывайте окно — нажмите «Подписать акт» ещё раз, когда появится связь.');
+    return;
+  }
+  // Signed on another phone meanwhile? The first signature stands. What this tab has unsent
+  // goes first — with unsent edits the refresh can't replace its copy.
+  if (_useFirebase && (_stateDirty.size || _filesDirty.size || _filesDeleted.size)) { clearTimeout(_saveTimer); await _flushState(); }
+  await _syncBeforeDecision();
+  const d = getWhDocs().find(x => x.id === id);
+  if (!d || d.signature) {
+    dbDel(fid);
+    if (pad.gen === _modalGen) closeModal(true);
+    render();
+    alert(d ? `Акт ${d.no} уже подписан на другом устройстве.` : 'Этот акт тем временем удалили.');
+    return;
+  }
+  const signature = { fileId: fid, at: new Date().toISOString(), by: currentUser };
+  setLS('wh_docs', getWhDocs().map(x => x.id === id ? Object.assign({}, x, { signature }) : x));
+  const sent = await _whCommit();
+  const still = pad.gen === _modalGen;
+  render();
+  if (!sent) { if (still) closeModal(true); alert(_WH_NOT_SENT); return; }
+  if (!still) { _showToast(`✅ Акт ${d.no} подписан`, true); return; }
+  const e = _whEmp(d.employeeId) || {};
+  document.getElementById('modal-title').textContent = `✅ ${d.no}`;
+  document.getElementById('modal-body').innerHTML = `<div style="text-align:center;padding:10px 0">
+    <img src="${data}" alt="" style="max-width:260px;max-height:90px">
+    <div style="font-size:15px;font-weight:700;margin:6px 0">Акт подписан: ${_escHtml(e.name || '')}</div>
+    <div style="font-size:12px;color:#6b7280">${_whSignedAt(signature.at)} · подпись сохранена в акте, печатать не нужно.</div></div>`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot"><button class="btn btn-outline" onclick="closeModal()">Готово</button>
+    <button class="btn btn-primary" onclick="printWhDoc('${d.id}')">📄 Посмотреть акт</button></div>`;
+}
+
+// ---------- the act's card ----------
+// Everything about one act in one place: what it says, whether and how it was signed, and
+// what can be done with it — print it, have it signed on the screen, attach the scan of the
+// signed paper, and for the owner, delete it.
+const _whScans = d => (d && d.scans) || [];
+// How an issue or return act was signed: 'screen', 'scan', or '' — not yet.
+const _whSignedHow = d => !_whSignable(d) ? '' : d.signature ? 'screen' : _whScans(d).length ? 'scan' : '';
+const _whSignStatus = d => !_whSignable(d) ? '' : ({ screen: '✅ подписан', scan: '✅ подписан (скан)' })[_whSignedHow(d)] || '⚠️ не подписан';
+
+function openWhDoc(id) {
+  const d = getWhDocs().find(x => x.id === id);
+  if (!d || !_WAREHOUSE_ROLES.includes(currentUser) || !_whDocIsMine(d)) return;
+  _modalGen++;
+  const t = WH_DOC_TYPES[d.type] || {}, e = d.employeeId ? (_whEmp(d.employeeId) || {}) : null;
+  const items = getWhItems(), fc = getLS('files') || {}, how = _whSignedHow(d);
+  const total = (d.lines || []).reduce((s, l) => s + _whQ(l.qty) * (Number(l.price) || 0), 0);
+  const row = (k, v) => v ? `<div style="display:flex;gap:8px;font-size:13px;padding:3px 0"><span style="color:#6b7280;min-width:110px">${k}</span><span>${v}</span></div>` : '';
+  const lines = (d.lines || []).map(l => {
+    const it = items.find(i => i.id === l.itemId) || { name: '(позиция удалена)' };
+    return `<div style="font-size:13px;padding:4px 0;border-bottom:1px solid #f1f5f9">${_escHtml(it.name)} — <b>${_whFmtQ(l.qty)} ${_escHtml(it.unit || '')}</b>${l.condition && WH_COND[l.condition] ? ` <span style="color:#6b7280">(${_escHtml(WH_COND[l.condition])})</span>` : ''}</div>`;
+  }).join('');
+  const sigUrl = d.signature ? (fc[d.signature.fileId] || {}).url || '' : '';
+  const scans = _whScans(d).map(s => {
+    const f = fc[s.fileId] || {};
+    return `<div class="wh-scan" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;padding:4px 0">
+      ${f.url ? `<a href="${_escHtml(f.url)}" target="_blank" rel="noopener">${fileEmoji(s.type || f.type || '')} ${_escHtml(s.name || 'Скан')}</a>` : `${_escHtml(s.name || 'Скан')} <span style="color:#94a3b8">(файл ещё не загружен)</span>`}
+      <span style="color:#6b7280;font-size:11px">${_escHtml(_whSignedAt(s.at))} · ${_escHtml(_roleDisplayName(s.by))}</span>
+      ${currentUser === 'owner' ? `<button class="btn btn-outline" title="Убрать скан" style="font-size:11px;padding:2px 8px;margin-left:auto;color:#dc2626" onclick="removeWhScan('${d.id}','${_escHtml(s.fileId)}')">✕</button>` : ''}</div>`;
+  }).join('');
+  document.getElementById('modal-title').textContent = `${t.icon || ''} ${t.label || ''} ${d.no}`;
+  document.getElementById('modal-body').innerHTML = `
+    ${row('Дата', fmtDate(d.date))}
+    ${row(d.type === 'issue' ? 'Кому выдано' : 'Кто вернул', e ? _escHtml(e.name || '?') + (e.position ? ', ' + _escHtml(e.position) : '') : '')}
+    ${row('Вернуть до', d.dueDate ? fmtDate(d.dueDate) : '')}
+    ${row('Поставщик', _escHtml(d.supplier || ''))}
+    ${row('Причина', _escHtml(d.reason || ''))}
+    ${row('Примечание', _escHtml(d.note || ''))}
+    ${row('Оформил', _escHtml(_roleDisplayName(d.createdBy)) + (d.createdAt ? ' · ' + _escHtml(_whSignedAt(d.createdAt)) : ''))}
+    <div style="font-weight:700;margin:12px 0 4px">Позиции</div>${lines}
+    <div style="font-size:13px;text-align:right;margin-top:6px">Итого: <b>${_whRub(total)}</b></div>
+    <div style="font-weight:700;margin:14px 0 6px">✍️ Подпись</div>
+    ${d.signature ? `<div style="font-size:13px">${sigUrl ? `<img src="${_escHtml(sigUrl)}" alt="подпись" style="display:block;max-width:220px;max-height:80px;margin-bottom:4px">` : ''}Подписан сотрудником на экране: ${_escHtml(_whSignedAt(d.signature.at))}</div>` : ''}
+    ${scans ? `<div style="margin-top:4px">${scans}</div>` : ''}
+    ${!d.signature && !scans ? `<div style="font-size:13px;color:${_whSignable(d) ? '#b45309' : '#94a3b8'}">${_whSignable(d) ? '⚠️ Ещё не подписан. Сотрудник может расписаться на экране — или распечатайте акт, подпишите на бумаге и загрузите скан.' : 'Скан подписанного документа не загружен.'}</div>` : ''}`;
+  document.getElementById('modal-footer').innerHTML = `<div class="wh-foot">
+    <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
+    ${currentUser === 'owner' ? `<button class="btn btn-outline" style="color:#dc2626" onclick="deleteWhDoc('${d.id}')">🗑 Удалить</button>` : ''}
+    <button class="btn btn-outline" onclick="printWhDoc('${d.id}')">🖨️ Печать</button>
+    <button class="btn btn-outline" onclick="_whScanPick('${d.id}')">📎 Загрузить скан</button>
+    ${_whSignable(d) && !how ? `<button class="btn btn-primary" onclick="openWhSign('${d.id}')">✍️ Подписать на экране</button>` : ''}</div>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+// ---------- the scan of the signed paper ----------
+// Printed, signed by hand, then scanned or photographed: pictures or a PDF, several pages at
+// once. On a phone the picker offers the camera as well.
+function _whScanPick(id) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*,application/pdf'; inp.multiple = true;
+  inp.onchange = () => { const files = Array.from(inp.files || []); if (files.length) attachWhScans(id, files); };
+  inp.click();
+}
+async function attachWhScans(id, files) { return _onceAtATime('whScan', () => _attachWhScansInner(id, files)); }
+async function _attachWhScansInner(id, files) {
+  if (!_WAREHOUSE_ROLES.includes(currentUser)) return;
+  const d0 = getWhDocs().find(x => x.id === id);
+  if (!d0 || !_whDocIsMine(d0)) return;
+  const gen = _modalGen, added = [];
+  const usable = files.filter(f => String(f.type).startsWith('image/') || f.type === 'application/pdf' || _isHeicFile(f));
+  if (usable.length < files.length) alert('Можно загрузить только фото или PDF — остальные файлы пропущены.');
+  for (let k = 0; k < usable.length; k++) {
+    try {
+      const res = await _compressImage(usable[k]);
+      const ext = res.type === 'application/pdf' ? 'pdf' : (String(res.type).split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+      const name = `Скан ${d0.no}${usable.length > 1 ? ` (${k + 1})` : ''}.${ext}`;
+      const fileId = await dbSave({ name, type: res.type, size: res.size, data: res.data }, k + 1, usable.length);
+      added.push({ fileId, name, type: res.type, at: new Date().toISOString(), by: currentUser });
+    } catch (e) {
+      alert('⚠️ Скан не загрузился: ' + ((e && e.message) || 'нет связи с сервером') + '.' + (added.length ? `\n\nЗагружено ${added.length} из ${usable.length} — они будут прикреплены.` : '') + '\n\nОстальное загрузите ещё раз, когда появится связь.');
+      break;
+    }
+  }
+  if (!added.length) return;
+  if (_useFirebase && (_stateDirty.size || _filesDirty.size || _filesDeleted.size)) { clearTimeout(_saveTimer); await _flushState(); }
+  await _syncBeforeDecision();
+  const d = getWhDocs().find(x => x.id === id);
+  if (!d) { added.forEach(s => dbDel(s.fileId)); render(); alert('Этот документ тем временем удалили.'); return; }
+  setLS('wh_docs', getWhDocs().map(x => x.id === id ? Object.assign({}, x, { scans: _whScans(x).concat(added) }) : x));
+  const sent = await _whCommit();
+  render();
+  if (!sent) { alert(_WH_NOT_SENT); return; }
+  _showToast(`✅ Скан прикреплён: ${d.no}`, true);
+  // From the act's card or the screen after saving it: the card, with the scan on it.
+  if (gen === _modalGen && !document.getElementById('modal-overlay').classList.contains('hidden')) openWhDoc(id);
+}
+// The owner takes off a wrong scan. The record lets go of it first — a file nothing points
+// at is harmless, a record pointing at a deleted file is not.
+async function removeWhScan(id, fileId) { return _onceAtATime('whScan', () => _removeWhScanInner(id, fileId)); }
+async function _removeWhScanInner(id, fileId) {
+  if (currentUser !== 'owner') return;
+  const d = getWhDocs().find(x => x.id === id);
+  if (!d || !_whScans(d).some(s => s.fileId === fileId) || !confirm('Убрать этот скан из документа?')) return;
+  setLS('wh_docs', getWhDocs().map(x => x.id === id ? Object.assign({}, x, { scans: _whScans(x).filter(s => s.fileId !== fileId) }) : x));
+  const sent = await _whCommit();
+  render();
+  if (!sent) { alert(_WH_NOT_SENT); return; }
+  dbDel(fileId);
+  openWhDoc(id);
+}
+
+// ---------- deleting an act (the owner) ----------
+// A deleted act leaves every count — the stock, who holds what, the lists — as if it had never
+// been made, and goes to «Удалённые», where the owner can bring it back. Refused when that
+// would leave the warehouse impossible — less than nothing on a shelf, or someone having handed
+// back more than they were ever given: then the later act has to go first.
+function _whDocsConflicts(before, after, act) {
+  const items = getWhItems();
+  const name = id => { const it = items.find(i => i.id === id) || {}; return (it.invNo ? it.invNo + ' ' : '') + (it.name || '?'); };
+  const ids = [...new Set((act.lines || []).map(l => l.itemId))];
+  const s0 = _whStockMap(before), s1 = _whStockMap(after), out = [];
+  ids.forEach(id => { if ((s1[id] || 0) < 0 && (s1[id] || 0) < (s0[id] || 0)) out.push(`${name(id)}: на складе стало бы ${_whFmtQ(s1[id])}`); });
+  if (act.employeeId) {
+    const over = (docs, id) => _whQ(docs.filter(d => d.employeeId === act.employeeId)
+      .reduce((s, d) => s + (d.type === 'return' ? 1 : d.type === 'issue' ? -1 : 0) * (d.lines || []).filter(l => l.itemId === id).reduce((a, l) => a + _whQ(l.qty), 0), 0));
+    ids.forEach(id => { if (over(after, id) > 0 && over(after, id) > over(before, id)) out.push(`${name(id)}: сотрудник вернул бы больше, чем получил`); });
+  }
+  return out;
+}
+async function deleteWhDoc(id) { return _onceAtATime('whDelete', () => _deleteWhDocInner(id)); }
+async function _deleteWhDocInner(id) {
+  if (currentUser !== 'owner') return;
+  const d0 = getWhDocs().find(x => x.id === id);
+  if (!d0) return;
+  const reason = prompt(`Удалить ${d0.no}?\n\nОстатки на складе и «на руках» пересчитаются так, как будто этого документа не было. Он перейдёт в «Удалённые» — оттуда его можно вернуть.\n\nПричина (необязательно):`, '');
+  if (reason === null) return;
+  // Checked against the acts as they are now — someone may have issued from the same shelf.
+  if (_useFirebase && (_stateDirty.size || _filesDirty.size || _filesDeleted.size)) { clearTimeout(_saveTimer); await _flushState(); }
+  await _syncBeforeDecision();
+  const docs = getWhDocs(), d = docs.find(x => x.id === id);
+  if (!d) { closeModal(true); render(); return; }
+  const rest = docs.filter(x => x.id !== id);
+  const bad = _whDocsConflicts(docs, rest, d);
+  if (bad.length) { alert(`Нельзя удалить ${d.no}:\n\n${bad.join('\n')}\n\nСначала удалите более поздние документы по этим позициям.`); return; }
+  setLS('wh_docs', rest);
+  setLS('wh_docs_deleted', getWhDocsDeleted().filter(x => x.id !== id).concat([Object.assign({}, d, { deleted: { at: new Date().toISOString(), by: currentUser, reason: String(reason).trim() } })]));
+  const sent = await _whCommit();
+  closeModal(true); render();
+  if (!sent) { alert(_WH_NOT_SENT); return; }
+  _showToast(`🗑 ${d.no} удалён`, true);
+}
+async function restoreWhDoc(id) { return _onceAtATime('whDelete', () => _restoreWhDocInner(id)); }
+async function _restoreWhDocInner(id) {
+  if (currentUser !== 'owner') return;
+  const d0 = getWhDocsDeleted().find(x => x.id === id);
+  if (!d0 || !confirm(`Вернуть ${d0.no}? Остатки снова будут его учитывать.`)) return;
+  if (_useFirebase && (_stateDirty.size || _filesDirty.size || _filesDeleted.size)) { clearTimeout(_saveTimer); await _flushState(); }
+  await _syncBeforeDecision();
+  const del = getWhDocsDeleted().find(x => x.id === id);
+  if (!del) { render(); return; }
+  const back = Object.assign({}, del); delete back.deleted;
+  const docs = getWhDocs().filter(x => x.id !== id), after = docs.concat([back]);
+  const bad = _whDocsConflicts(docs, after, back);
+  if (bad.length) { alert(`Нельзя вернуть ${del.no}:\n\n${bad.join('\n')}`); return; }
+  setLS('wh_docs', after);
+  setLS('wh_docs_deleted', getWhDocsDeleted().filter(x => x.id !== id));
+  const sent = await _whCommit();
+  render();
+  if (!sent) { alert(_WH_NOT_SENT); return; }
+  _showToast(`♻️ ${del.no} возвращён`, true);
 }
 
 // ---------- documents tab ----------
 // A document a keeper may see: one with at least a line of their part.
 const _whDocIsMine = d => !_whArea() || (d.lines || []).some(l => _whMine(_whItem(l.itemId)));
+// Deleted acts listed under the others — the owner's, when asked for.
+let whShowDeleted = false;
 function _whDocsTab() {
   const docs = getWhDocs().filter(_whDocIsMine).slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
   const items = getWhItems();
   const sum = d => (d.lines || []).reduce((s, l) => s + _whQ(l.qty) * (Number(l.price) || 0), 0);
+  // An issue or return: signed or not. Any other document: whether its signed paper is in.
+  const signCell = d => _whSignable(d) ? `<span style="white-space:nowrap;font-weight:600;color:${_whSignedHow(d) ? '#16a34a' : '#b45309'}">${_whSignStatus(d)}</span>`
+    : _whScans(d).length ? '<span style="white-space:nowrap">📎 скан</span>' : '';
+  const who = d => d.employeeId ? (_whEmp(d.employeeId) || {}).name || '' : d.supplier || '';
+  const del = currentUser === 'owner' ? getWhDocsDeleted().slice().sort((a, b) => String((b.deleted || {}).at).localeCompare(String((a.deleted || {}).at))) : [];
   return `<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px;flex-wrap:wrap">
       <button class="btn btn-outline" onclick="printWhBlank()">📝 Пустой бланк акта</button>
       <button class="btn btn-outline" onclick="openWhMove('receipt')">📥 Поступление</button></div>
-    ${docs.length ? `<div class="card" style="overflow-x:auto"><table class="finance-table"><thead><tr><th>Дата</th><th>№</th><th>Вид</th><th>Сотрудник</th><th>Позиции</th><th style="text-align:right">Сумма</th></tr></thead><tbody>
-    ${docs.map(d => { const t = WH_DOC_TYPES[d.type] || {}; const e = d.employeeId ? (_whEmp(d.employeeId) || {}).name : ''; return `<tr style="cursor:pointer" onclick="printWhDoc('${d.id}')">
-      <td>${fmtDate(d.date)}</td><td style="font-weight:600;color:#1d4ed8;white-space:nowrap">${_escHtml(d.no)}</td><td>${t.icon || ''} ${t.label || ''}</td><td>${_escHtml(e || (d.supplier || ''))}</td>
+    ${docs.length ? `<div class="card" style="overflow-x:auto"><table class="finance-table"><thead><tr><th>Дата</th><th>№</th><th>Вид</th><th>Сотрудник</th><th>Позиции</th><th style="text-align:right">Сумма</th><th>Подпись</th></tr></thead><tbody>
+    ${docs.map(d => { const t = WH_DOC_TYPES[d.type] || {}; return `<tr style="cursor:pointer" onclick="openWhDoc('${d.id}')">
+      <td>${fmtDate(d.date)}</td><td style="font-weight:600;color:#1d4ed8;white-space:nowrap">${_escHtml(d.no)}</td><td>${t.icon || ''} ${t.label || ''}</td><td>${_escHtml(who(d))}</td>
       <td style="font-size:12px">${(d.lines || []).slice(0, 3).map(l => _escHtml(((items.find(i => i.id === l.itemId) || {}).name) || '?') + ' × ' + _whFmtQ(l.qty)).join(', ')}${(d.lines || []).length > 3 ? ' …' : ''}</td>
-      <td style="text-align:right;white-space:nowrap">${_whRub(sum(d))}</td></tr>`; }).join('')}</tbody></table></div>`
-    : '<div style="text-align:center;padding:40px;color:#6b7280">Документов пока нет</div>'}`;
+      <td style="text-align:right;white-space:nowrap">${_whRub(sum(d))}</td><td>${signCell(d)}</td></tr>`; }).join('')}</tbody></table></div>`
+    : '<div style="text-align:center;padding:40px;color:#6b7280">Документов пока нет</div>'}
+    ${del.length ? `<div style="margin-top:10px;font-size:13px">${_whLink(`${whShowDeleted ? '▾' : '▸'} 🗑 Удалённые документы (${del.length})`, 'whShowDeleted=!whShowDeleted;render()', '#6b7280')}</div>
+    ${whShowDeleted ? `<div class="card" id="wh-deleted" style="overflow-x:auto;margin-top:8px"><table class="finance-table"><thead><tr><th>№</th><th>Вид</th><th>Дата</th><th>Сотрудник</th><th>Удалён</th><th>Причина</th><th></th></tr></thead><tbody>
+    ${del.map(d => { const t = WH_DOC_TYPES[d.type] || {}, x = d.deleted || {}; return `<tr style="color:#6b7280">
+      <td style="text-decoration:line-through;white-space:nowrap">${_escHtml(d.no)}</td><td>${t.icon || ''} ${t.label || ''}</td><td>${fmtDate(d.date)}</td><td>${_escHtml(who(d))}</td>
+      <td style="white-space:nowrap">${x.at ? _escHtml(_whSignedAt(x.at)) : ''}</td><td>${_escHtml(x.reason || '')}</td>
+      <td><button class="btn btn-outline" style="font-size:11px;padding:3px 8px;white-space:nowrap" onclick="restoreWhDoc('${d.id}')">♻️ Вернуть</button></td></tr>`; }).join('')}</tbody></table></div>` : ''}` : ''}`;
 }
 
 // ---------- settings ----------
@@ -9072,6 +9419,8 @@ function _whPrintPage(title, body) {
   .sign { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 26px; }
   .sign .who { font-weight: 700; margin-bottom: 18px; }
   .line { border-bottom: 1px solid #000; height: 18px; margin-bottom: 2px; }
+  .line.signed { height: 58px; display: flex; align-items: flex-end; justify-content: center; }
+  .line.signed img { max-height: 64px; max-width: 100%; margin-bottom: -10px; }
   .hint { font-size: 9.5px; text-align: center; color: #333; }
   .copy { margin-top: 22px; }
   @media (max-width: 680px) { .sheet { margin: 0; padding: 18px 14px; } .sign { grid-template-columns: 1fr; } .tw { overflow-x: auto; } }
@@ -9089,9 +9438,12 @@ function _whOrgBlock() {
   const lines = [s.legalName || s.orgName, [s.inn ? 'ИНН ' + s.inn : '', s.kpp ? 'КПП ' + s.kpp : ''].filter(Boolean).join(' / '), s.address].filter(Boolean);
   return `<div class="org">${lines.map(_escHtml).join('<br>')}</div>`;
 }
-const _whSignBlock = (leftRole, leftName, leftPos, rightRole, rightName, rightPos) => `<div class="sign">
-  <div><div class="who">${leftRole}</div><div>${_escHtml(leftPos || '')}</div><div class="line"></div><div class="hint">подпись / ${_escHtml(leftName || 'ФИО')}</div></div>
-  <div><div class="who">${rightRole}</div><div>${_escHtml(rightPos || '')}</div><div class="line"></div><div class="hint">подпись / ${_escHtml(rightName || 'ФИО')}</div></div></div>`;
+// leftSig / rightSig: the picture of a signature made on the screen, standing on that line.
+const _whSignSide = (role, name, pos, sig) => `<div><div class="who">${role}</div><div>${_escHtml(pos || '')}</div>
+  <div class="line${sig ? ' signed' : ''}">${sig ? `<img src="${_escHtml(sig)}" alt="подпись">` : ''}</div><div class="hint">подпись / ${_escHtml(name || 'ФИО')}</div></div>`;
+const _whSignBlock = (leftRole, leftName, leftPos, rightRole, rightName, rightPos, leftSig, rightSig) => `<div class="sign">
+  ${_whSignSide(leftRole, leftName, leftPos, leftSig)}
+  ${_whSignSide(rightRole, rightName, rightPos, rightSig)}</div>`;
 
 function _whDocHTML(d) {
   const s = getWhSettings(), e = d.employeeId ? (_whEmp(d.employeeId) || {}) : {};
@@ -9116,6 +9468,9 @@ function _whDocHTML(d) {
     <tbody>${rows}<tr class="total"><td colspan="${withPhoto ? 7 : 6}" style="text-align:right">Итого:</td><td class="r">${total.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</td>${condCol ? '<td></td>' : ''}</tr></tbody></table></div>`;
   const place = `<div class="place"><span>${_escHtml(s.city || '')}</span><span>${_whLongDate(d.date)}</span></div>`;
   const n = (d.lines || []).length;
+  // Signed by the employee on the screen: the signature on their line, and when it was made.
+  const sig = d.signature ? (fc[d.signature.fileId] || {}).url || '' : '';
+  const signedNote = d.signature ? `<div class="copy">Подписано сотрудником собственноручно на экране устройства: ${_escHtml(_whSignedAt(d.signature.at))}.</div>` : '';
   if (d.type === 'issue') return _whPrintPage(`Акт ${d.no}`, `${_whOrgBlock()}
     <h1>АКТ № ${_escHtml(d.no)}</h1><div class="sub">приёма-передачи материальных ценностей</div>${place}
     <p>Передающая сторона: <b>${_escHtml(s.issuerPosition)} ${_escHtml(s.issuerName)}</b>${_whStop(s.issuerName)}</p>
@@ -9123,8 +9478,8 @@ function _whDocHTML(d) {
     <p>Настоящий акт составлен о том, что передающая сторона передала, а принимающая сторона приняла следующие материальные ценности:</p>
     ${table}<p>Всего наименований: ${n}, на сумму ${_whRub(total)}.${d.dueDate ? ` <b>Срок возврата инструмента и оборудования: до ${fmtDate(d.dueDate)}.</b>` : ''}</p>
     ${d.note ? `<p>Примечание: ${_escHtml(d.note)}</p>` : ''}<p>${_escHtml(s.responsibilityText)}</p>
-    ${_whSignBlock('Передал', s.issuerName, s.issuerPosition, 'Принял', e.name, e.position)}
-    <div class="copy">Экземпляр акта получил(а): ____________________ / ${_escHtml(e.name || '')} /</div>`);
+    ${_whSignBlock('Передал', s.issuerName, s.issuerPosition, 'Принял', e.name, e.position, '', sig)}
+    ${signedNote || `<div class="copy">Экземпляр акта получил(а): ____________________ / ${_escHtml(e.name || '')} /</div>`}`);
   if (d.type === 'return') return _whPrintPage(`Акт ${d.no}`, `${_whOrgBlock()}
     <h1>АКТ № ${_escHtml(d.no)}</h1><div class="sub">возврата материальных ценностей</div>${place}
     <p>Сдающая сторона: <b>${_escHtml(e.position || '')} ${_escHtml(e.name || '')}</b>${_whStop(e.name)}</p>
@@ -9132,7 +9487,7 @@ function _whDocHTML(d) {
     <p>Настоящий акт составлен о том, что сдающая сторона возвратила, а принимающая сторона приняла на склад следующие материальные ценности:</p>
     ${table}<p>Всего наименований: ${n}, на сумму ${_whRub(total)}.</p>
     ${d.note ? `<p>Примечание: ${_escHtml(d.note)}</p>` : ''}<p>Замечания по количеству и состоянию: ______________________________________________</p>
-    ${_whSignBlock('Сдал', e.name, e.position, 'Принял', s.issuerName, s.issuerPosition)}`);
+    ${_whSignBlock('Сдал', e.name, e.position, 'Принял', s.issuerName, s.issuerPosition, sig, '')}${signedNote}`);
   if (d.type === 'writeoff') return _whPrintPage(`Акт ${d.no}`, `${_whOrgBlock()}
     <div style="text-align:right;margin-bottom:12px">УТВЕРЖДАЮ<br>${_escHtml(s.directorPosition)}<br>____________ / ${_escHtml(s.directorName || '')} /</div>
     <h1>АКТ № ${_escHtml(d.no)}</h1><div class="sub">списания материальных ценностей</div>${place}
