@@ -50,14 +50,38 @@ if (($Here -or $Yandex) -and -not ([Security.Principal.WindowsPrincipal]$me).IsI
   exit $p.ExitCode
 }
 
+# yc signs in as you through the browser, and its sign-in lasts about 12 hours. Renewing it
+# opens a web page and waits — for ever, in the background task, where no page can open: each
+# run left one more yc waiting, ~60 MB every 5 minutes (found 2026-10-12, 12 of them by night).
+# So yc gets a minute, and is stopped after it.
 function Get-Iam {
   $env:YC_CLI_INITIALIZATION_SILENCE = 'true'
   $yc = Join-Path $env:USERPROFILE 'yandex-cloud\bin\yc.exe'
-  $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-  $t = ((& $yc iam create-token 2>$null | Out-String) -split "`r?`n" | Where-Object { $_ -match '^t1.' } | Select-Object -First 1)
-  $ErrorActionPreference = $eap
+  $out = Join-Path $dir 'yc-token.txt'
+  $p = Start-Process -FilePath $yc -ArgumentList 'iam', 'create-token' -NoNewWindow -PassThru -RedirectStandardOutput $out -RedirectStandardError (Join-Path $dir 'yc-err.txt')
+  if (-not $p.WaitForExit(60000)) {
+    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    throw 'yc is waiting for you to sign in again — run deploy\selfhost-address.ps1 once by hand'
+  }
+  $t = (Get-Content $out -ErrorAction SilentlyContinue | Where-Object { $_ -match '^t1.' } | Select-Object -First 1)
+  Remove-Item $out -ErrorAction SilentlyContinue
   if (-not $t) { throw 'yc gave no token (signed in?)' }
   return $t
+}
+
+# Where the world is sent for the site's names, asked of the zone's own name servers: no sign-in
+# needed. $null when they can't be asked.
+function Get-Published {
+  $seen = @{}
+  foreach ($n in $Names) {
+    $ips = $null
+    foreach ($ns in 'ns1.yandexcloud.net', 'ns2.yandexcloud.net') {
+      try { $ips = @(Resolve-DnsName -Name $n.TrimEnd('.') -Type A -Server $ns -DnsOnly -NoHostsFile -QuickTimeout -ErrorAction Stop | Where-Object Type -eq 'A' | ForEach-Object IPAddress); break } catch {}
+    }
+    if ($null -eq $ips) { return $null }
+    $seen[$n] = $ips
+  }
+  return $seen
 }
 
 # The record sets of the site's two names that say where it is (A, AAAA, CNAME, ANAME).
@@ -103,12 +127,16 @@ try {
 
   if ($Check) {
     # ---- the task: follow this house's address, if the site is here ----
+    $ip = Get-HouseIp
+    if (-not $ip) { Say 'no internet address found (no connection?) — nothing changed'; return }
+    # Both names already sent here — the usual case, the line's address being fixed: nothing to
+    # do, and Yandex (and yc's sign-in) not asked at all.
+    $pub = Get-Published
+    if ($pub -and @($Names | Where-Object { @($pub[$_]).Count -ne 1 -or $pub[$_][0] -ne $ip }).Count -eq 0) { return }
     $iam = Get-Iam
     $sets = Get-Sets $iam
     $a = @($sets | Where-Object type -eq 'A')
     if ($a.Count -ne $Names.Count -or $sets.Count -ne $a.Count) { return }   # not here: nothing to follow
-    $ip = Get-HouseIp
-    if (-not $ip) { Say 'no internet address found (no connection?) — nothing changed'; return }
     if (@($a | Where-Object { @($_.data).Count -ne 1 -or $_.data[0] -ne $ip }).Count -eq 0) { return }
     Update-Sets $iam $a @($a | ForEach-Object { @{ name = $_.name; type = 'A'; ttl = $Ttl; data = @($ip) } })
     Say "the house's address changed: $(($a | ForEach-Object { $_.data -join ',' } | Select-Object -Unique) -join ', ') → $ip; records moved"
