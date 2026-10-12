@@ -8163,6 +8163,9 @@ function openWhItemForm(id) {
   const existing = _ffHtml('wh');
   document.getElementById('modal-title').textContent = it ? `✏️ ${it.invNo} — изменить` : '➕ Новая позиция склада';
   document.getElementById('modal-body').innerHTML = `
+    ${it ? '' : `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:13px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span style="flex:1;min-width:200px">📄 <b>Есть счёт или накладная?</b> ИИ прочитает все позиции из файла и оформит поступление.</span>
+      <button type="button" class="btn btn-primary" style="font-size:12px;padding:6px 12px" onclick="_whInvoicePick(true)">🤖 Загрузить счёт</button></div>`}
     <div class="form-group"><label>Название *</label><input class="form-control" id="wh-name" value="${_escHtml(it ? it.name : '')}" placeholder="Например: Дрель-шуруповёрт Bosch GSR 18V"></div>
     <div class="form-group"><label>Фото товара * <span style="font-weight:400;color:#64748b">— первое фото показывается в каталоге</span></label>${existing}
       <div class="file-list" id="pending-list"></div>
@@ -8171,7 +8174,7 @@ function openWhItemForm(id) {
         <button type="button" class="btn btn-outline" onclick="document.getElementById('wh-cam').click()">📷 Сфотографировать</button>
         <button type="button" class="btn btn-outline" onclick="document.getElementById('wh-fi').click()">🖼 Из файла</button>
         <input type="file" id="wh-cam" accept="image/*" capture="environment" style="display:none" onchange="onFilePick(event)">
-        <input type="file" id="wh-fi" multiple accept="image/*,application/pdf" style="display:none" onchange="onFilePick(event)">
+        <input type="file" id="wh-fi" multiple accept="image/*,application/pdf" style="display:none" onchange="${it ? 'onFilePick(event)' : '_whItemFilePick(event)'}">
       </div>
       <div id="wh-finder"></div></div>
     <div class="form-group"><label>Учёт</label>
@@ -8526,7 +8529,7 @@ function openWhMove(type, preset) {
     <select class="form-control" id="whm-emp" onchange="_whMoveRebuild('${type}')"><option value="">— выберите —</option>${emps.map(e => `<option value="${e.id}" ${preset.employeeId === e.id ? 'selected' : ''}>${_escHtml(e.name)}${e.position ? ' — ' + _escHtml(e.position) : ''}</option>`).join('')}</select></div>` : '';
   document.getElementById('modal-title').textContent = `${t.icon} ${type === 'issue' ? 'Выдача в подотчёт' : type === 'return' ? 'Возврат на склад' : type === 'receipt' ? 'Поступление на склад' : 'Списание'}`;
   document.getElementById('modal-body').innerHTML = `${empSel}
-    ${bt ? _whBudgetBox(preset.budget.ledger, bt) : type === 'receipt' ? _whBudgetPicker() : ''}
+    ${bt ? _whBudgetBox(preset.budget.ledger, bt) : type === 'receipt' ? _whInvoiceBox() + _whBudgetPicker() : ''}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div class="form-group"><label>Дата</label><input type="date" class="form-control" id="whm-date" value="${_todayLocal()}"></div>
       ${type === 'issue' ? `<div class="form-group"><label>Вернуть до (для инструмента)</label><input type="date" class="form-control" id="whm-due"></div>` : ''}
@@ -8694,23 +8697,36 @@ async function whScanBudgetInvoice() {
   setBtn('⏳ Читаю счёт… (до минуты)', true);
   let json;
   try {
-    const resp = await fetch('/api/kitchen/scan-invoice', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ purpose: 'warehouse', fileUrls: urls }),
-    });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok || !data.ok) throw new Error(_scanFailText(resp.status, data));
-    json = data.result || {};
+    json = await _whReadInvoice(urls);
   } catch (e) {
     setBtn('🤖 Заполнить позиции из счёта', false);
     if (_modalGen === gen) alert('Не получилось прочитать счёт: ' + (e && e.message || e) + '\n\nПозиции можно добавить вручную.');
     return;
   }
+  if (_modalGen !== gen || !document.getElementById('whm-lines')) return; // that form was closed meanwhile
+  const r = _whFillReceipt(json);
+  if (!r.got) { setBtn('🤖 Заполнить позиции из счёта', false); alert('В счёте не нашлось товаров для склада — добавьте позиции вручную.'); return; }
+  setBtn('✅ Позиции прочитаны', true);
+  _showToast(`🤖 Прочитано позиций: ${r.got} (из каталога: ${r.matched}, новых: ${r.got - r.matched}) — проверьте`, true);
+}
+
+// The invoice at these addresses (the app's own files) read by the AI: its lines, number, date
+// and supplier. Throws with a message a person can act on.
+async function _whReadInvoice(urls) {
+  const resp = await fetch('/api/kitchen/scan-invoice', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ purpose: 'warehouse', fileUrls: urls }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || !data.ok) throw new Error(_scanFailText(resp.status, data));
+  return data.result || {};
+}
+// What was read, onto the receipt form open now: each line matched to the catalogue or offered
+// as a new item. Lines left empty give way to it; anything already chosen stays.
+function _whFillReceipt(json) {
   const box = document.getElementById('whm-lines');
-  if (_modalGen !== gen || !box) return; // that form was closed meanwhile
   const got = (Array.isArray(json.items) ? json.items : []).filter(x => x && String(x.name || '').trim());
-  if (!got.length) { setBtn('🤖 Заполнить позиции из счёта', false); alert('В счёте не нашлось товаров для склада — добавьте позиции вручную.'); return; }
-  // Lines left empty give way to what was read; anything already chosen stays.
+  if (!box || !got.length) return { got: 0, matched: 0 };
   box.querySelectorAll('.whm-line').forEach(r => { if (!(r.querySelector('.whm-item') || {}).value) r.remove(); });
   const items = getWhItems().filter(_whMine);
   let matched = 0;
@@ -8722,9 +8738,106 @@ async function whScanBudgetInvoice() {
   });
   const note = document.getElementById('whm-note');
   if (note && !note.value && json.invoice_num) note.value = 'Счёт № ' + json.invoice_num + (json.date ? ' от ' + fmtDate(String(json.date)) : '');
+  const sup = document.getElementById('whm-supplier');
+  if (sup && !sup.value.trim() && json.supplier_name) sup.value = String(json.supplier_name).trim();
   _whReceiptTotal();
+  return { got: got.length, matched };
+}
+
+// ---------- a receipt from an invoice file ----------
+// Goods that didn't come through the budget: their invoice or delivery note — a PDF or photos —
+// is uploaded, the AI reads every line into the receipt, and the file stays on the receipt as
+// its scan. Offered on «+ Позиция» too, where people look for it first.
+let _whmInvoice = null; // the invoice files of the receipt form open now: { gen, files: [{ fileId, name, type }] }
+const _WH_INVOICE_MAX = 5; // what the reader takes at once (MAX_FILES in api/kitchen/scan-invoice.js)
+function _whInvoiceBox() {
+  return `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button type="button" class="btn btn-primary" id="whm-inv-ai" style="font-size:12px;padding:6px 12px" onclick="_whInvoiceButton()">🤖 Загрузить счёт / накладную</button>
+      <span style="font-size:11px;color:#475569">PDF или фото, все страницы сразу (до ${_WH_INVOICE_MAX}) — ИИ заполнит позиции, а файл сохранится в документе</span></div>
+    <div id="whm-inv-files"></div></div>`;
+}
+// The box's button: a file to pick — or, when the files are up but could not be read, another try
+// at reading them, without picking them again.
+function _whInvoiceButton() {
+  if (_whmInvoice && _whmInvoice.gen === _modalGen && _whmInvoice.files.length && !_whmInvoice.read) return whReadInvoiceFiles([]);
+  _whInvoicePick();
+}
+function _whInvoicePick(newForm) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*,application/pdf'; inp.multiple = true;
+  inp.onchange = () => { const files = Array.from(inp.files || []); if (files.length) _whInvoiceStart(files, newForm); };
+  inp.click();
+}
+// newForm: from «+ Позиция» — the receipt form opens in its place first.
+function _whInvoiceStart(files, newForm) {
+  if (newForm) openWhMove('receipt');
+  return whReadInvoiceFiles(files);
+}
+// A PDF picked as an item's photo is almost always the invoice it came with: offered to be read
+// as one — every line onto the shelf at once — instead of kept as a picture of the item.
+function _whItemFilePick(e) {
+  const files = Array.from(e.target.files || []);
+  if (files.some(f => f.type === 'application/pdf') && confirm('Это документ PDF — похоже, счёт или накладная.\n\nПрочитать его ИИ и оформить поступление всех позиций из него?')) {
+    e.target.value = '';
+    _whInvoiceStart(files, true);
+    return;
+  }
+  onFilePick(e);
+}
+function _whInvoiceListRender() {
+  const el = document.getElementById('whm-inv-files'), reg = getLS('files') || {};
+  if (!el || !_whmInvoice || _whmInvoice.gen !== _modalGen) return;
+  el.innerHTML = _whmInvoice.files.map(f => { const u = (reg[f.fileId] || {}).url;
+    return `<div style="font-size:12px;margin-top:6px">${u ? `<a href="${_escHtml(u)}" target="_blank" rel="noopener">${fileEmoji(f.type)} ${_escHtml(f.name)}</a>` : _escHtml(f.name)}</div>`; }).join('');
+}
+async function whReadInvoiceFiles(files) { return _onceAtATime('whInvoice', () => _whReadInvoiceFilesInner(files)); }
+async function _whReadInvoiceFilesInner(files) {
+  const gen = _modalGen;
+  if (!document.getElementById('whm-lines')) return;
+  const label0 = '🤖 Загрузить счёт / накладную';
+  const setBtn = (label, disabled) => { const b = document.getElementById('whm-inv-ai'); if (b && _modalGen === gen) { b.textContent = label; b.disabled = disabled; } };
+  if (!_whmInvoice || _whmInvoice.gen !== gen) _whmInvoice = { gen, files: [] };
+  const inv = _whmInvoice;
+  let usable = files.filter(f => String(f.type).startsWith('image/') || f.type === 'application/pdf' || _isHeicFile(f));
+  if (usable.length < files.length) alert('Можно загрузить только PDF или фото — остальные файлы пропущены.');
+  const room = Math.max(0, _WH_INVOICE_MAX - inv.files.length);
+  if (usable.length > room) { alert(`ИИ читает не больше ${_WH_INVOICE_MAX} файлов одного счёта — взяты первые ${room}.`); usable = usable.slice(0, room); }
+  if (!usable.length && !inv.files.length) return;
+  if (usable.length) setBtn('⏳ Загружаю…', true);
+  try {
+    for (let k = 0; k < usable.length; k++) {
+      // Sharp enough for the small print of an invoice — the same picture is read and kept.
+      const res = await _compressForAI(usable[k]);
+      // A photo comes back as a JPEG whatever it was — named so.
+      let name = String(usable[k].name || 'Счёт');
+      if (res.type === 'image/jpeg' && !/\.jpe?g$/i.test(name)) name = name.replace(/\.[^.\/\\]{1,5}$/, '') + '.jpg';
+      const size = Math.round((res.data.length - res.data.indexOf(',') - 1) * 3 / 4);
+      const fileId = await dbSave({ name, type: res.type, size, data: res.data }, k + 1, usable.length);
+      inv.files.push({ fileId, name, type: res.type });
+    }
+  } catch (e) {
+    alert('⚠️ Файл не загрузился: ' + ((e && e.message) || 'нет связи с сервером') + '.\n\nПопробуйте ещё раз, когда появится связь, или заполните позиции вручную.');
+  }
+  _whInvoiceListRender();
+  if (_modalGen !== gen) return;
+  if (!inv.files.length) { setBtn(label0, false); return; }
+  setBtn('⏳ Читаю счёт… (до минуты)', true);
+  const reg = getLS('files') || {};
+  let json;
+  try {
+    json = await _whReadInvoice(inv.files.map(f => (reg[f.fileId] || {}).url).filter(Boolean));
+  } catch (e) {
+    setBtn('🔁 Прочитать ещё раз', false);
+    if (_modalGen === gen) alert('Не получилось прочитать счёт: ' + (e && e.message || e) + '\n\nФайл сохранится в документе, а позиции можно добавить вручную.');
+    return;
+  }
+  if (_modalGen !== gen || !document.getElementById('whm-lines')) return;
+  const r = _whFillReceipt(json);
+  inv.read = true;
+  if (!r.got) { setBtn('✅ Счёт прочитан', true); alert('В счёте не нашлось товаров для склада — добавьте позиции вручную.'); return; }
   setBtn('✅ Позиции прочитаны', true);
-  _showToast(`🤖 Прочитано позиций: ${got.length} (из каталога: ${matched}, новых: ${got.length - matched}) — проверьте`, true);
+  _showToast(`🤖 Прочитано позиций: ${r.got} (из каталога: ${r.matched}, новых: ${r.got - r.matched}) — проверьте и нажмите «Провести»`, true);
 }
 
 // The receipt's total as it is being filled, against the invoice it comes from.
@@ -8958,6 +9071,12 @@ async function _saveWhMoveInner(type) {
   // right if the budget record is later edited or removed.
   if (budgetTx) doc.budgetRef = { ledger: budgetLedger, txId: budgetTx.id, vendor: budgetTx.vendor || '', amount: Number(budgetTx.amount) || 0, date: budgetTx.date || '' };
   if (type === 'writeoff') doc.reason = v('whm-reason');
+  // The invoice file the receipt was read from stays on it, as its scan.
+  if (type === 'receipt' && _whmInvoice && _whmInvoice.gen === _modalGen && _whmInvoice.files.length) {
+    const at = new Date().toISOString();
+    doc.scans = _whmInvoice.files.map(f => ({ fileId: f.fileId, name: f.name, type: f.type, at, by: currentUser }));
+    _whmInvoice = null;
+  }
   setLS('wh_docs', getWhDocs().concat([doc]));
   // Issued from the basket: the basket has done its job.
   if (fromBasket) { _whBasketFormGen = -1; _whBasketClear(); }
