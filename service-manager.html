@@ -8553,7 +8553,8 @@ function openWhMove(type, preset) {
     document.getElementById('modal-title').textContent = '🧺 Выдача из корзины';
     const head = document.createElement('div');
     head.style.cssText = 'font-size:12px;color:#1e40af;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 10px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap';
-    head.innerHTML = '<span>🧺 В корзине позиций: <b>' + Object.keys(b).length + '</b> — выберите, кому выдаётся; количество можно поправить, лишнее убрать ✕.</span><button class="btn btn-outline" style="font-size:11px;padding:3px 8px" onclick="if(confirm(\'Очистить корзину?\')){_whBasketClear();closeModal()}">Очистить корзину</button>';
+    // The basket picks items for stickers as well: one sheet for all of them, not a sheet each.
+    head.innerHTML = '<span>🧺 В корзине позиций: <b>' + Object.keys(b).length + '</b> — выберите, кому выдаётся; количество можно поправить, лишнее убрать ✕.</span><span style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-outline" id="wh-basket-labels" style="font-size:11px;padding:3px 8px" onclick="_printWhLabels(Object.keys(_whBasketGet()))">🏷️ Наклейки на всё</button><button class="btn btn-outline" style="font-size:11px;padding:3px 8px" onclick="if(confirm(\'Очистить корзину?\')){_whBasketClear();closeModal()}">Очистить корзину</button></span>';
     document.getElementById('modal-body').prepend(head);
   } else if (type === 'return') _whMoveRebuild(type); else _whAddLine(type, preset.itemId);
   // From the list of paid invoices: the reader starts at once — nothing to type.
@@ -9695,6 +9696,86 @@ function openWhLabels(ids) {
     <button class="btn btn-primary" onclick="_printWhLabels(Array.from(document.querySelectorAll('.whl-cb')).filter(c=>c.checked).map(c=>c.value))">🖨️ Печать</button>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
+// ---------- stickers for a label printer (NIIMBOT B3S and the like) ----------
+// One sticker a page, the page the size of the label, as a PDF the printer's own app prints.
+// Drawn here in black and white at the printer's own 203 dots per inch, so it comes out as
+// drawn — and the PDF is written here too: no library, no font to embed. These two functions
+// also run inside the sticker page (their source is put there), so they use nothing of the app.
+const WH_LABEL_SIZES = [[50, 30], [40, 30], [60, 40], [70, 50], [75, 50], [50, 50], [40, 20]];
+// One sticker as a bitmap: { w, h, bits } — rows of 1-bit pixels, 1 white, 0 black.
+function _whLabelBitmap(lab, wMm, hMm) {
+  const k = 203 / 25.4, W = Math.round(wMm * k), H = Math.round(hMm * k), m = Math.round(1.5 * k);
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); g.fillStyle = '#000';
+  // The QR code on the left, each module a whole number of dots — sharp to scan.
+  const n = lab.qr.length, cell = Math.max(1, Math.floor(Math.min(H - 2 * m, W * 0.45) / n)), qs = cell * n, qy = Math.round((H - qs) / 2);
+  for (let r = 0; r < n; r++) for (let col = 0; col < n; col++) if (lab.qr[r][col] === '1') g.fillRect(m + col * cell, qy + r * cell, cell, cell);
+  // The text on the right: the number large, the name in as many lines as fit, the organisation.
+  const x = m + qs + Math.round(1.5 * k), tw = W - x - m;
+  const font = (px, bold) => { g.font = (bold ? 'bold ' : '') + px + 'px Arial, sans-serif'; };
+  let big = Math.round(H * 0.2);
+  font(big, true);
+  while (big > 8 && g.measureText(lab.inv).width > tw) font(--big, true);
+  g.textBaseline = 'top';
+  g.fillText(lab.inv, x, m);
+  const small = Math.max(8, Math.round(H * 0.08)), mid = Math.max(9, Math.round(H * 0.1)), line = Math.round(mid * 1.2);
+  const top = m + Math.round(big * 1.15), bottom = H - m - (lab.org ? Math.round(small * 1.3) : 0);
+  const maxLines = Math.max(1, Math.floor((bottom - top) / line));
+  font(mid);
+  const words = String(lab.name || '').split(/\s+/).filter(Boolean), lines = [];
+  let cur = '';
+  for (const w of words) {
+    const t = cur ? cur + ' ' + w : w;
+    if (g.measureText(t).width <= tw || !cur) cur = t; else { lines.push(cur); cur = w; }
+  }
+  if (cur) lines.push(cur);
+  if (lines.length > maxLines) {
+    lines.length = maxLines;
+    let l = lines[maxLines - 1];
+    while (l.length > 1 && g.measureText(l + '…').width > tw) l = l.slice(0, -1);
+    lines[maxLines - 1] = l + '…';
+  }
+  lines.forEach((l, i) => g.fillText(l, x, top + i * line));
+  if (lab.org) { font(small); g.fillText(lab.org, x, H - m - small); }
+  // To black and white.
+  const px = g.getImageData(0, 0, W, H).data, rowBytes = Math.ceil(W / 8), bits = new Uint8Array(rowBytes * H).fill(255);
+  for (let y = 0; y < H; y++) for (let xx = 0; xx < W; xx++) {
+    const i = (y * W + xx) * 4;
+    if (px[i] * 0.3 + px[i + 1] * 0.59 + px[i + 2] * 0.11 < 128) bits[y * rowBytes + (xx >> 3)] &= ~(0x80 >> (xx & 7));
+  }
+  return { w: W, h: H, bits };
+}
+// The bitmaps as a PDF, a page each, every page wMm × hMm.
+function _whPdfFromBitmaps(pages, wMm, hMm) {
+  const pt = mm => (mm * 72 / 25.4).toFixed(2), PW = pt(wMm), PH = pt(hMm);
+  const enc = new TextEncoder(), parts = [], at = [];
+  let len = 0;
+  const put = x => { const b = typeof x === 'string' ? enc.encode(x) : x; parts.push(b); len += b.length; };
+  const obj = (id, body) => { at[id] = len; put(id + ' 0 obj\n' + body + '\nendobj\n'); };
+  put('%PDF-1.4\n'); put(new Uint8Array([37, 226, 227, 207, 211, 10]));
+  const total = 2 + 3 * pages.length;
+  obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2, '<< /Type /Pages /Kids [' + pages.map((p, i) => (3 + 3 * i) + ' 0 R').join(' ') + '] /Count ' + pages.length + ' >>');
+  pages.forEach((p, i) => {
+    const pid = 3 + 3 * i, cid = pid + 1, iid = pid + 2, draw = 'q ' + PW + ' 0 0 ' + PH + ' 0 0 cm /Im0 Do Q';
+    obj(pid, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + PW + ' ' + PH + '] /Resources << /XObject << /Im0 ' + iid + ' 0 R >> >> /Contents ' + cid + ' 0 R >>');
+    obj(cid, '<< /Length ' + draw.length + ' >>\nstream\n' + draw + '\nendstream');
+    at[iid] = len;
+    put(iid + ' 0 obj\n<< /Type /XObject /Subtype /Image /Width ' + p.w + ' /Height ' + p.h + ' /ColorSpace /DeviceGray /BitsPerComponent 1 /Length ' + p.bits.length + ' >>\nstream\n');
+    put(p.bits); put('\nendstream\nendobj\n');
+  });
+  const xref = len;
+  let x = 'xref\n0 ' + (total + 1) + '\n0000000000 65535 f \n';
+  for (let id = 1; id <= total; id++) x += String(at[id]).padStart(10, '0') + ' 00000 n \n';
+  put(x + 'trailer\n<< /Size ' + (total + 1) + ' /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n');
+  const out = new Uint8Array(len);
+  let o = 0;
+  parts.forEach(b => { out.set(b, o); o += b.length; });
+  return out;
+}
+
 async function _printWhLabels(ids) {
   if (!ids.length) { alert('Отметьте хотя бы одну позицию'); return; }
   // Opened now, inside the tap, so a pop-up blocker lets it through; filled once the QR
@@ -9703,20 +9784,67 @@ async function _printWhLabels(ids) {
   if (w) w.document.write('<p style="font-family:sans-serif;padding:30px">Готовим наклейки…</p>');
   try { await _whLoadQr(); } catch (e) { if (w) w.close(); alert('Не удалось загрузить генератор QR-кодов. Проверьте интернет и попробуйте снова.'); return; }
   const s = getWhSettings();
+  // The same stickers for a label printer: the QR code as rows of 0/1, drawn there in its dots.
+  const forPrinter = [];
   const labels = ids.map(id => _whItem(id)).filter(Boolean).map(it => {
     const qr = window.qrcode(0, 'M'); qr.addData(_whItemUrl(it.id)); qr.make();
+    const n = qr.getModuleCount(), rows = [];
+    for (let r = 0; r < n; r++) { let row = ''; for (let c = 0; c < n; c++) row += qr.isDark(r, c) ? '1' : '0'; rows.push(row); }
+    forPrinter.push({ inv: it.invNo, name: it.name, org: s.orgName, qr: rows });
     return `<div class="lab">${qr.createSvgTag({ cellSize: 3, margin: 0, scalable: true })}<div class="tx"><div class="inv">${_escHtml(it.invNo)}</div><div class="nm">${_escHtml(it.name)}</div><div class="org">${_escHtml(s.orgName)}</div></div></div>`;
   }).join('');
   const html = `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Наклейки склада</title><style>
     @page { size: A4; margin: 8mm; } body { margin: 0; font-family: Arial, sans-serif; }
-    .bar { background: #1e293b; color: #fff; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; }
+    .bar { background: #1e293b; color: #fff; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; gap: 10px 18px; flex-wrap: wrap; }
     .bar button { background: #fff; border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
+    .grp { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .grp b { font-size: 12px; color: #94a3b8; font-weight: 600; }
+    .bar select { padding: 6px; border-radius: 6px; border: 0; font-size: 13px; }
     .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3mm; padding: 4mm; }
     .lab { border: 1px dashed #94a3b8; border-radius: 2mm; padding: 2.5mm; display: flex; gap: 2.5mm; align-items: center; height: 30mm; break-inside: avoid; overflow: hidden; }
     .lab svg { width: 24mm; height: 24mm; flex-shrink: 0; }
     .tx { min-width: 0; } .inv { font-size: 15pt; font-weight: 700; } .nm { font-size: 8.5pt; line-height: 1.2; max-height: 3.6em; overflow: hidden; } .org { font-size: 7pt; color: #475569; margin-top: 1mm; }
-    @media print { .bar { display: none; } .grid { padding: 0; } }
-  </style></head><body><div class="bar"><span>Наклеек: ${ids.length}</span><button onclick="window.print()">🖨️ Печать</button></div><div class="grid">${labels}</div></body></html>`;
+    .skip { font-size: 13px; color: #cbd5e1; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .skip input { width: 56px; padding: 5px 6px; border-radius: 6px; border: 0; font-size: 13px; }
+    .lab.gap { border-style: dotted; background: repeating-linear-gradient(45deg, #f8fafc, #f8fafc 6px, #eef2f7 6px, #eef2f7 12px); }
+    @media print { .bar { display: none; } .grid { padding: 0; } .lab.gap { visibility: hidden; } }
+  </style></head><body><div class="bar"><span>Наклеек: ${ids.length}</span>
+    <span class="grp"><b>Лист A4, обычный принтер:</b>
+      <label class="skip">лист уже начат? пропустить первые <input type="number" id="skip" min="0" max="60" value="0" oninput="skip(this.value)"> мест</label>
+      <button onclick="window.print()">🖨️ Печать</button></span>
+    <span class="grp"><b>Принтер наклеек (NIIMBOT):</b>
+      <select id="lsize" onchange="try{localStorage.setItem('wh_label_size',this.value)}catch(e){}">${WH_LABEL_SIZES.map(([a, b]) => `<option value="${a}x${b}">${a}×${b} мм</option>`).join('')}</select>
+      <button onclick="savePdf()">⬇️ PDF для принтера наклеек</button></span></div><div class="grid" id="grid">${labels}</div>
+  <script>
+    // A sheet of stickers already partly used: the first places are left empty, so the new
+    // stickers come out on the free ones.
+    function skip(n) {
+      n = Math.max(0, Math.min(60, parseInt(n, 10) || 0));
+      document.querySelectorAll('.lab.gap').forEach(function (e) { e.remove(); });
+      var g = document.getElementById('grid');
+      for (var i = 0; i < n; i++) { var d = document.createElement('div'); d.className = 'lab gap'; g.insertBefore(d, g.firstChild); }
+    }
+    var LABELS = ${JSON.stringify(forPrinter).replace(/</g, '\\u003c')};
+    ${_whLabelBitmap.toString()}
+    ${_whPdfFromBitmaps.toString()}
+    try { var ls = localStorage.getItem('wh_label_size'); if (ls && document.querySelector('#lsize option[value="' + ls + '"]')) document.getElementById('lsize').value = ls; } catch (e) {}
+    // One sticker a page, the page the size of the label.
+    function labelsPdf() {
+      var s = document.getElementById('lsize').value.split('x'), w = Number(s[0]), h = Number(s[1]);
+      return _whPdfFromBitmaps(LABELS.map(function (l) { return _whLabelBitmap(l, w, h); }), w, h);
+    }
+    // On a phone straight to the printer's app (the share menu); on a computer, a download.
+    function savePdf() {
+      var name = 'Наклейки ' + document.getElementById('lsize').value + ' мм.pdf';
+      var blob = new Blob([labelsPdf()], { type: 'application/pdf' }), file = null;
+      try { file = new File([blob], name, { type: 'application/pdf' }); } catch (e) {}
+      if (file && /Android|iPhone|iPad/i.test(navigator.userAgent) && navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file], title: name }).catch(function () {});
+        return;
+      }
+      var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+  <\/script></body></html>`;
   if (w) _writeAppWindow(w, html);
   else _whOpenPrint(html, 'Наклейки_склада');
   if (_modalIsOpen()) closeModal();
