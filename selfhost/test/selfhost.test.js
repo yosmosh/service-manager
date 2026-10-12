@@ -172,6 +172,22 @@ function req(port, method, p, { headers, body } = {}) {
       }
     });
 
+    // A visitor who breaks off mid-download (bots do, all day): the server lets go of the file.
+    // It used to hold it open for good — and then the page could not be replaced.
+    await t('a download broken off: the file is let go', async () => {
+      await new Promise((resolve, reject) => {
+        const r = http.get({ host: '127.0.0.1', port, path: '/' }, res => { res.once('data', () => { r.destroy(); resolve(); }); });
+        r.on('error', e => (e.code === 'ECONNRESET' ? resolve() : reject(e)));
+      });
+      await new Promise(r => setTimeout(r, 300));
+      if (process.platform === 'win32') {
+        const ps = `try { $f = [IO.File]::Open('${path.join(ROOT, 'service-manager.html')}', 'Open', 'Read', 'None'); $f.Close(); 'free' } catch { 'held' }`;
+        const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8' });
+        assert.strictEqual(r.stdout.trim(), 'free', r.stderr);
+      }
+      assert.strictEqual((await req(port, 'GET', '/')).status, 200, 'and serves it on');
+    });
+
     let token;
     await t('sign-in: the owner with the new password; nobody with a default', async () => {
       const bad = await req(port, 'POST', '/db/v1/auth:login', { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'admin123' }) });

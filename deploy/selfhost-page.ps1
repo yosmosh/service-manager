@@ -13,8 +13,10 @@ $src = Join-Path $repo 'service-manager.html'
 $dest = Join-Path $Root 'app\service-manager.html'
 $bytes = [IO.File]::ReadAllBytes($src)
 
-# Written into the existing file (its rights stay as the installer set them).
-try { $fs = [IO.File]::Open($dest, [IO.FileMode]::Truncate, [IO.FileAccess]::Write) }
+# Written into the existing file (its rights stay as the installer set them) — alongside whoever
+# has it open for reading: the server keeps a page's file open while it sends it, and until the
+# server's next update, also after a visitor broke off mid-download.
+try { $fs = [IO.File]::Open($dest, [IO.FileMode]::Truncate, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite) }
 catch { throw "Cannot write $dest — run deploy\selfhost-windows.ps1 once (it grants the right to replace the page)" }
 try { $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Close() }
 

@@ -18,6 +18,7 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const { pipeline } = require('stream');
 const crypto = require('crypto');
 
 const env = process.env;
@@ -68,7 +69,9 @@ function serveStatic(req, res, rel, cache) {
   if (req.headers['if-none-match'] === etag) return send(res, 304, headers);
   res.writeHead(200, headers);
   if (req.method === 'HEAD') return res.end();
-  fs.createReadStream(f.full).pipe(res);
+  // pipeline, not pipe: a visitor who breaks off mid-download closes the file too — with pipe it
+  // stayed open for good, and the page could not be replaced while it was.
+  pipeline(fs.createReadStream(f.full), res, () => {});
 }
 
 function readBody(req, limit) {
@@ -101,7 +104,7 @@ function serveFile(req, res, id) {
   if (f.disposition) headers['Content-Disposition'] = f.disposition;
   res.writeHead(200, headers);
   if (req.method === 'HEAD') return res.end();
-  fs.createReadStream(f.path).pipe(res);
+  pipeline(fs.createReadStream(f.path), res, () => {});
 }
 
 // /api/… to Vercel as it came — method, headers, body; and the answer back as it comes.
