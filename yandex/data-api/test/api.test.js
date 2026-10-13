@@ -212,6 +212,82 @@ test('passport details: the owner and the administrators alone, never the others
   assert.ok(t.store.docs.has('private/people'), 'still there');
 });
 
+// Личный бюджет and its payouts: a cash record (c1, its receipt f1), a bank one (b1, f2), a payout
+// (s1, f3); ТО (m1, f4) — and the registry of the four documents.
+const M_ = fields => ({ mapValue: { fields } });
+const A_ = values => ({ arrayValue: { values } });
+const rec = (id, fund, file, extra) => M_(Object.assign({ id: S(id), fund: S(fund), amount: { integerValue: '100' }, fileRefs: A_([M_({ id: S(file) })]) }, extra || {}));
+async function budgets() {
+  const t = await imported();
+  await t.call('PATCH', 'v1/documents/appdata/finance_ledger', { service: true, body: { fields: {
+    finance_tx_personal: A_([rec('c1', 'Наличные', 'f1'), rec('b1', 'РООИ-ММЕО', 'f2')]),
+    finance_settlements: A_([M_({ id: S('s1'), fileIds: A_([S('f3')]) })]),
+    finance_tx_maintenance: A_([rec('m1', '', 'f4')]),
+  } } });
+  await t.call('PATCH', 'v1/documents/appdata/files_registry', { service: true, body: { fields: { files: M_({ f1: M_({ url: S('u1') }), f2: M_({ url: S('u2') }), f3: M_({ url: S('u3') }), f4: M_({ url: S('u4') }) }) } } });
+  const tok = async (u, p) => (await login(t, u, p)).body.token;
+  const T = { owner: await tok('Yosmosh', 'own-secret'), admin: await tok('admin', 'adm-secret'), admin2: await tok('admin2', 'lichny2026'), buh: await tok('buh', 'buh-secret'),
+    kitchen: await tok('kitchen', 'kitchen123'), worker: await tok('worker', 'worker123'), alexander: await tok('alexander', 'alex123'), management: await tok('management', 'board2026'), provider: await tok('energo', '7777') };
+  const read = async (token, path, query) => { const r = await t.call('GET', 'v1/documents/' + path, { token, query }); return r.status === 200 ? r.body.fields || {} : r.status; };
+  const ids = v => (v && v.arrayValue ? (v.arrayValue.values || []).map(e => e.mapValue.fields.id.stringValue) : v);
+  const stored = name => ids(JSON.parse(t.store.docs.get('appdata/finance_ledger').fields[name]));
+  return { t, T, read, ids, stored };
+}
+
+test('Личный бюджет: all of it for the owner and the administrators, its bank records for the accountant, nothing for anyone else', async () => {
+  const { T, read, ids } = await budgets();
+  for (const who of ['owner', 'admin', 'admin2']) {
+    const l = await read(T[who], 'appdata/finance_ledger'), f = await read(T[who], 'appdata/files_registry');
+    assert.deepStrictEqual([ids(l.finance_tx_personal), ids(l.finance_settlements), ids(l.finance_tx_maintenance)], [['c1', 'b1'], ['s1'], ['m1']], who);
+    assert.deepStrictEqual(Object.keys(f.files.mapValue.fields).sort(), ['f1', 'f2', 'f3', 'f4'], who);
+  }
+  const b = await read(T.buh, 'appdata/finance_ledger'), bf = await read(T.buh, 'appdata/files_registry');
+  assert.deepStrictEqual([ids(b.finance_tx_personal), b.finance_settlements, ids(b.finance_tx_maintenance)], [['b1'], undefined, ['m1']], 'the accountant');
+  assert.deepStrictEqual(Object.keys(bf.files.mapValue.fields).sort(), ['f2', 'f4'], 'the accountant: no cash receipt, no payout');
+  for (const who of ['kitchen', 'worker', 'alexander', 'management', 'provider']) {
+    const l = await read(T[who], 'appdata/finance_ledger'), f = await read(T[who], 'appdata/files_registry');
+    assert.deepStrictEqual([l.finance_tx_personal, l.finance_settlements, ids(l.finance_tx_maintenance)], [undefined, undefined, ['m1']], who);
+    assert.deepStrictEqual(Object.keys(f.files.mapValue.fields), ['f4'], who + ': only the documents of what it is given');
+    assert.deepStrictEqual(await read(T[who], 'appdata/finance_ledger', { 'mask.fieldPaths': ['finance_tx_personal'] }), {}, who + ' asking for that field alone');
+    assert.deepStrictEqual(await read(T[who], 'appdata/files_registry', { 'mask.fieldPaths': ['files.f1'] }), {}, who + ' asking for one document');
+  }
+});
+
+test('Личный бюджет: writes within the part each one is given', async () => {
+  const { t, T, stored } = await budgets();
+  const W = (token, fields, mask) => t.call('PATCH', 'v1/documents/appdata/finance_ledger', { token, query: mask ? { 'updateMask.fieldPaths': mask } : {}, body: { fields } });
+  for (const who of ['kitchen', 'alexander', 'management', 'provider']) {
+    assert.strictEqual((await W(T[who], { finance_tx_personal: A_([]) }, ['finance_tx_personal'])).status, 403, who + ' Личный бюджет');
+    assert.strictEqual((await W(T[who], { finance_settlements: A_([]) }, ['finance_settlements'])).status, 403, who + ' payouts');
+    assert.strictEqual((await W(T[who], { finance_tx_maintenance: A_([rec('m1', '', 'f4')]) })).status, 403, who + ' the whole document');
+    assert.strictEqual((await t.call('DELETE', 'v1/documents/appdata/finance_ledger', { token: T[who] })).status, 403, who + ' deleting it');
+  }
+  assert.strictEqual((await W(T.alexander, { finance_tx_maintenance: A_([rec('m1', '', 'f4', { status: S('approved') })]) }, ['finance_tx_maintenance'])).status, 200, 'ТО as before');
+  assert.deepStrictEqual([stored('finance_tx_personal'), stored('finance_settlements')], [['c1', 'b1'], ['s1']], 'untouched');
+  // The accountant marks the bank record paid: the cash one stays as it is, where it is.
+  const r = await W(T.buh, { finance_tx_personal: A_([rec('b1', 'РООИ-ММЕО', 'f2', { paid: { booleanValue: true } }), rec('n1', 'РООИ-ММЕО', 'f9')]) }, ['finance_tx_personal']);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.deepStrictEqual(stored('finance_tx_personal'), ['c1', 'b1', 'n1']);
+  const now = JSON.parse(t.store.docs.get('appdata/finance_ledger').fields.finance_tx_personal).arrayValue.values;
+  assert.deepStrictEqual([now[0].mapValue.fields.paid, now[1].mapValue.fields.paid], [undefined, { booleanValue: true }], 'hers written, the cash one not');
+  for (const [what, list] of [['a cash record changed', [rec('c1', 'Наличные', 'f1', { paid: { booleanValue: true } })]], ['a new cash record', [rec('x1', 'Наличные', 'f8')]],
+    ['a cash record passed off as bank', [rec('c1', 'РООИ-ММЕО', 'f1')]], ['a bank record made cash', [rec('b1', 'Наличные', 'f2')]]]) {
+    assert.strictEqual((await W(T.buh, { finance_tx_personal: A_(list) }, ['finance_tx_personal'])).status, 403, 'the accountant: ' + what);
+  }
+  assert.strictEqual((await W(T.buh, { finance_settlements: A_([]) }, ['finance_settlements'])).status, 403, 'the accountant: payouts');
+  assert.deepStrictEqual(stored('finance_tx_personal'), ['c1', 'b1', 'n1'], 'nothing changed by the refused ones');
+  assert.strictEqual((await W(T.admin, { finance_settlements: A_([]) }, ['finance_settlements'])).status, 200, 'an administrator: as before');
+});
+
+test('the files registry: nobody writes the documents of records they are not given', async () => {
+  const { t, T } = await budgets();
+  const W = (token, id) => t.call('PATCH', 'v1/documents/appdata/files_registry', { token, query: { 'updateMask.fieldPaths': ['files.' + id] }, body: { fields: { files: M_({ [id]: M_({ url: S('x') }) }) } } });
+  assert.deepStrictEqual([(await W(T.buh, 'f1')).status, (await W(T.buh, 'f3')).status, (await W(T.buh, 'f2')).status, (await W(T.buh, 'f7')).status], [403, 403, 200, 200], 'the accountant');
+  assert.deepStrictEqual([(await W(T.kitchen, 'f2')).status, (await W(T.kitchen, 'f4')).status, (await W(T.kitchen, 'k1')).status], [403, 200, 200], 'the kitchen');
+  assert.strictEqual((await t.call('PATCH', 'v1/documents/appdata/files_registry', { token: T.kitchen, query: { 'updateMask.fieldPaths': ['files'] }, body: { fields: { files: M_({}) } } })).status, 403, 'the whole registry');
+  assert.strictEqual((await W(T.owner, 'f1')).status, 200, 'the owner');
+});
+
 test('the settings screen gets names, never passwords — all for the owner, providers for an admin', async () => {
   const t = await imported();
   const owner = (await login(t, 'Yosmosh', 'own-secret')).body.token;

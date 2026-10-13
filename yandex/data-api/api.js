@@ -51,12 +51,22 @@ const IMAGE_ROLES = ['owner', 'admin', 'storekeeper', 'cleaning_head', 'service'
 function createApi({ store, auth, files, accounts, images, now }) {
   const clock = now || (() => Date.now());
 
-  async function getDoc(path, query) {
+  // The ledger's two fields that decide what of the budgets a limited role is given (core.viewFields).
+  async function ledgerParts() {
+    const d = await store.read(core.LEDGER_DOC, ['finance_tx_personal', 'finance_settlements']);
+    const out = {};
+    if (d) for (const n of Object.keys(d.fields)) out[n] = JSON.parse(d.fields[n]);
+    return out;
+  }
+
+  async function getDoc(path, query, role) {
     const mask = many(query, 'mask.fieldPaths');
     const topNames = mask.length ? [...new Set(mask.map(p => core.splitFieldPath(p)[0]).filter(Boolean))] : null;
     const doc = await store.read(path, topNames);
     if (!doc) throw new HttpError(404, 'NOT_FOUND', 'Document not found: ' + path);
     let texts = doc.fields;
+    // Only this role's part of the budgets (core.viewFields).
+    if (core.viewed(role, path)) texts = core.viewFields(role, path, texts, path === core.FILES_DOC && texts.files !== undefined ? await ledgerParts() : null);
     // A nested mask path returns only that part of its field.
     if (mask.some(p => core.splitFieldPath(p).length > 1)) {
       const parsed = {};
@@ -68,18 +78,27 @@ function createApi({ store, auth, files, accounts, images, now }) {
     return json(200, docJson(path, doc.meta, texts));
   }
 
-  async function patchDoc(p, query, rawBody) {
+  async function patchDoc(p, query, rawBody, role) {
     let body;
     try { body = rawBody ? JSON.parse(rawBody) : {}; } catch (e) { throw new HttpError(400, 'INVALID_ARGUMENT', 'Body is not JSON'); }
-    const fields = (body && body.fields) || {};
+    let fields = (body && body.fields) || {};
     const mask = many(query, 'updateMask.fieldPaths');
     const ifTime = one(query, 'currentDocument.updateTime');
     const exists = one(query, 'currentDocument.exists');
+    // Within this role's part of the budgets (core.viewWrite) — the registry's, as the ledger is now.
+    const limited = core.viewed(role, p.path);
+    const ledger = limited && p.path === core.FILES_DOC ? await ledgerParts() : null;
     const result = await store.transact(p.path, async tx => {
       const meta = await tx.meta();
       if (ifTime && (!meta || meta.updateTime !== ifTime)) throw precondition();
       if (exists === 'false' && meta) throw new HttpError(409, 'ALREADY_EXISTS', 'Document already exists: ' + p.path);
       if (exists === 'true' && !meta) throw new HttpError(404, 'NOT_FOUND', 'Document not found: ' + p.path);
+      if (limited) {
+        const personal = p.path === core.LEDGER_DOC ? (await tx.fields(['finance_tx_personal'])).finance_tx_personal : undefined;
+        const allowedFields = core.viewWrite(role, p.path, mask, fields, personal === undefined ? undefined : JSON.parse(personal), ledger);
+        if (!allowedFields) throw new HttpError(403, 'PERMISSION_DENIED', 'Not allowed: ' + p.path);
+        fields = allowedFields;
+      }
       const plan = mask.length ? core.patchPlan(mask) : { needCurrent: [] };
       const current = {};
       if (plan.needCurrent.length) {
@@ -117,7 +136,8 @@ function createApi({ store, auth, files, accounts, images, now }) {
     const q = core.parseRunQuery(body);
     if (!q) throw new HttpError(400, 'INVALID_ARGUMENT', 'Only a date ≥ query on one collection is supported');
     if (!core.allowed(role, 'read', q.collection + '/x')) throw new HttpError(403, 'PERMISSION_DENIED', 'Not allowed');
-    const rows = await store.query(q.collection, q.since, q.descending, q.limit);
+    // The budgets' documents have no date to be found by; should one ever, a limited role isn't given it this way.
+    const rows = (await store.query(q.collection, q.since, q.descending, q.limit)).filter(r => !core.viewed(role, r.path));
     const readTime = new Date(clock()).toISOString();
     if (!rows.length) return json(200, '[{"readTime":' + JSON.stringify(readTime) + '}]');
     return json(200, '[' + rows.map(r => '{"document":' + docJson(r.path, r.meta, r.fields) + ',"readTime":' + JSON.stringify(readTime) + '}').join(',') + ']');
@@ -207,9 +227,12 @@ function createApi({ store, auth, files, accounts, images, now }) {
         if (!core.allowed(role, action, p.path)) {
           throw role ? new HttpError(403, 'PERMISSION_DENIED', 'Not allowed: ' + p.path) : new HttpError(401, 'UNAUTHENTICATED', 'Sign in first');
         }
-        if (method === 'GET') return await getDoc(p.path, query);
-        if (method === 'PATCH') return await patchDoc(p, query, req.body);
-        if (method === 'DELETE') return await deleteDoc(p, query);
+        if (method === 'GET') return await getDoc(p.path, query, role);
+        if (method === 'PATCH') return await patchDoc(p, query, req.body, role);
+        if (method === 'DELETE') {
+          if (core.viewed(role, p.path)) throw new HttpError(403, 'PERMISSION_DENIED', 'Not allowed: ' + p.path);
+          return await deleteDoc(p, query);
+        }
       }
       throw new HttpError(404, 'NOT_FOUND', 'No such route: ' + method + ' ' + rest);
     } catch (e) {

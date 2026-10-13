@@ -168,6 +168,102 @@ function queryDate(fields) {
   return v.timestampValue || v.stringValue || null;
 }
 
+// ---- what each account is given of the budgets ----
+// The app's screens show every role its own part of the budgets, but the server used to hand any
+// signed-in account the whole document on request: the kitchen, the storekeeper, any of the
+// providers could read Личный бюджет with its cash records and the links to their documents
+// (the receipts with passports among them). Now the server itself gives only that part:
+//   Личный бюджет (finance_tx_personal): the owner and the administrators — and the accountant
+//     its records other than cash (she pays the funds that go through a bank; cash never
+//     passes through her);
+//   its payouts for employees' receipts (finance_settlements): the owner and the administrators;
+//   the files registry: without the documents of the records a role isn't given.
+// Writes keep to the same part. The accountant's write of Личный бюджет keeps the cash records as
+// the server has them; anyone else writing either field is refused.
+const LEDGER_DOC = 'appdata/finance_ledger', FILES_DOC = 'appdata/files_registry';
+const BUDGET_ROLES = ['service', 'owner', 'admin', 'admin2'];
+const CASH_FUND = 'Наличные';
+const limited = role => !BUDGET_ROLES.includes(role);
+const strOf = v => (v && typeof v.stringValue === 'string' ? v.stringValue : '');
+const listOf = v => (v && v.arrayValue && Array.isArray(v.arrayValue.values) ? v.arrayValue.values : []);
+const entryField = (e, k) => (isMap(e) && e.mapValue.fields ? e.mapValue.fields[k] : undefined);
+const entryId = e => strOf(entryField(e, 'id'));
+// A record of Личный бюджет (a Firestore Value) this role is given.
+const personalSeen = (role, e) => !limited(role) || (role === 'accountant' && strOf(entryField(e, 'fund')) !== CASH_FUND);
+
+// The files of the records a role isn't given — left out of the registry, and not its to write.
+// ledger: the ledger document's fields, parsed (finance_tx_personal, finance_settlements).
+function hiddenFileIds(role, ledger) {
+  const ids = new Set();
+  if (!limited(role)) return ids;
+  const add = v => { const s = strOf(v); if (s) ids.add(s); };
+  for (const e of listOf((ledger || {}).finance_tx_personal)) {
+    if (personalSeen(role, e)) continue;
+    for (const r of listOf(entryField(e, 'fileRefs'))) add(entryField(r, 'id'));
+    add(entryField(entryField(e, 'fileRef'), 'id'));
+  }
+  for (const s of listOf((ledger || {}).finance_settlements)) for (const v of listOf(entryField(s, 'fileIds'))) add(v);
+  return ids;
+}
+// Does this document's view depend on the role (and the registry's, on the ledger)?
+const viewed = (role, path) => limited(role) && (path === LEDGER_DOC || path === FILES_DOC);
+
+// A document's fields (name → JSON text, as stored) as this role is given them.
+function viewFields(role, path, texts, ledger) {
+  if (!viewed(role, path)) return texts;
+  const out = Object.assign({}, texts);
+  if (path === LEDGER_DOC) {
+    delete out.finance_settlements;
+    if (out.finance_tx_personal !== undefined) {
+      if (role !== 'accountant') delete out.finance_tx_personal;
+      else {
+        const v = JSON.parse(out.finance_tx_personal);
+        out.finance_tx_personal = JSON.stringify(v && v.arrayValue ? { arrayValue: { values: listOf(v).filter(e => personalSeen(role, e)) } } : v);
+      }
+    }
+    return out;
+  }
+  if (out.files !== undefined) {
+    const hidden = hiddenFileIds(role, ledger);
+    const v = JSON.parse(out.files);
+    if (hidden.size && isMap(v)) {
+      const f = Object.assign({}, v.mapValue.fields || {});
+      hidden.forEach(id => { delete f[id]; });
+      out.files = JSON.stringify({ mapValue: { fields: f } });
+    }
+  }
+  return out;
+}
+
+// A write by this role, within its part: null when it reaches beyond it; else the body's fields
+// to write — the accountant's Личный бюджет completed with the cash records the server has, where
+// they are. currentPersonal: that field as stored now (a Value, or undefined); ledger: as for
+// hiddenFileIds.
+function viewWrite(role, path, maskPaths, fields, currentPersonal, ledger) {
+  if (!viewed(role, path)) return fields;
+  if (!maskPaths || !maskPaths.length) return null;
+  const paths = maskPaths.map(splitFieldPath);
+  if (path === FILES_DOC) {
+    const hidden = hiddenFileIds(role, ledger);
+    return paths.every(s => s[0] !== 'files' || (s.length > 1 && !hidden.has(s[1]))) ? fields : null;
+  }
+  if (paths.some(s => s[0] === 'finance_settlements' || (s[0] === 'finance_tx_personal' && (role !== 'accountant' || s.length > 1)))) return null;
+  if (!paths.some(s => s[0] === 'finance_tx_personal')) return fields;
+  const sent = listOf((fields || {}).finance_tx_personal), current = listOf(currentPersonal);
+  const kept = current.filter(e => !personalSeen(role, e));
+  const keptIds = new Set(kept.map(entryId));
+  // Only records she is given: never a cash record, new or one the server has.
+  if (sent.some(e => !personalSeen(role, e) || keptIds.has(entryId(e)))) return null;
+  const mine = new Map(sent.map(e => [entryId(e), e]));
+  const merged = [];
+  for (const e of current) {
+    if (!personalSeen(role, e)) merged.push(e);
+    else if (mine.has(entryId(e))) { merged.push(mine.get(entryId(e))); mine.delete(entryId(e)); }
+  }
+  for (const e of sent) if (mine.has(entryId(e))) { merged.push(e); mine.delete(entryId(e)); }
+  return Object.assign({}, fields, { finance_tx_personal: { arrayValue: { values: merged } } });
+}
+
 // People's passport details, for the receipts printed when cash is handed over: the owner and
 // the administrators who hand it over — not the kitchen, the providers or anyone else signed in.
 const PRIVATE_ROLES = ['owner', 'admin', 'admin2'];
@@ -192,4 +288,5 @@ function allowed(role, action, docPath) {
 module.exports = {
   DOC_PREFIX, splitFieldPath, getAt, putAt, maskFields, patchPlan, applyPatch, nextTime,
   parseDocPath, docName, parseRunQuery, queryDate, allowed,
+  LEDGER_DOC, FILES_DOC, viewed, viewFields, viewWrite,
 };
