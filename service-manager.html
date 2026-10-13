@@ -900,7 +900,7 @@ function getAdmin2Pwd()         { return getLS('admin2_pwd')              || 'li
 const _LANDING = {
   owner: 'dashboard', admin: 'dashboard', kitchen: 'kitchen', kitchen_worker: 'kitchen',
   alexander: 'budget', accountant: 'budget', management: 'journal', admin2: 'budget',
-  storekeeper: 'warehouse', cleaning_head: 'warehouse',
+  storekeeper: 'warehouse', cleaning_head: 'warehouse', engineer: 'budget',
 };
 function _enterAs(role) {
   currentUser = role;
@@ -1102,6 +1102,21 @@ function applyUserLayout() {
     const mainSectionTitle = sidebar.querySelector('.sidebar-section-title');
     if (mainSectionTitle) mainSectionTitle.style.display = '';
     ['nav-journal','nav-maint','nav-budget'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'flex';
+    });
+  } else if (currentUser === 'engineer') {
+    // The chief engineer: the providers' contacts (to reach them), the calendar (to agree
+    // visit days), Журнал визитов and Обслуживание территории — view-only, like Alexander's
+    // (they hide their edit controls from anyone but owner/admin) — and in Бюджет only the
+    // ТО и зарплаты invoices that wait for his own sign-off.
+    sidebar.style.display = '';
+    document.getElementById('user-label').textContent = '🛠️ Главный инженер';
+    document.querySelectorAll('.nav-item').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.sidebar-section-title').forEach(el => el.style.display = 'none');
+    const mainSectionTitleEng = sidebar.querySelector('.sidebar-section-title');
+    if (mainSectionTitleEng) mainSectionTitleEng.style.display = '';
+    ['nav-budget','nav-calendar','nav-contacts','nav-journal','nav-maint'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.style.display = 'flex';
     });
@@ -1431,12 +1446,17 @@ async function openSettingsModal() {
             <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Email бухгалтера (готово к оплате)</div>
             <input class="form-control" id="notif-email-accountant" value="${nc.accountant_email||''}" placeholder="accountant@email.com" style="font-size:12px">
           </div>
+          <div>
+            <div style="font-size:11px;color:#6b7280;margin-bottom:3px">Email главного инженера (заявки на его согласование)</div>
+            <input class="form-control" id="notif-email-engineer" value="${nc.engineer_email||''}" placeholder="engineer@email.com" style="font-size:12px">
+          </div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <select id="notif-test-who" class="form-control" style="width:auto;font-size:12px;padding:8px 10px">
             <option value="owner">Тест → владелец</option>
             <option value="alexander">Тест → Александр</option>
             <option value="accountant">Тест → бухгалтер</option>
+            <option value="engineer">Тест → гл. инженер</option>
           </select>
           <button class="btn btn-outline" style="font-size:12px" onclick="testNotifyEmail()">📧 Отправить тест</button>
         </div>
@@ -1601,6 +1621,7 @@ async function openSettingsModal() {
     ${ownerCredsHtml}
     ${adminCredsHtml}
     ${kitchenCredsHtml}
+    ${isOwner ? _engineerCredsHtml() : ''}
     ${isOwner ? _whKeeperCredsHtml() : ''}
     ${notifyHtml}
     ${telegramHtml}
@@ -1664,6 +1685,7 @@ function saveNotifyConfig() {
   c.emailjs_template = (document.getElementById('notif-tpl')?.value||'').trim();
   c.owner_email      = (document.getElementById('notif-email')?.value||'').trim();
   c.alexander_email  = (document.getElementById('notif-email-alexander')?.value||'').trim();
+  c.engineer_email   = (document.getElementById('notif-email-engineer')?.value||'').trim();
   c.accountant_email = (document.getElementById('notif-email-accountant')?.value||'').trim();
   setLS('notify_config', c);
   if (_useFirebase) { clearTimeout(_saveTimer); _flushState(); }
@@ -1678,7 +1700,7 @@ async function testNotifyEmail() {
     alert('Заполните все поля EmailJS перед тестом'); return;
   }
   const who = document.getElementById('notif-test-who')?.value || 'owner';
-  const toEmail = who === 'alexander' ? cfg.alexander_email : who === 'accountant' ? cfg.accountant_email : cfg.owner_email;
+  const toEmail = who === 'alexander' ? cfg.alexander_email : who === 'accountant' ? cfg.accountant_email : who === 'engineer' ? cfg.engineer_email : cfg.owner_email;
   if (!toEmail) { alert('Сначала укажите email для этого получателя и сохраните настройки'); return; }
   try {
     _showToast('📧 Отправляем тестовое письмо на ' + toEmail + '...', true);
@@ -1762,13 +1784,29 @@ function _whKeeperCredsHtml() {
   return block('storekeeper', '🧰 Кладовщик', 'Видит только склад — инструмент, оборудование и материалы для ремонта.', 'sklad')
     + block('cleaning_head', '🧽 Ответственный за уборку', 'Видит только склад — средства для уборки и гигиены (категории — в настройках склада).', 'klining');
 }
+// The chief engineer's account — made, like the keepers', with no default password.
+function _engineerCredsHtml() {
+  if (!_YDB) return '';
+  const e = (_acctNames && _acctNames.roles && _acctNames.roles.engineer) || {};
+  return `<div style="margin-bottom:16px;padding:12px 14px;background:#f0f9ff;border:1px solid #7dd3fc;border-radius:10px">
+    <div style="font-size:12px;font-weight:700;color:#075985;margin-bottom:4px">🛠️ Главный инженер</div>
+    <div style="font-size:11px;color:#075985;margin-bottom:8px">Видит контакты поставщиков, календарь, Журнал визитов и Обслуживание территории (просмотр), а в Бюджете — только счета ТО, отмеченные «нужно согласование главного инженера»: пока он не согласует, они не доходят до Александра и владельца.${e.unset ? ' <b>Пароль ещё не задан — войти нельзя.</b>' : ''}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
+      <div><div style="font-size:11px;color:#6b7280;margin-bottom:4px">Имя пользователя</div>
+        <input type="text" class="form-control" id="engineer-cred-user" value="${_escHtml(e.user || '')}" placeholder="engineer"></div>
+      <div><div style="font-size:11px;color:#6b7280;margin-bottom:4px">Пароль</div>
+        <input type="text" class="form-control" id="engineer-cred-pwd" value="" placeholder="${e.unset ? 'Задайте пароль' : 'Новый пароль (пусто — не менять)'}"></div>
+    </div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;background:#0284c7;border-color:#0284c7" onclick="saveWhKeeperCreds('engineer')">💾 Сохранить</button>
+  </div>`;
+}
 async function saveWhKeeperCreds(role) {
   const u = ((document.getElementById(role + '-cred-user') || {}).value || '').trim();
   const p = ((document.getElementById(role + '-cred-pwd') || {}).value || '').trim();
   if (!u) { alert('Введите имя пользователя'); return; }
   const e = (_acctNames && _acctNames.roles && _acctNames.roles[role]) || {};
   if (e.unset && !p) { alert('Задайте пароль — без него в эту учётную запись не войти'); return; }
-  await _saveRoleCreds(role, u, p, role === 'storekeeper' ? 'Данные кладовщика сохранены' : 'Данные ответственного за уборку сохранены');
+  await _saveRoleCreds(role, u, p, { storekeeper: 'Данные кладовщика сохранены', cleaning_head: 'Данные ответственного за уборку сохранены', engineer: 'Данные главного инженера сохранены' }[role] || 'Сохранено');
   if (_acctNames && _acctNames.roles && _acctNames.roles[role] && p) { delete _acctNames.roles[role].unset; _acctNames.roles[role].user = u; }
 }
 
@@ -2825,7 +2863,7 @@ function _resumeAfterUpdate() {
   if (!s || !s.u || !(Date.now() - s.t < 120000)) { if (_YDB) _authToken = null; return false; }
   if (_YDB && !(_authToken && _stateLoadedOnce)) { _authToken = null; return false; }
   const releaseGated = ['alexander', 'accountant', 'management', 'admin2'];
-  const known = ['owner', 'admin', 'kitchen', 'kitchen_worker', 'storekeeper', 'cleaning_head'].concat(releaseGated).includes(s.u)
+  const known = ['owner', 'admin', 'kitchen', 'kitchen_worker', 'storekeeper', 'cleaning_head', 'engineer'].concat(releaseGated).includes(s.u)
     || PROVIDERS.some(p => p.id === s.u);
   if (!known || (releaseGated.includes(s.u) && !getBudgetReleased())) return false;
   currentUser = s.u;
@@ -2988,7 +3026,7 @@ const getPaymentRecords  = () => getLS('payment_records')    || {};
 // ==============================
 const getNotifyCfg = () => getLS('notify_config') || {
   enabled: false, owner_email: 'yosmosh10@gmail.com',
-  alexander_email: '', accountant_email: '',
+  alexander_email: '', accountant_email: '', engineer_email: '',
   emailjs_key: '', emailjs_service: '', emailjs_template: '',
   fcm_vapid: '', fcm_token: ''
 };
@@ -3266,10 +3304,17 @@ async function _notifyAccountant(eventType, fromName, details) {
   await _notifyEmail(getNotifyCfg().accountant_email, eventType, fromName, details);
 }
 
+async function _notifyEngineer(eventType, fromName, details) {
+  if (currentUser === 'engineer') return;
+  await _notifyEmail(getNotifyCfg().engineer_email, eventType, fromName, details);
+}
+
 // A new expense needs every required approver's attention — not just the owner's, which
 // is all _notifyOwner alone ever covered. Notifies the owner, plus Alexander when he's
-// actually an approver on this specific ledger (he isn't for Личный бюджет).
-async function _notifyBudgetApprovers(ledgerKey, eventType, fromName, details) {
+// actually an approver on this specific ledger (he isn't for Личный бюджет). An expense
+// waiting for the chief engineer goes to him alone; the others hear of it once he approves.
+async function _notifyBudgetApprovers(ledgerKey, eventType, fromName, details, t) {
+  if (t && _txAwaitsEngineer(ledgerKey, t)) { await _notifyEngineer(eventType, fromName, details); return; }
   await _notifyOwner(eventType, fromName, details);
   if (FINANCE_LEDGERS[ledgerKey].approvers.includes('alexander')) {
     await _notifyAlexander(eventType, fromName, details);
@@ -3284,6 +3329,7 @@ function _getFromName() {
   if (currentUser === 'accountant') return 'Бухгалтер';
   if (currentUser === 'storekeeper') return 'Кладовщик';
   if (currentUser === 'cleaning_head') return 'Клининг';
+  if (currentUser === 'engineer') return 'Главный инженер';
   const p = PROVIDERS.find(x => x.id === currentUser);
   return p ? p.name : currentUser;
 }
@@ -3296,7 +3342,7 @@ function _roleDisplayName(role) {
     owner: 'Владелец', admin: 'Администратор', admin2: 'Администратор 2',
     kitchen: 'Кухня', kitchen_worker: 'Сотрудник кухни', alexander: 'Александр',
     accountant: 'Бухгалтер', management: 'Руководство', import: 'Импорт (история)',
-    storekeeper: 'Кладовщик', cleaning_head: 'Клининг',
+    storekeeper: 'Кладовщик', cleaning_head: 'Клининг', engineer: 'Главный инженер',
   };
   if (names[role]) return names[role];
   const p = PROVIDERS.find(x => x.id === role);
@@ -3945,7 +3991,7 @@ function render() {
     title.textContent = '🍽️ Управление кухней';
     content.innerHTML = renderKitchen();
   } else if (view === 'budget') {
-    if (currentUser !== 'owner' && currentUser !== 'admin' && currentUser !== 'admin2' && currentUser !== 'alexander' && currentUser !== 'kitchen' && currentUser !== 'management') { showView('dashboard'); return; }
+    if (currentUser !== 'owner' && currentUser !== 'admin' && currentUser !== 'admin2' && currentUser !== 'alexander' && currentUser !== 'kitchen' && currentUser !== 'management' && currentUser !== 'engineer') { showView('dashboard'); return; }
     if ((currentUser === 'admin' || currentUser === 'admin2' || currentUser === 'alexander' || currentUser === 'kitchen' || currentUser === 'management') && !getBudgetReleased()) { showView('dashboard'); return; }
     title.textContent = '💰 Бюджет';
     content.innerHTML = renderBudget();
@@ -13250,6 +13296,16 @@ const FINANCE_LEDGERS = {
   personal:    { label:'👤 Личный бюджет', approvers:['owner'],             useFunds:true,  canCreate:['owner','admin','admin2'] },
 };
 
+// The chief engineer's sign-off. An expense in ТО и зарплаты can be marked, when it's entered,
+// as needing the chief engineer (`needsEngineer`): he then comes FIRST in its approval chain —
+// until he has approved it, it doesn't reach Alexander's or the owner's queue, and the
+// accountant can't pay it. Every "has everyone approved?" check goes through _txApprovers.
+const _ENGINEER_LEDGER = 'maintenance';
+const _txNeedsEngineer = (lk, t) => lk === _ENGINEER_LEDGER && !!(t && t.needsEngineer);
+const _txApprovers = (lk, t) => (_txNeedsEngineer(lk, t) ? ['engineer'] : []).concat(FINANCE_LEDGERS[lk].approvers);
+const _txAwaitsEngineer = (lk, t) => _txNeedsEngineer(lk, t) && !((t.approvals || {}).engineer && t.approvals.engineer.approved);
+const _approverLabel = r => r === 'alexander' ? 'Александр' : r === 'owner' ? 'Йосеф' : r === 'engineer' ? 'Гл. инженер' : r;
+
 // Who can see which ledger tabs at all (separate from canCreate above, which is about
 // who can log a new expense within a ledger they can already see): each data-entry role
 // only needs the budget(s) it actually feeds data into — Kitchen's login only ever
@@ -13715,7 +13771,7 @@ const _settlement = id => (id ? getSettlements().find(s => s.id === id) || null 
 const _SETTLE_ROLES = _NEW_TOOLS_ROLES;
 const _REIMBURSE_LEDGER = 'personal', _REIMBURSE_FUND = 'Наличные';
 const _reimbursable = (lk, fund) => lk === _REIMBURSE_LEDGER && fund === _REIMBURSE_FUND;
-const _txFullyApproved = (lk, t) => FINANCE_LEDGERS[lk].approvers.every(r => (t.approvals || {})[r] && t.approvals[r].approved);
+const _txFullyApproved = (lk, t) => _txApprovers(lk, t).every(r => (t.approvals || {})[r] && t.approvals[r].approved);
 // Receipts still to be paid back in a ledger.
 const _openReceipts = lk => getBudgetTx(lk).filter(t => t.type === 'expense' && t.reimburse && !t.reimburse.settlementId
   && t.status !== 'rejected' && !(t.accountantConfirm && t.accountantConfirm.paid));
@@ -14369,6 +14425,8 @@ function _budgetBalance(ledgerKey, throughMonthKey) {
 
 function renderBudget() {
   if (currentUser === 'alexander') return _renderBudgetApproverQueue('alexander');
+  // The chief engineer: only what waits for his sign-off — no balances, no history.
+  if (currentUser === 'engineer') return _renderBudgetApproverQueue('engineer');
 
   const isOwner = currentUser === 'owner';
   const ledgerKeys = _budgetVisibleLedgers(currentUser);
@@ -14479,9 +14537,9 @@ function _registerColumns(cfg) {
   if (cfg.useFunds) cols.push({ id:'fund', label:'Фонд', brief:false });
   cols.push({ id:'amount', label:'Сумма',  brief:true  });
   cols.push({ id:'status', label:'Статус', brief:false });
-  cfg.approvers.forEach(role => cols.push({
+  (cfg === FINANCE_LEDGERS[_ENGINEER_LEDGER] ? ['engineer'] : []).concat(cfg.approvers).forEach(role => cols.push({
     id:'appr_'+role, role, brief:false,
-    label:'Согласовано: ' + (role === 'alexander' ? 'Александр' : 'Йосеф'),
+    label:'Согласовано: ' + _approverLabel(role),
   }));
   cols.push({ id:'paid',     label:'Оплачено',    brief:true  });
   cols.push({ id:'paidDate', label:'Дата оплаты', brief:false });
@@ -14619,7 +14677,7 @@ function _budgetReportLedger(ledgerKey, mk) {
   const tx = getBudgetTx(ledgerKey).filter(t => _budgetTxMonthKey(t) === mk)
     .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.time || '').localeCompare(b.time || ''));
   const isPaid = t => !!(t.accountantConfirm && t.accountantConfirm.paid);
-  const allApproved = t => cfg.approvers.every(r => t.approvals && t.approvals[r] && t.approvals[r].approved);
+  const allApproved = t => _txApprovers(ledgerKey, t).every(r => t.approvals && t.approvals[r] && t.approvals[r].approved);
   const expenses = tx.filter(t => !_isIncomeType(t));
   const open = expenses.filter(t => t.status !== 'rejected' && !isPaid(t));
   return {
@@ -14639,13 +14697,13 @@ const _repRub = n => {
   const v = _repR2(n);
   return (v < 0 ? '−' : '') + Math.abs(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
 };
-const _repApprover = r => r === 'alexander' ? 'Александр' : r === 'owner' ? 'Йосеф' : _roleDisplayName(r);
+const _repApprover = r => ['alexander', 'owner', 'engineer'].includes(r) ? _approverLabel(r) : _roleDisplayName(r);
 
 function _budgetReportStatus(t, d) {
   if (t.status === 'rejected') return { text: 'Отклонено' + (t.rejectReason ? ': ' + t.rejectReason : ''), cls: 'st-rej' };
   if (d.isPaid(t)) return { text: 'Оплачено' + (t.accountantConfirm.date ? ' ' + fmtDate(String(t.accountantConfirm.date).slice(0, 10)) : ''), cls: 'st-paid' };
   if (d.allApproved(t)) return { text: 'Ждёт оплаты', cls: 'st-pay' };
-  const missing = d.cfg.approvers.filter(r => !(t.approvals && t.approvals[r] && t.approvals[r].approved)).map(_repApprover);
+  const missing = _txApprovers(d.ledgerKey, t).filter(r => !(t.approvals && t.approvals[r] && t.approvals[r].approved)).map(_repApprover);
   return { text: 'Ждёт согласования' + (missing.length ? ': ' + missing.join(', ') : ''), cls: 'st-appr' };
 }
 
@@ -15146,7 +15204,7 @@ function _renderBudgetLedger(ledgerKey) {
   // on) turns "scan the whole month for what needs me" into "start at the top."
   const _readyForPayment = t => t.type==='expense' && t.status!=='rejected'
     && !(t.accountantConfirm && t.accountantConfirm.paid)
-    && cfg.approvers.every(role => t.approvals && t.approvals[role] && t.approvals[role].approved);
+    && _txApprovers(ledgerKey, t).every(role => t.approvals && t.approvals[role] && t.approvals[role].approved);
   // The owner has the exact same "did something slip through?" problem the accountant
   // does — an item he already approved just sits wherever its date put it once newer,
   // already-paid items land above it — so he gets the same unpaid-first sort and toggle.
@@ -15293,14 +15351,17 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
   // waiting on approval.
   let paidState = null; // 'paid' | 'awaiting_payment' | 'awaiting_approval'
   if (t.type === 'expense' && t.status !== 'rejected') {
-    approvalBadges = cfg.approvers.map(role => {
+    const approvers = _txApprovers(ledgerKey, t);
+    approvalBadges = approvers.map(role => {
       const a = (t.approvals||{})[role];
-      const roleLabel = role==='alexander' ? 'Александр' : 'Йосеф';
+      const roleLabel = _approverLabel(role);
       return a && a.approved
         ? `<span class="badge badge-success" style="font-size:10px">✅ ${roleLabel} · ${_fmtApprovalWhen(a.date)}</span>`
         : `<span class="badge badge-gray" style="font-size:10px">⏳ ${roleLabel} — не согласовано</span>`;
     }).join(' ');
-    const allApproved = cfg.approvers.every(role => (t.approvals||{})[role] && (t.approvals||{})[role].approved);
+    const allApproved = approvers.every(role => (t.approvals||{})[role] && (t.approvals||{})[role].approved);
+    // Alexander and the owner come after the chief engineer, when he's in the chain at all.
+    const awaitsEngineer = _txAwaitsEngineer(ledgerKey, t);
     const isPaidNow = t.accountantConfirm && t.accountantConfirm.paid;
     paidState = isPaidNow ? 'paid' : allApproved ? 'awaiting_payment' : 'awaiting_approval';
     const pillStyle = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 11px;border-radius:20px;white-space:nowrap';
@@ -15308,10 +15369,12 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
       ? `<span style="${pillStyle};background:#16a34a;color:#fff">✅ ОПЛАЧЕНО · ${_fmtApprovalWhen(t.accountantConfirm.date)}</span>`
       : allApproved
         ? `<span style="${pillStyle};background:#d97706;color:#fff">⏳ ЖДЁТ ОПЛАТЫ</span>`
-        : `<span style="${pillStyle};background:#94a3b8;color:#fff">📝 ЖДЁТ СОГЛАСОВАНИЯ</span>`;
+        : awaitsEngineer
+          ? `<span style="${pillStyle};background:#94a3b8;color:#fff">🛠️ ЖДЁТ ГЛ. ИНЖЕНЕРА</span>`
+          : `<span style="${pillStyle};background:#94a3b8;color:#fff">📝 ЖДЁТ СОГЛАСОВАНИЯ</span>`;
 
-    const myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : null;
-    const isMyRoleRequired = myRole && cfg.approvers.includes(myRole);
+    const myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : currentUser === 'engineer' ? 'engineer' : null;
+    const isMyRoleRequired = myRole && approvers.includes(myRole) && (myRole === 'engineer' || !awaitsEngineer);
     const myApproved = isMyRoleRequired && (t.approvals||{})[myRole] && (t.approvals||{})[myRole].approved;
     const notPaidYet = !(t.accountantConfirm && t.accountantConfirm.paid);
     const reimbOpen = _txReimburseOpen(t);
@@ -15320,7 +15383,10 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
     // The owner can stand in for Alexander's approval and for the accountant's payment
     // confirmation — a backup path for when either of them is unavailable.
     const alexApproved = (t.approvals||{}).alexander && (t.approvals||{}).alexander.approved;
-    const canActForAlexander = currentUser==='owner' && cfg.approvers.includes('alexander') && notPaidYet;
+    const canActForAlexander = currentUser==='owner' && cfg.approvers.includes('alexander') && notPaidYet && !awaitsEngineer;
+    // …and for the chief engineer's, the same way.
+    const engApproved = (t.approvals||{}).engineer && (t.approvals||{}).engineer.approved;
+    const canActForEngineer = currentUser==='owner' && _txNeedsEngineer(ledgerKey, t) && notPaidYet;
     const canConfirmPaidAsOwner = currentUser==='owner' && allApproved && notPaidYet && !reimbOpen;
     actionsHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
       ${isMyRoleRequired && notPaidYet && !myApproved?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">✅ Согласовать</button>
@@ -15328,6 +15394,8 @@ function _renderBudgetTxCard(ledgerKey, t, cfg) {
       ${isMyRoleRequired && notPaidYet && myApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#d97706" onclick="approveBudgetTx('${ledgerKey}','${t.id}')">↩️ Отменить своё согласование</button>`:''}
       ${canActForAlexander && !alexApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="approveBudgetTx('${ledgerKey}','${t.id}','alexander')">✅ Согласовать за Александра</button>`:''}
       ${canActForAlexander && alexApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#d97706" onclick="approveBudgetTx('${ledgerKey}','${t.id}','alexander')">↩️ Отменить согласование Александра</button>`:''}
+      ${canActForEngineer && !engApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="approveBudgetTx('${ledgerKey}','${t.id}','engineer')">✅ Согласовать за гл. инженера</button>`:''}
+      ${canActForEngineer && engApproved?`<button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#d97706" onclick="approveBudgetTx('${ledgerKey}','${t.id}','engineer')">↩️ Отменить согласование гл. инженера</button>`:''}
       ${canSettle ? _txSettleButton(ledgerKey, t) : ''}
       ${canConfirmPaid || canConfirmPaidAsOwner?`<button class="btn btn-primary" style="font-size:12px;padding:5px 10px;background:#16a34a;border-color:#16a34a" onclick="confirmBudgetPaid('${ledgerKey}','${t.id}')">💳 Отметить оплаченным</button>
         <button class="btn btn-outline" style="font-size:12px;padding:5px 10px;color:#dc2626" onclick="declineBudgetPaid('${ledgerKey}','${t.id}')">❌ Отказать в оплате</button>`:''}
@@ -15519,6 +15587,8 @@ function _budgetExpenseExtraHtml(t, type, ledgerKey) {
         <div style="font-size:11px;color:#92400e;margin-top:4px">Чек пройдёт согласование как обычно, а оплачен будет выплатой сотруднику по расписке — «💵 Выплаты по чекам».</div>
       </div>`;
   return `<div id="bt-expense-extra" ${type === 'expense' ? '' : 'hidden'}>
+    ${ledgerKey === _ENGINEER_LEDGER ? `<label style="display:flex;gap:8px;align-items:center;cursor:pointer;margin:0 0 12px;font-weight:600;padding:8px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px">
+      <input type="checkbox" id="bt-needs-engineer" ${t.needsEngineer ? 'checked' : ''} ${ro ? 'disabled' : ''}> 🛠️ Нужно согласование главного инженера</label>` : ''}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div class="form-group"><label>📁 Проект</label>${_projectSelectHtml('bt-project', t.project || '', tagsRo)}</div>
       <div class="form-group"><label>Статья расхода</label><select class="form-control" id="bt-costtype" ${tagsRo ? 'disabled' : ''}>
@@ -15624,6 +15694,7 @@ async function _saveBudgetTxInner(ledgerKey) {
   const whIntake = whIntakeEl ? whIntakeEl.value : '';
   const reimbOn = !!(document.getElementById('bt-reimb') || {}).checked;
   const reimbEmp = reimbOn ? ((document.getElementById('bt-reimb-emp') || {}).value || '').trim().slice(0, 80) : '';
+  const needsEngEl = document.getElementById('bt-needs-engineer');
   const cfg = FINANCE_LEDGERS[ledgerKey];
   const type = document.getElementById('bt-type').value;
   // Income can only be recorded by the owner — others with access to this ledger
@@ -15767,8 +15838,12 @@ async function _saveBudgetTxInner(ledgerKey) {
   // approval decision itself. Re-saving unchanged, or only touching the note/receipt,
   // still resets the approval chain (see below) but shouldn't also re-alert everyone —
   // that's exactly the "unnecessary email" pattern to avoid.
+  // Someone without the box in the form keeps what the record had.
+  const needsEngineer = type === 'expense' && ledgerKey === _ENGINEER_LEDGER
+    && (needsEngEl ? needsEngEl.checked : !!(existing && existing.needsEngineer));
+  // Adding or removing the chief engineer changes who must sign — the chain starts over.
   const materialChange = !existing || existing.amount !== Number(amount) || existing.vendor !== vendor ||
-    existing.date !== date || (existing.fund||null) !== (fund||null);
+    existing.date !== date || (existing.fund||null) !== (fund||null) || !!existing.needsEngineer !== needsEngineer;
   // A non-material fix (typo, swapped receipt) didn't change anything an approver
   // actually signed off on, so it shouldn't force the whole chain to be re-confirmed —
   // whether that fix comes from the owner or from whoever submitted the invoice in the
@@ -15810,6 +15885,7 @@ async function _saveBudgetTxInner(ledgerKey) {
     if (intake && _WH_BUDGET_LEDGERS.includes(ledgerKey)) record.whIntake = intake;
     if (existing && existing.reimburse && existing.reimburse.settlementId) record.reimburse = existing.reimburse;
     else if (reimbEmp && _reimbursable(ledgerKey, fund)) record.reimburse = { employee: reimbEmp };
+    if (needsEngineer) record.needsEngineer = true;
   }
 
   if (editingId) { const idx=list.findIndex(x=>x.id===editingId); if(idx>=0)list[idx]=record; else list.push(record); }
@@ -15839,7 +15915,7 @@ async function _saveBudgetTxInner(ledgerKey) {
     }
     if (type === 'expense' && materialChange) {
       const label = FINANCE_LEDGERS[ledgerKey].label;
-      _notifyBudgetApprovers(ledgerKey, `💰 Заявка на оплату — ${label}`, _getFromName(), `${vendor} · ₽${Number(amount).toLocaleString('ru-RU')}`);
+      _notifyBudgetApprovers(ledgerKey, `💰 Заявка на оплату — ${label}`, _getFromName(), `${vendor} · ₽${Number(amount).toLocaleString('ru-RU')}`, record);
     }
     if (_modalGen === formGen) closeModal(true);
     _showToast('✅ Операция сохранена', true); render();
@@ -15873,30 +15949,34 @@ async function approveBudgetTx(ledgerKey, id, asRole) {
 async function _approveBudgetTxInner(ledgerKey, id, asRole) {
   // The owner can stand in for Alexander (e.g. while he's unavailable) and approve
   // on his behalf — but only the owner gets that override, and only for his slot.
-  let myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : null;
-  if (asRole === 'alexander' && currentUser === 'owner') myRole = 'alexander';
+  let myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : currentUser === 'engineer' ? 'engineer' : null;
+  if ((asRole === 'alexander' || asRole === 'engineer') && currentUser === 'owner') myRole = asRole;
   if (!myRole) return;
   await _syncBeforeDecision();
   const list = getBudgetTx(ledgerKey);
   const t = list.find(x=>x.id===id);
   if (!t) { render(); return; }
+  if (!_txApprovers(ledgerKey, t).includes(myRole)) { render(); return; }
   if (t.accountantConfirm && t.accountantConfirm.paid) { alert('Уже оплачено — согласование изменить нельзя'); render(); return; }
   if (t.status === 'rejected') { alert(_rejectedNote(t)); render(); return; }
   t.approvals = t.approvals || {};
   const alreadyApproved = t.approvals[myRole] && t.approvals[myRole].approved;
+  // The chief engineer first: until he has approved, no one after him can.
+  if (!alreadyApproved && myRole !== 'engineer' && _txAwaitsEngineer(ledgerKey, t)) { alert('Сначала эту операцию должен согласовать главный инженер'); render(); return; }
   // Toggle: approving is not a one-way door — the same button lets you take back
   // your own approval, as long as it hasn't been paid yet.
-  const forAlexander = myRole === 'alexander' && currentUser === 'owner';
+  const forOther = currentUser === 'owner' && myRole !== 'owner';
+  const forWhom = myRole === 'engineer' ? 'главного инженера' : 'Александра';
   if (alreadyApproved) {
-    if (!confirm(forAlexander ? 'Отменить согласование за Александра?' : 'Отменить своё согласование этой операции?')) return;
+    if (!confirm(forOther ? `Отменить согласование за ${forWhom}?` : 'Отменить своё согласование этой операции?')) return;
     delete t.approvals[myRole];
   } else {
-    if (!confirm(forAlexander ? 'Согласовать эту операцию за Александра?' : 'Согласовать эту операцию?')) return;
+    if (!confirm(forOther ? `Согласовать эту операцию за ${forWhom}?` : 'Согласовать эту операцию?')) return;
     // Firestore rejects a literal `undefined` field value outright (that's exactly
     // what just broke every normal approval save) — only add byOwner when it's true,
     // never write the key at all otherwise.
     const approvalRec = {approved:true, date:new Date().toISOString()};
-    if (forAlexander) approvalRec.byOwner = true;
+    if (forOther) approvalRec.byOwner = true;
     t.approvals[myRole] = approvalRec;
   }
   setBudgetTx(ledgerKey, list);
@@ -15924,7 +16004,11 @@ async function _approveBudgetTxInner(ledgerKey, id, asRole) {
     const after = getBudgetTx(ledgerKey);
     const t2 = after.find(x => x.id === id);
     if (!t2) { _showToast('✅ Согласовано', true); render(); return; }
-    const nowAllApproved = FINANCE_LEDGERS[ledgerKey].approvers.every(role => (t2.approvals||{})[role] && t2.approvals[role].approved);
+    const nowAllApproved = _txApprovers(ledgerKey, t2).every(role => (t2.approvals||{})[role] && t2.approvals[role].approved);
+    // The chief engineer's yes is what puts it in front of Alexander and the owner.
+    if (myRole === 'engineer' && !nowAllApproved) {
+      _notifyBudgetApprovers(ledgerKey, `💰 Заявка на оплату — ${FINANCE_LEDGERS[ledgerKey].label} (согласовано гл. инженером)`, _getFromName(), `${t2.vendor||''} · ₽${(Number(t2.amount)||0).toLocaleString('ru-RU')}`);
+    }
     if (nowAllApproved && ledgerKey === 'personal' && t2.fund === 'Наличные' && !t2.reimburse && !(t2.accountantConfirm && t2.accountantConfirm.paid)) {
       t2.accountantConfirm = {paid:true, date:new Date().toISOString()};
       setBudgetTx(ledgerKey, after);
@@ -15943,12 +16027,13 @@ async function _rejectBudgetTxInner(ledgerKey, id) {
   // Every other budget action (approve, confirm-paid, delete) checks the caller's
   // role before doing anything — this one didn't, and also didn't block rejecting
   // something that's already been paid (money already moved by then).
-  const myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : null;
-  if (!myRole || !FINANCE_LEDGERS[ledgerKey].approvers.includes(myRole)) return;
+  const myRole = currentUser === 'owner' ? 'owner' : currentUser === 'alexander' ? 'alexander' : currentUser === 'engineer' ? 'engineer' : null;
+  if (!myRole) return;
   await _syncBeforeDecision();
   const list = getBudgetTx(ledgerKey);
   const t = list.find(x=>x.id===id);
   if (!t) { render(); return; }
+  if (!_txApprovers(ledgerKey, t).includes(myRole)) { render(); return; }
   if (t.accountantConfirm && t.accountantConfirm.paid) { alert('Уже оплачено — отклонить нельзя'); render(); return; }
   if (t.status === 'rejected') { alert(_rejectedNote(t)); render(); return; }
   const reason = prompt('Причина отклонения (необязательно):');
@@ -15981,6 +16066,7 @@ function _ownerPendingApprovalItems() {
       if (t.status === 'rejected') return;
       if (t.accountantConfirm && t.accountantConfirm.paid) return;
       if (t.approvals && t.approvals.owner && t.approvals.owner.approved) return;
+      if (_txAwaitsEngineer(lk, t)) return; // the chief engineer first
       items.push(Object.assign({}, t, {_ledgerKey: lk}));
     });
   });
@@ -16050,7 +16136,7 @@ function _accountantPendingPaymentItems() {
       if (t.status === 'rejected') return;
       if (t.accountantConfirm && t.accountantConfirm.paid) return;
       if (_txReimburseOpen(t)) return; // paid back in cash by a payout, not by her
-      const allApproved = cfg.approvers.every(role => t.approvals && t.approvals[role] && t.approvals[role].approved);
+      const allApproved = _txApprovers(lk, t).every(role => t.approvals && t.approvals[role] && t.approvals[role].approved);
       if (!allApproved) return;
       items.push(Object.assign({}, t, {_ledgerKey: lk}));
     });
@@ -16122,7 +16208,7 @@ async function _confirmBudgetPaidInner(ledgerKey, id) {
   if (!t) { render(); return; }
   if (t.accountantConfirm && t.accountantConfirm.paid) { alert('Оплата этой операции уже подтверждена'); render(); return; }
   if (t.status === 'rejected') { alert(_rejectedNote(t) + '\n\nОплата НЕ подтверждена.'); render(); return; }
-  if (!FINANCE_LEDGERS[ledgerKey].approvers.every(r => (t.approvals||{})[r] && t.approvals[r].approved)) {
+  if (!_txApprovers(ledgerKey, t).every(r => (t.approvals||{})[r] && t.approvals[r].approved)) {
     alert('Согласование этой операции было отозвано — оплату пока подтвердить нельзя.'); render(); return;
   }
   if (!confirm('Подтвердить оплату?')) return;
@@ -16187,12 +16273,16 @@ async function delBudgetTx(ledgerKey, id) {
 }
 
 function _renderBudgetApproverQueue(role) {
-  const ledgerKeys = Object.keys(FINANCE_LEDGERS).filter(k => FINANCE_LEDGERS[k].approvers.includes(role));
+  // The chief engineer sees only the operations marked for him; everyone else, none of
+  // those until he has approved them.
+  const ledgerKeys = role === 'engineer' ? [_ENGINEER_LEDGER] : Object.keys(FINANCE_LEDGERS).filter(k => FINANCE_LEDGERS[k].approvers.includes(role));
   const pending = [], approvedByMe = [];
   ledgerKeys.forEach(k => {
     getBudgetTx(k).forEach(t => {
       if (t.type !== 'expense' || t.status === 'rejected') return;
       if (t.accountantConfirm && t.accountantConfirm.paid) return; // already paid — nothing left to change
+      if (!_txApprovers(k, t).includes(role)) return;
+      if (role !== 'engineer' && _txAwaitsEngineer(k, t)) return;
       const already = (t.approvals||{})[role] && (t.approvals||{})[role].approved;
       (already ? approvedByMe : pending).push({ledgerKey:k, t});
     });
@@ -16200,12 +16290,12 @@ function _renderBudgetApproverQueue(role) {
   pending.sort((a,b)=>(a.t.date||'').localeCompare(b.t.date||''));
   approvedByMe.sort((a,b)=>(b.t.date||'').localeCompare(a.t.date||''));
 
-  const roleLabel = role==='alexander' ? 'Александр' : 'Йосеф';
+  const roleLabel = _approverLabel(role);
   const _card = ({ledgerKey,t}, mine) => {
-    const otherRoles = FINANCE_LEDGERS[ledgerKey].approvers.filter(r=>r!==role);
+    const otherRoles = _txApprovers(ledgerKey, t).filter(r=>r!==role);
     const otherStatus = otherRoles.map(r => {
       const a = (t.approvals||{})[r];
-      const label = r==='alexander' ? 'Александр' : 'Йосеф';
+      const label = _approverLabel(r);
       return a && a.approved
         ? `<span class="badge badge-success" style="font-size:10px">✅ ${label} · ${_fmtApprovalWhen(a.date)}</span>`
         : `<span class="badge badge-gray" style="font-size:10px">⏳ ${label} ещё не согласовал</span>`;

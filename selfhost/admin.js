@@ -162,7 +162,8 @@ const easyPassword = () => {
 };
 const ROLE_LABELS = { admin: 'Администратор', kitchen: 'Менеджер кухни', kitchen_worker: 'Сотрудник кухни (приём доставки)',
   alexander: 'Александр (согласование)', accountant: 'Бухгалтер', management: 'Руководство (только просмотр)',
-  admin2: 'admin2 (ТО и зарплаты + Личный бюджет)', storekeeper: 'Склад: инструменты и оборудование', cleaning_head: 'Склад: клининг и химия' };
+  admin2: 'admin2 (ТО и зарплаты + Личный бюджет)', storekeeper: 'Склад: инструменты и оборудование', cleaning_head: 'Склад: клининг и химия',
+  engineer: 'Главный инженер' };
 
 // The providers' names, as the page lists them (PROVIDERS in service-manager.html).
 function providerNames() {

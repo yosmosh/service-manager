@@ -36,6 +36,9 @@ const ACCOUNTS = [
   // set one (a default written in this file would open it to anyone who read the code).
   { role: 'storekeeper',    user: 'storekeeper_username',    defUser: 'sklad',      pwd: 'storekeeper_pwd',    defPwd: null },
   { role: 'cleaning_head',  user: 'cleaning_head_username',  defUser: 'klining',    pwd: 'cleaning_head_pwd',  defPwd: null },
+  // The chief engineer (2026-10-13): providers' contacts, the calendar, the journal and works
+  // to view, and the ТО invoices marked for his sign-off. No default password either.
+  { role: 'engineer',       user: 'engineer_username',       defUser: 'engineer',   pwd: 'engineer_pwd',       defPwd: null },
 ];
 // PROVIDERS in the app. Each signs in with its own id unless a name was set for it, and with
 // the pin 1234 until one was set.
