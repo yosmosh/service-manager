@@ -217,7 +217,10 @@ function req(port, method, p, { headers, body } = {}) {
       assert.strictEqual(after.json.fields.maint_works.arrayValue.values.length, 1, 'other fields kept');
       const onDisk = JSON.parse(fs.readFileSync(path.join(DATA, 'db', encodeURIComponent('appdata/state') + '.json'), 'utf8'));
       assert.ok(onDisk.fields.sos_items.includes('Протечка'), 'written to disk before the answer');
-      const q = await req(port, 'POST', '/db/v1/documents:runQuery', { headers: Object.assign({ 'Content-Type': 'application/json' }, A), body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'telegram_messages' }], where: { fieldFilter: { field: { fieldPath: 'date' }, op: 'GREATER_THAN_OR_EQUAL', value: { timestampValue: '2026-10-01T00:00:00Z' } } }, orderBy: [{ field: { fieldPath: 'date' } }] } }) });
+      // The Telegram messages: the server functions' (the bot's) alone — not even the owner's sign-in.
+      const query = JSON.stringify({ structuredQuery: { from: [{ collectionId: 'telegram_messages' }], where: { fieldFilter: { field: { fieldPath: 'date' }, op: 'GREATER_THAN_OR_EQUAL', value: { timestampValue: '2026-10-01T00:00:00Z' } } }, orderBy: [{ field: { fieldPath: 'date' } }] } });
+      assert.strictEqual((await req(port, 'POST', '/db/v1/documents:runQuery', { headers: Object.assign({ 'Content-Type': 'application/json' }, A), body: query })).status, 403);
+      const q = await req(port, 'POST', '/db/v1/documents:runQuery', { headers: { 'Content-Type': 'application/json', 'X-Service-Key': env.SERVICE_KEY }, body: query });
       assert.strictEqual(q.status, 200, q.text);
       assert.deepStrictEqual(q.json.filter(r => r.document).map(r => r.document.name.split('/').pop()), ['m1']);
       assert.strictEqual((await req(port, 'GET', '/db/v1/documents/appdata/state')).status, 401);
@@ -250,6 +253,16 @@ function req(port, method, p, { headers, body } = {}) {
       assert.strictEqual(del.status, 200, del.text);
       assert.strictEqual((await req(port, 'GET', '/files/' + pr.json.id)).status, 404);
       assert.strictEqual((await req(port, 'GET', '/files/..%2Fdb')).status, 404);
+      // A page, or an SVG, uploaded by someone signed in: a download, never run as the site.
+      for (const [name, type, body] of [['x.html', 'text/html', '<script>alert(1)</script>'], ['x.svg', 'image/svg+xml', '<svg onload="alert(1)"/>']]) {
+        const p = await req(port, 'POST', '/db/v1/files:presign', { headers: Object.assign({ 'Content-Type': 'application/json' }, A), body: JSON.stringify({ name, type }) });
+        assert.strictEqual((await req(port, 'PUT', p.json.uploadUrl, { headers: p.json.headers, body })).status, 200, name);
+        const g = await req(port, 'GET', '/files/' + p.json.id);
+        assert.deepStrictEqual([g.headers['content-type'], /^attachment/.test(g.headers['content-disposition']), g.headers['x-content-type-options']], ['application/octet-stream', true, 'nosniff'], name);
+      }
+      assert.strictEqual(f.headers['content-security-policy'], 'sandbox', 'a photo opened on its own runs nothing');
+      const page = await req(port, 'GET', '/');
+      assert.deepStrictEqual([page.headers['x-frame-options'], page.headers['content-security-policy']], ['SAMEORIGIN', "frame-ancestors 'self'"], 'the app in no one else\'s frame');
     });
 
     await t('/api/… goes on to Vercel as it came', async () => {

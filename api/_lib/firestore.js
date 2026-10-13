@@ -31,6 +31,21 @@ function dbFetch(url, init) {
   return fetch(url, opts);
 }
 
+// Who is calling, as the data API knows them: the role of the app's own sign-in the request
+// carries (Authorization: Bearer …, checked where it was issued — an old or forged one is no
+// one), or null. Only on Yandex: Firebase's way had no sign-in a function could check.
+async function callerRole(req) {
+  if (!YANDEX) return null;
+  const h = (req && req.headers) || {};
+  const auth = String(h.authorization || h.Authorization || '');
+  if (!/^Bearer\s+\S+$/.test(auth)) return null;
+  try {
+    const r = await fetch(DATA_API + '/v1/health', { headers: { Authorization: auth } });
+    const j = r.ok ? await r.json() : null;
+    return j && typeof j.role === 'string' ? j.role : null;
+  } catch (e) { return null; }
+}
+
 // A photo the bot received, put where the app keeps every other file, so the app's own
 // gallery shows it like any upload. Returns the registry entry ({ id, name, type, size, url })
 // or null. On Yandex the data API hands out an address in the bucket to PUT it at.
@@ -204,7 +219,7 @@ async function appendLog(logEntries, logCap) {
 }
 
 module.exports = {
-  BACKEND, YANDEX, DATA_API, DOCS, RUN_QUERY_URL, dbFetch, uploadPhoto, OWN_FILE_PREFIXES, fsString, fsInt, fsStringArray, clone,
+  BACKEND, YANDEX, DATA_API, DOCS, RUN_QUERY_URL, dbFetch, callerRole, uploadPhoto, OWN_FILE_PREFIXES, fsString, fsInt, fsStringArray, clone,
   readDoc, updateDoc, registerFiles, acquireLease, releaseLease,
   recordReminders, appendLog,
 };

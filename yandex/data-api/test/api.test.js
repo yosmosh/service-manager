@@ -244,7 +244,13 @@ test('Личный бюджет: all of it for the owner and the administrators,
   const b = await read(T.buh, 'appdata/finance_ledger'), bf = await read(T.buh, 'appdata/files_registry');
   assert.deepStrictEqual([ids(b.finance_tx_personal), b.finance_settlements, ids(b.finance_tx_maintenance)], [['b1'], undefined, ['m1']], 'the accountant');
   assert.deepStrictEqual(Object.keys(bf.files.mapValue.fields).sort(), ['f2', 'f4'], 'the accountant: no cash receipt, no payout');
-  for (const who of ['kitchen', 'worker', 'alexander', 'management', 'provider']) {
+  const pl = await read(T.provider, 'appdata/finance_ledger'), pf = await read(T.provider, 'appdata/files_registry');
+  assert.deepStrictEqual([pl, Object.keys(pf.files.mapValue.fields)], [{}, []], 'a provider: none of the budgets, none of their documents');
+  for (const who of ['kitchen', 'worker']) {
+    const l = await read(T[who], 'appdata/finance_ledger'), f = await read(T[who], 'appdata/files_registry');
+    assert.deepStrictEqual([l, Object.keys(f.files.mapValue.fields)], [{}, []], who + ': the kitchen budget is in the state; none of the ledger, none of its documents');
+  }
+  for (const who of ['alexander', 'management']) {
     const l = await read(T[who], 'appdata/finance_ledger'), f = await read(T[who], 'appdata/files_registry');
     assert.deepStrictEqual([l.finance_tx_personal, l.finance_settlements, ids(l.finance_tx_maintenance)], [undefined, undefined, ['m1']], who);
     assert.deepStrictEqual(Object.keys(f.files.mapValue.fields), ['f4'], who + ': only the documents of what it is given');
@@ -256,6 +262,7 @@ test('Личный бюджет: all of it for the owner and the administrators,
 test('Личный бюджет: writes within the part each one is given', async () => {
   const { t, T, stored } = await budgets();
   const W = (token, fields, mask) => t.call('PATCH', 'v1/documents/appdata/finance_ledger', { token, query: mask ? { 'updateMask.fieldPaths': mask } : {}, body: { fields } });
+  assert.strictEqual((await W(T.provider, { finance_tx_maintenance: A_([]) }, ['finance_tx_maintenance'])).status, 403, 'a provider: not even ТО');
   for (const who of ['kitchen', 'alexander', 'management', 'provider']) {
     assert.strictEqual((await W(T[who], { finance_tx_personal: A_([]) }, ['finance_tx_personal'])).status, 403, who + ' Личный бюджет');
     assert.strictEqual((await W(T[who], { finance_settlements: A_([]) }, ['finance_settlements'])).status, 403, who + ' payouts');
@@ -283,9 +290,172 @@ test('the files registry: nobody writes the documents of records they are not gi
   const { t, T } = await budgets();
   const W = (token, id) => t.call('PATCH', 'v1/documents/appdata/files_registry', { token, query: { 'updateMask.fieldPaths': ['files.' + id] }, body: { fields: { files: M_({ [id]: M_({ url: S('x') }) }) } } });
   assert.deepStrictEqual([(await W(T.buh, 'f1')).status, (await W(T.buh, 'f3')).status, (await W(T.buh, 'f2')).status, (await W(T.buh, 'f7')).status], [403, 403, 200, 200], 'the accountant');
-  assert.deepStrictEqual([(await W(T.kitchen, 'f2')).status, (await W(T.kitchen, 'f4')).status, (await W(T.kitchen, 'k1')).status], [403, 200, 200], 'the kitchen');
+  assert.deepStrictEqual([(await W(T.kitchen, 'f2')).status, (await W(T.kitchen, 'f4')).status, (await W(T.kitchen, 'k1')).status], [403, 403, 200], 'the kitchen');
+  assert.strictEqual((await W(T.alexander, 'f4')).status, 200, 'Alexander: a document of ТО');
   assert.strictEqual((await t.call('PATCH', 'v1/documents/appdata/files_registry', { token: T.kitchen, query: { 'updateMask.fieldPaths': ['files'] }, body: { fields: { files: M_({}) } } })).status, 403, 'the whole registry');
   assert.strictEqual((await W(T.owner, 'f1')).status, 200, 'the owner');
+});
+
+// Two providers' months, their requests, the journal, the settings, and the documents of each.
+async function providers() {
+  const t = await imported();
+  const visit = file => M_({ visits: A_([M_({ completed: { booleanValue: true }, fileIds: A_([S(file)]) })]) });
+  const req = (id, pid, status, file) => M_({ id: S(id), providerId: S(pid), status: S(status), title: S('Заявка ' + id), fileIds: A_([S(file)]) });
+  await t.seedState({
+    svc_records: M_({ energiya_2026_9: visit('fe9'), energiya_2026_10: visit('fe10'), rosseti_2026_9: visit('fr9'), energiya2_2026_9: visit('fx') }),
+    purchase_requests: A_([req('q1', 'energiya', 'pending', 'fq1'), req('q2', 'rosseti', 'pending', 'fq2'), req('q3', 'energiya', 'approved', 'fq3')]),
+    activity_log: A_([M_({ id: S('a1'), type: S('budget'), title: S('Оплата 28 000 ₽') })]),
+    notify_config: M_({ enabled: { booleanValue: true }, owner_email: S('owner@x'), accountant_email: S('buh@x'), alexander_email: S('al@x'), emailjs_key: S('k'), emailjs_service: S('s'), emailjs_template: S('t'), fcm_token: S('tok') }),
+    telegram_config: M_({ digest: M_({ code: S('123456') }) }),
+    maint_works: A_([M_({ id: S('w1') })]),
+    finance_tx_kitchen: A_([M_({ id: S('k1') })]),
+  });
+  const reg = Object.fromEntries(['fe9', 'fe10', 'fr9', 'fq1', 'fq2', 'fq3', 'fx', 'fw'].map(id => [id, M_({ url: S('u-' + id) })]));
+  await t.call('PATCH', 'v1/documents/appdata/files_registry', { service: true, body: { fields: { files: M_(reg) } } });
+  const tok = async (u, p) => (await login(t, u, p)).body.token;
+  const E = await tok('energo', '7777'), R = await tok('rosseti', '1234'), O = await tok('Yosmosh', 'own-secret');
+  const read = async (token, path, query) => { const r = await t.call('GET', 'v1/documents/' + path, { token, query }); return r.status === 200 ? r.body.fields || {} : r.status; };
+  const stored = name => JSON.parse(t.store.docs.get('appdata/state').fields[name]);
+  const W = (token, fields, mask) => t.call('PATCH', 'v1/documents/appdata/state', { token, query: { 'updateMask.fieldPaths': mask }, body: { fields } });
+  return { t, E, R, O, read, stored, W, visit, req };
+}
+
+test('a provider is given its own: its months, its requests, the owner\'s address — nothing else', async () => {
+  const { E, R, O, read } = await providers();
+  const s = await read(E, 'appdata/state');
+  assert.deepStrictEqual(Object.keys(s).sort(), ['notify_config', 'purchase_requests', 'svc_records'], 'only these fields');
+  assert.deepStrictEqual(Object.keys(s.svc_records.mapValue.fields).sort(), ['energiya_2026_10', 'energiya_2026_9'], 'its months — not another\'s, not one whose id merely starts the same');
+  assert.deepStrictEqual(s.purchase_requests.arrayValue.values.map(e => e.mapValue.fields.id.stringValue), ['q1', 'q3']);
+  assert.deepStrictEqual(Object.keys(s.notify_config.mapValue.fields).sort(), ['emailjs_key', 'emailjs_service', 'emailjs_template', 'enabled', 'owner_email']);
+  const f = await read(E, 'appdata/files_registry');
+  assert.deepStrictEqual(Object.keys(f.files.mapValue.fields).sort(), ['fe10', 'fe9', 'fq1', 'fq3'], 'only the documents of its own records');
+  assert.deepStrictEqual(Object.keys((await read(R, 'appdata/files_registry')).files.mapValue.fields).sort(), ['fq2', 'fr9'], 'the other provider: its own');
+  assert.deepStrictEqual(await read(E, 'appdata/state', { 'mask.fieldPaths': ['telegram_config', 'activity_log'] }), {}, 'asking for a field by name');
+  assert.deepStrictEqual(await read(E, 'appdata/state', { 'mask.fieldPaths': ['svc_records.rosseti_2026_9'] }), {}, 'asking for another\'s month by name');
+  for (const path of ['appdata/warehouse', 'appdata/warehouse_docs', 'appdata/backup_status', 'appdata/_drafts_lease', 'private/people', 'telegram_messages/m1']) {
+    assert.strictEqual(await read(E, path), 403, path);
+  }
+  const all = await read(O, 'appdata/state');
+  assert.deepStrictEqual(Object.keys(all.svc_records.mapValue.fields).length, 4, 'the owner: all of it');
+  assert.ok(all.telegram_config && all.activity_log, 'the owner: all of it');
+});
+
+test('the warehouse keepers: of Личный бюджет what was paid for their part — read, never written', async () => {
+  const { t, T, read, ids } = await budgets();
+  await t.call('PATCH', 'v1/documents/appdata/finance_ledger', { service: true, query: { 'updateMask.fieldPaths': ['finance_tx_personal'] }, body: { fields: {
+    finance_tx_personal: A_([rec('c1', 'Наличные', 'f1'), rec('b1', 'РООИ-ММЕО', 'f2'), rec('w1', 'РООИ-ММЕО', 'fw1', { whIntake: S('tools') }), rec('w2', 'Наличные', 'fw2', { whIntake: S('cleaning') })]),
+  } } });
+  await t.call('PATCH', 'v1/documents/appdata/files_registry', { service: true, query: { 'updateMask.fieldPaths': ['files.fw1', 'files.fw2'] }, body: { fields: { files: M_({ fw1: M_({ url: S('w1') }), fw2: M_({ url: S('w2') }) }) } } });
+  const owner = T.owner;
+  const keeper = async (id, user) => {
+    await t.call('POST', 'v1/auth:setAccount', { token: owner, body: { kind: 'role', id, user, password: user + '-pass-1' } });
+    return (await login(t, user, user + '-pass-1')).body.token;
+  };
+  const sk = await keeper('storekeeper', 'sklad'), cl = await keeper('cleaning_head', 'klining');
+  const l1 = await read(sk, 'appdata/finance_ledger'), l2 = await read(cl, 'appdata/finance_ledger');
+  assert.deepStrictEqual([ids(l1.finance_tx_personal), ids(l1.finance_tx_maintenance), l1.finance_settlements], [['w1'], ['m1'], undefined], 'the storekeeper: the tools paid for');
+  assert.deepStrictEqual(ids(l2.finance_tx_personal), ['w2'], 'cleaning: its part, even paid in cash');
+  assert.deepStrictEqual(Object.keys((await read(sk, 'appdata/files_registry')).files.mapValue.fields).sort(), ['f4', 'fw1'], 'the documents of those');
+  const r = await t.call('PATCH', 'v1/documents/appdata/finance_ledger', { token: sk, query: { 'updateMask.fieldPaths': ['finance_tx_personal'] }, body: { fields: { finance_tx_personal: A_([rec('w1', 'РООИ-ММЕО', 'fw1', { whIntake: S('tools') })]) } } });
+  assert.strictEqual(r.status, 403, 'never written');
+  for (const [tok, path, want] of [[sk, 'appdata/warehouse', 404], [cl, 'appdata/warehouse_docs', 404], [T.kitchen, 'appdata/warehouse', 403], [T.alexander, 'appdata/warehouse_docs', 403]]) {
+    assert.strictEqual((await t.call('GET', 'v1/documents/' + path, { token: tok })).status, want, path);
+  }
+});
+
+test('the staff: not Telegram, not the journal — to which they still add their lines', async () => {
+  const t = await imported();
+  await t.seedState({
+    telegram_config: M_({ digest: M_({ code: S('123456') }) }), telegram_drafts: A_([M_({ id: S('d1') })]), telegram_log: A_([]),
+    activity_log: A_([M_({ id: S('a1'), type: S('budget'), title: S('Оплата') })]),
+    sos_items: A_([M_({ id: S('s1') })]), notify_config: M_({ owner_email: S('o@x') }), budget_released: { booleanValue: true },
+  });
+  const tok = async (u, p) => (await login(t, u, p)).body.token;
+  const K = await tok('kitchen', 'kitchen123'), A = await tok('alexander', 'alex123'), O = await tok('Yosmosh', 'own-secret'), AD = await tok('admin', 'adm-secret');
+  const st = async token => (await t.call('GET', 'v1/documents/appdata/state', { token })).body.fields || {};
+  for (const [who, token] of [['kitchen', K], ['alexander', A]]) {
+    assert.deepStrictEqual(Object.keys(await st(token)).sort(), ['budget_released', 'notify_config', 'sos_items'], who);
+  }
+  assert.deepStrictEqual(Object.keys(await st(O)).sort(), ['activity_log', 'budget_released', 'notify_config', 'sos_items', 'telegram_config', 'telegram_drafts', 'telegram_log'], 'the owner');
+  assert.ok((await st(AD)).telegram_drafts, 'the administrator: the drafts');
+  const W = (token, fields, mask) => t.call('PATCH', 'v1/documents/appdata/state', { token, query: { 'updateMask.fieldPaths': mask }, body: { fields } });
+  let r = await W(K, { activity_log: A_([M_({ id: S('a2'), type: S('maint'), title: S('Покос') })]) }, ['activity_log']);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  const log = () => JSON.parse(t.store.docs.get('appdata/state').fields.activity_log).arrayValue.values.map(e => e.mapValue.fields.id.stringValue);
+  assert.deepStrictEqual(log(), ['a1', 'a2'], 'its line added, the rest kept');
+  assert.strictEqual((await W(K, { activity_log: A_(Array.from({ length: 6 }, (_, i) => M_({ id: S('x' + i), type: S('maint') }))) }, ['activity_log'])).status, 403, 'not many at once');
+  for (const name of ['telegram_config', 'telegram_drafts', 'telegram_log']) assert.strictEqual((await W(K, { [name]: A_([]) }, [name])).status, 403, name);
+  assert.strictEqual((await W(K, { sos_items: A_([M_({ id: S('s1') }), M_({ id: S('s2') })]) }, ['sos_items'])).status, 200, 'the rest as before');
+  assert.strictEqual((await W(O, { telegram_drafts: A_([]) }, ['telegram_drafts'])).status, 200, 'the owner');
+});
+
+test('share pages: written by the owner and the administrators, read by anyone with the link', async () => {
+  const t = await imported();
+  const tok = async (u, p) => (await login(t, u, p)).body.token;
+  const page = token => t.call('PATCH', 'v1/documents/appdata/share_abc123', { token, body: { fields: { html: S('<p>отчёт</p>') } } });
+  for (const [u, p] of [['kitchen', 'kitchen123'], ['alexander', 'alex123'], ['buh', 'buh-secret'], ['energo', '7777']]) assert.strictEqual((await page(await tok(u, p))).status, 403, u);
+  assert.strictEqual((await page(await tok('admin', 'adm-secret'))).status, 200, 'an administrator');
+  assert.strictEqual((await t.call('GET', 'v1/documents/appdata/share_abc123')).status, 200, 'the link, without signing in');
+  for (const path of ['appdata/backup_status', 'appdata/_scan_quota', 'appdata/_drafts_lease']) {
+    assert.strictEqual((await t.call('GET', 'v1/documents/' + path, { token: await tok('kitchen', 'kitchen123') })).status, 403, path);
+  }
+});
+
+test('the Telegram messages: the server functions\' alone', async () => {
+  const t = await imported();
+  const q = { structuredQuery: { from: [{ collectionId: 'telegram_messages' }], where: { fieldFilter: { field: { fieldPath: 'date' }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: '2000' } } } } };
+  for (const [u, p] of [['Yosmosh', 'own-secret'], ['kitchen', 'kitchen123'], ['energo', '7777']]) {
+    const token = (await login(t, u, p)).body.token;
+    assert.strictEqual((await t.call('POST', 'v1/documents:runQuery', { token, body: q })).status, 403, u);
+    assert.strictEqual((await t.call('GET', 'v1/documents/telegram_messages/m1', { token })).status, 403, u);
+  }
+  assert.strictEqual((await t.call('POST', 'v1/documents:runQuery', { service: true, body: q })).status, 200, 'the bot');
+});
+
+test('a provider writes its own months and requests; never another\'s, never an approval', async () => {
+  const { E, W, stored, visit, req } = await providers();
+  // Its month saved: the others' stay as they are.
+  let r = await W(E, { svc_records: M_({ energiya_2026_9: visit('fe9'), energiya_2026_10: visit('fe10'), energiya_2026_11: visit('fn') }) }, ['svc_records']);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.deepStrictEqual(Object.keys(stored('svc_records').mapValue.fields).sort(), ['energiya2_2026_9', 'energiya_2026_10', 'energiya_2026_11', 'energiya_2026_9', 'rosseti_2026_9']);
+  assert.strictEqual((await W(E, { svc_records: M_({ rosseti_2026_9: visit('x') }) }, ['svc_records'])).status, 403, 'another\'s month');
+  assert.strictEqual((await W(E, { svc_records: M_({ energiya2_2026_9: visit('x') }) }, ['svc_records'])).status, 403, 'a month of a provider whose id starts the same');
+  assert.strictEqual((await W(E, { svc_records: M_({}) }, ['svc_records.rosseti_2026_9'])).status, 403, 'by a path into another\'s');
+  // Its requests: a new one pending; its own pending one changed; never another's, never approved.
+  r = await W(E, { purchase_requests: A_([req('q1', 'energiya', 'pending', 'fq1'), req('q3', 'energiya', 'approved', 'fq3'), req('q4', 'energiya', 'pending', 'fq4')]) }, ['purchase_requests']);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.deepStrictEqual(stored('purchase_requests').arrayValue.values.map(e => e.mapValue.fields.id.stringValue), ['q1', 'q2', 'q3', 'q4'], 'the other provider\'s request kept');
+  for (const [what, list] of [['a new one approved', [req('q5', 'energiya', 'approved', 'f')]], ['its own approved by itself', [req('q1', 'energiya', 'approved', 'fq1')]],
+    ['another\'s', [req('q2', 'energiya', 'pending', 'fq2')]], ['one in another\'s name', [req('q6', 'rosseti', 'pending', 'f')]]]) {
+    assert.strictEqual((await W(E, { purchase_requests: A_(list.concat([req('q3', 'energiya', 'approved', 'fq3'), req('q4', 'energiya', 'pending', 'fq4')])) }, ['purchase_requests'])).status, 403, what);
+  }
+  assert.strictEqual((await W(E, { purchase_requests: A_([req('q1', 'energiya', 'pending', 'fq1'), req('q4', 'energiya', 'pending', 'fq4')]) }, ['purchase_requests'])).status, 403, 'an approved one taken back');
+  // The journal: lines added, none read or changed.
+  r = await W(E, { activity_log: A_([M_({ id: S('a9'), type: S('visit'), title: S('Визит записан') })]) }, ['activity_log']);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.deepStrictEqual(stored('activity_log').arrayValue.values.map(e => e.mapValue.fields.id.stringValue), ['a1', 'a9']);
+  assert.strictEqual((await W(E, { activity_log: A_([M_({ id: S('a8'), type: S('budget'), title: S('x') })]) }, ['activity_log'])).status, 403, 'a line of another kind');
+  for (const name of ['telegram_config', 'notify_config', 'maint_works', 'finance_tx_kitchen', 'sos_items', 'projects']) {
+    assert.strictEqual((await W(E, { [name]: A_([]) }, [name])).status, 403, name);
+  }
+  assert.strictEqual((await W(E, { svc_records: M_({}) })).status, 403, 'the whole document');
+});
+
+test('a provider\'s documents: its own, new ones, and none it isn\'t given — written or deleted', async () => {
+  const { t, E, R } = await providers();
+  const Wf = (token, id, value) => t.call('PATCH', 'v1/documents/appdata/files_registry', { token, query: { 'updateMask.fieldPaths': ['files.' + id] }, body: { fields: { files: M_(value === undefined ? {} : { [id]: value }) } } });
+  const url = M_({ url: S('x') });
+  assert.deepStrictEqual([(await Wf(E, 'fe9', url)).status, (await Wf(E, 'fnew', url)).status], [200, 200], 'its own; a new upload');
+  assert.deepStrictEqual([(await Wf(E, 'fr9', url)).status, (await Wf(E, 'fq2', undefined)).status, (await Wf(E, 'fx', url)).status], [403, 403, 403], 'another\'s, written or taken off');
+  assert.strictEqual((await Wf(E, 'fw', undefined)).status, 200, 'one no record names: taken off');
+  const D =async (token, id) => (await t.call('DELETE', 'v1/files/' + id, { token })).status;
+  await t.seedState({ svc_records: M_({ rosseti_2026_9: M_({ visits: A_([M_({ fileIds: A_([S('frosseti9')]) })]) }) }) });
+  assert.deepStrictEqual([await D(E, 'frosseti9'), await D(E, 'forphan01')], [403, 200], 'a provider deletes only a file no record names');
+  assert.strictEqual(await D(R, 'frosseti9'), 403, 'not even its own while a record still names it');
+  for (const [m, path] of [['PATCH', 'appdata/warehouse'], ['PATCH', 'appdata/share_x'], ['DELETE', 'appdata/state'], ['PATCH', 'private/people']]) {
+    assert.strictEqual((await t.call(m, 'v1/documents/' + path, { token: E, body: { fields: {} } })).status, 403, m + ' ' + path);
+  }
+  assert.strictEqual((await t.call('PATCH', 'v1/documents/appdata/_ping', { token: E, body: { fields: { t: { integerValue: '1' } } } })).status, 200, 'the connection check');
 });
 
 test('the settings screen gets names, never passwords — all for the owner, providers for an admin', async () => {

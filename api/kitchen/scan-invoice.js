@@ -12,12 +12,12 @@
 // they are fetched here, and PDFs are read as well as photos. One endpoint, so one daily cap
 // covers both.
 
-const { updateDoc, fsString, fsInt, OWN_FILE_PREFIXES } = require('../_lib/firestore');
+const { updateDoc, fsString, fsInt, OWN_FILE_PREFIXES, YANDEX, callerRole } = require('../_lib/firestore');
 
-// This URL is public (the app has no server-side login), and every call is a paid vision
-// request on the same Anthropic key the Telegram drafts and the digest use — anyone who found
-// it could spend that credit without limit, and once it ran out those would stop as well.
-// A daily cap bounds what that can cost; the kitchen's real volume is a few invoices a day.
+// Every call is a paid vision request on the same Anthropic key the Telegram drafts and the
+// digest use. It is answered only to someone signed in to the app as staff (callerRole); the
+// daily cap stays as well, bounding what even a signed-in account could spend — the kitchen's
+// real volume is a few invoices a day.
 const DAILY_SCAN_LIMIT = 60;
 const QUOTA_DOC = 'appdata/_scan_quota';
 
@@ -96,6 +96,11 @@ async function fetchOwnFile(url) {
 module.exports = async (req, res) => {
   // `v` tells which version answers — a deploy can be checked from outside with a plain GET.
   if (req.method !== 'POST') { res.status(405).json({ error: 'method not allowed', v: 2 }); return; }
+  // Someone signed in to the app as staff — not anyone who found the address, not a provider.
+  if (YANDEX) {
+    const role = await callerRole(req);
+    if (!role || role === 'provider') { res.status(401).json({ error: 'Войдите в систему' }); return; }
+  }
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) { res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' }); return; }
 

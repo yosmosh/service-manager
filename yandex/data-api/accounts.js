@@ -81,13 +81,6 @@ async function verifyPassword(password, stored) {
   return got.length === want.length && crypto.timingSafeEqual(got, want);
 }
 
-// A default password is compared as text — without leaking, through timing, how much was right.
-function samePlain(a, b) {
-  const x = crypto.createHash('sha256').update(String(a)).digest();
-  const y = crypto.createHash('sha256').update(String(b)).digest();
-  return crypto.timingSafeEqual(x, y);
-}
-
 // ---- Firestore-shaped values ----
 
 const sv = v => ({ stringValue: String(v) });
@@ -202,14 +195,16 @@ function createAccounts({ store, auth, now }) {
     for (const a of ACCOUNTS) {
       if (a.gated && !released) continue;
       const e = creds.roles[a.role];
-      if (!e && !a.defPwd) continue; // no password set yet: no way in
-      if (username !== (e ? e.user : a.defUser).toLowerCase()) continue;
-      if (e ? await verifyPassword(password, e.hash) : samePlain(password, a.defPwd)) return { role: a.role, sub: a.role, gen: e ? e.gen : 0 };
+      // No password stored for it (the move put one for every account there was): no way in. The
+      // defaults stand in the code, which is public — none of them opens anything.
+      if (!e) continue;
+      if (username !== e.user.toLowerCase()) continue;
+      if (await verifyPassword(password, e.hash)) return { role: a.role, sub: a.role, gen: e.gen };
     }
     for (const pid of PROVIDER_IDS) {
       const e = creds.providers[pid];
-      if (username !== (e ? e.user : pid).toLowerCase()) continue;
-      if (e ? await verifyPassword(password, e.hash) : samePlain(password, PROVIDER_DEFAULT_PIN)) return { role: 'provider', sub: pid, gen: e ? e.gen : 0 };
+      if (!e || username !== e.user.toLowerCase()) continue;
+      if (await verifyPassword(password, e.hash)) return { role: 'provider', sub: pid, gen: e.gen };
     }
     return null;
   }
@@ -265,11 +260,11 @@ function createAccounts({ store, auth, now }) {
     if (role !== 'owner' && role !== 'admin') return { status: 403, body: { error: 'Нет доступа' } };
     const creds = (await readCredentials()) || { roles: {}, providers: {} };
     const out = { providers: {} };
-    PROVIDER_IDS.forEach(pid => { out.providers[pid] = { user: creds.providers[pid] ? creds.providers[pid].user : pid }; });
+    PROVIDER_IDS.forEach(pid => { out.providers[pid] = creds.providers[pid] ? { user: creds.providers[pid].user } : { user: pid, unset: true }; });
     if (role === 'owner') {
       out.roles = {};
       // `unset`: an account with no password yet, which can't be signed in to until one is set.
-      ACCOUNTS.forEach(a => { out.roles[a.role] = creds.roles[a.role] ? { user: creds.roles[a.role].user } : (a.defPwd ? { user: a.defUser } : { user: a.defUser, unset: true }); });
+      ACCOUNTS.forEach(a => { out.roles[a.role] = creds.roles[a.role] ? { user: creds.roles[a.role].user } : { user: a.defUser, unset: true }; });
     }
     return { status: 200, body: out };
   }
@@ -296,11 +291,10 @@ function createAccounts({ store, auth, now }) {
     if (taken) return { status: 409, body: { error: 'Это имя пользователя уже занято другой учётной записью' } };
 
     const cur = creds[kind][id];
-    const defPwd = kind === 'roles' ? account.defPwd : PROVIDER_DEFAULT_PIN;
-    if (!password && !cur && !defPwd) return { status: 400, body: { error: 'Задайте пароль — без него в эту учётную запись не войти' } };
+    if (!password && !cur) return { status: 400, body: { error: 'Задайте пароль — без него в эту учётную запись не войти' } };
     const next = {
       user,
-      hash: password ? await hashPassword(password) : (cur ? cur.hash : await hashPassword(defPwd)),
+      hash: password ? await hashPassword(password) : cur.hash,
       gen: (cur ? cur.gen : 0) + (password ? 1 : 0),
     };
     // Written per account (roles.<id>), so two changes at once don't overwrite each other.

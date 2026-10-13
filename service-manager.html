@@ -1206,6 +1206,8 @@ async function _authApi(method, route, body) {
   if (r.status === 401 && _authToken) _sessionEnded();
   return { ok: r.ok, status: r.status, body: j };
 }
+// The app's sign-in, for its own server functions (/api/…): they ask the data API who it is.
+const _apiAuth = headers => Object.assign({}, headers || {}, _authToken ? { Authorization: 'Bearer ' + _authToken } : {});
 async function _loadAccountNames() {
   try {
     const r = await _authApi('GET', 'auth:accounts');
@@ -3105,7 +3107,7 @@ async function refreshTelegramDrafts() {
   const btn = document.getElementById('tg-refresh-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⧗ Проверяем…'; }
   try {
-    const res = await fetch('/api/telegram/build-drafts?force=1', { method: 'POST' });
+    const res = await fetch('/api/telegram/build-drafts?force=1', { method: 'POST', headers: _apiAuth() });
     const j = await res.json();
     if (!res.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + res.status));
     if (j.skipped === 'throttled') {
@@ -8763,7 +8765,7 @@ async function whScanBudgetInvoice() {
 // and supplier. Throws with a message a person can act on.
 async function _whReadInvoice(urls) {
   const resp = await fetch('/api/kitchen/scan-invoice', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
+    method: 'POST', headers: _apiAuth({ 'content-type': 'application/json' }),
     body: JSON.stringify({ purpose: 'warehouse', fileUrls: urls }),
   });
   const data = await resp.json().catch(() => ({}));
@@ -12722,7 +12724,7 @@ async function scanInvoiceWithAI() {
       const base64 = forAI.data.split(',')[1];
       const resp = await fetch('/api/kitchen/scan-invoice', {
         method: 'POST',
-        headers: {'content-type':'application/json'},
+        headers: _apiAuth({'content-type':'application/json'}),
         body: JSON.stringify({ imageBase64: base64, mediaType: forAI.type || 'image/jpeg' })
       });
       const data = await resp.json().catch(() => ({}));

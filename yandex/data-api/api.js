@@ -51,22 +51,34 @@ const IMAGE_ROLES = ['owner', 'admin', 'storekeeper', 'cleaning_head', 'service'
 function createApi({ store, auth, files, accounts, images, now }) {
   const clock = now || (() => Date.now());
 
-  // The ledger's two fields that decide what of the budgets a limited role is given (core.viewFields).
-  async function ledgerParts() {
-    const d = await store.read(core.LEDGER_DOC, ['finance_tx_personal', 'finance_settlements']);
+  // What working out a caller's view of a document needs (core.viewNeeds): the ledger's two
+  // budget fields, or the shared state's provider records — parsed.
+  async function viewCtx(who, path) {
+    const need = core.viewNeeds(who, path);
+    if (!need) return null;
+    const names = need === 'ledger' ? ['finance_tx_personal', 'finance_settlements', 'finance_tx_maintenance'] : ['svc_records', 'purchase_requests'];
+    const d = await store.read(need === 'ledger' ? core.LEDGER_DOC : core.STATE_DOC, names);
     const out = {};
     if (d) for (const n of Object.keys(d.fields)) out[n] = JSON.parse(d.fields[n]);
-    return out;
+    return { [need]: out };
+  }
+  // No record names this file any more: the documents that keep records, as text.
+  async function orphan(id) {
+    for (const path of [core.STATE_DOC, core.LEDGER_DOC, 'appdata/warehouse', 'appdata/warehouse_docs']) {
+      const d = await store.read(path, null);
+      if (d && Object.keys(d.fields).some(n => d.fields[n].includes('"' + id + '"'))) return false;
+    }
+    return true;
   }
 
-  async function getDoc(path, query, role) {
+  async function getDoc(path, query, who) {
     const mask = many(query, 'mask.fieldPaths');
     const topNames = mask.length ? [...new Set(mask.map(p => core.splitFieldPath(p)[0]).filter(Boolean))] : null;
     const doc = await store.read(path, topNames);
     if (!doc) throw new HttpError(404, 'NOT_FOUND', 'Document not found: ' + path);
     let texts = doc.fields;
-    // Only this role's part of the budgets (core.viewFields).
-    if (core.viewed(role, path)) texts = core.viewFields(role, path, texts, path === core.FILES_DOC && texts.files !== undefined ? await ledgerParts() : null);
+    // Only this caller's part (core.viewFields).
+    if (core.viewed(who, path)) texts = core.viewFields(who, path, texts, await viewCtx(who, path));
     // A nested mask path returns only that part of its field.
     if (mask.some(p => core.splitFieldPath(p).length > 1)) {
       const parsed = {};
@@ -78,24 +90,25 @@ function createApi({ store, auth, files, accounts, images, now }) {
     return json(200, docJson(path, doc.meta, texts));
   }
 
-  async function patchDoc(p, query, rawBody, role) {
+  async function patchDoc(p, query, rawBody, who) {
     let body;
     try { body = rawBody ? JSON.parse(rawBody) : {}; } catch (e) { throw new HttpError(400, 'INVALID_ARGUMENT', 'Body is not JSON'); }
     let fields = (body && body.fields) || {};
     const mask = many(query, 'updateMask.fieldPaths');
     const ifTime = one(query, 'currentDocument.updateTime');
     const exists = one(query, 'currentDocument.exists');
-    // Within this role's part of the budgets (core.viewWrite) — the registry's, as the ledger is now.
-    const limited = core.viewed(role, p.path);
-    const ledger = limited && p.path === core.FILES_DOC ? await ledgerParts() : null;
+    // Within this caller's part (core.viewWrite) — the registry's, as the records are now.
+    const limited = core.viewed(who, p.path);
+    const ctx = limited ? Object.assign({ orphan }, await viewCtx(who, p.path)) : null;
     const result = await store.transact(p.path, async tx => {
       const meta = await tx.meta();
       if (ifTime && (!meta || meta.updateTime !== ifTime)) throw precondition();
       if (exists === 'false' && meta) throw new HttpError(409, 'ALREADY_EXISTS', 'Document already exists: ' + p.path);
       if (exists === 'true' && !meta) throw new HttpError(404, 'NOT_FOUND', 'Document not found: ' + p.path);
       if (limited) {
-        const personal = p.path === core.LEDGER_DOC ? (await tx.fields(['finance_tx_personal'])).finance_tx_personal : undefined;
-        const allowedFields = core.viewWrite(role, p.path, mask, fields, personal === undefined ? undefined : JSON.parse(personal), ledger);
+        const current = async names => { const t = await tx.fields(names), o = {}; for (const n of Object.keys(t)) o[n] = JSON.parse(t[n]); return o; };
+        if (p.path === core.FILES_DOC) ctx.registry = new Set(Object.keys((((await current(['files'])).files || {}).mapValue || {}).fields || {}));
+        const allowedFields = await core.viewWrite(who, p.path, mask, fields, current, ctx);
         if (!allowedFields) throw new HttpError(403, 'PERMISSION_DENIED', 'Not allowed: ' + p.path);
         fields = allowedFields;
       }
@@ -130,14 +143,15 @@ function createApi({ store, auth, files, accounts, images, now }) {
     return json(200, {});
   }
 
-  async function runQuery(role, rawBody) {
+  async function runQuery(who, rawBody) {
+    const role = who ? who.role : null;
     let body;
     try { body = JSON.parse(rawBody || '{}'); } catch (e) { throw new HttpError(400, 'INVALID_ARGUMENT', 'Body is not JSON'); }
     const q = core.parseRunQuery(body);
     if (!q) throw new HttpError(400, 'INVALID_ARGUMENT', 'Only a date ≥ query on one collection is supported');
     if (!core.allowed(role, 'read', q.collection + '/x')) throw new HttpError(403, 'PERMISSION_DENIED', 'Not allowed');
     // The budgets' documents have no date to be found by; should one ever, a limited role isn't given it this way.
-    const rows = (await store.query(q.collection, q.since, q.descending, q.limit)).filter(r => !core.viewed(role, r.path));
+    const rows = (await store.query(q.collection, q.since, q.descending, q.limit)).filter(r => !core.viewed(who, r.path));
     const readTime = new Date(clock()).toISOString();
     if (!rows.length) return json(200, '[{"readTime":' + JSON.stringify(readTime) + '}]');
     return json(200, '[' + rows.map(r => '{"document":' + docJson(r.path, r.meta, r.fields) + ',"readTime":' + JSON.stringify(readTime) + '}').join(',') + ']');
@@ -148,7 +162,9 @@ function createApi({ store, auth, files, accounts, images, now }) {
       const method = String(req.method || 'GET').toUpperCase();
       const rest = String(req.rest || '').replace(/^\/+/, '');
       const query = req.query || {};
-      const role = await auth.identify(req.headers || {}, accounts ? accounts.tokenCurrent : null);
+      const tokenCurrent = accounts ? accounts.tokenCurrent : null;
+      const who = auth.whoIs ? await auth.whoIs(req.headers || {}, tokenCurrent) : (r => (r ? { role: r, sub: null } : null))(await auth.identify(req.headers || {}, tokenCurrent));
+      const role = who ? who.role : null;
 
       if (method === 'GET' && rest === 'v1/health') return json(200, { ok: true, role: role || null });
 
@@ -204,7 +220,7 @@ function createApi({ store, auth, files, accounts, images, now }) {
         return json(r.status, r.body);
       }
 
-      if (rest === 'v1/documents:runQuery' && method === 'POST') return await runQuery(role, req.body);
+      if (rest === 'v1/documents:runQuery' && method === 'POST') return await runQuery(who, req.body);
 
       if (rest === 'v1/files:presign' && method === 'POST') {
         if (!core.allowed(role, 'file')) throw new HttpError(401, 'UNAUTHENTICATED', 'Sign in first');
@@ -215,6 +231,8 @@ function createApi({ store, auth, files, accounts, images, now }) {
       const fm = /^v1\/files\/([A-Za-z0-9_-]{6,80})$/.exec(rest);
       if (fm && method === 'DELETE') {
         if (!core.allowed(role, 'file')) throw new HttpError(401, 'UNAUTHENTICATED', 'Sign in first');
+        // A provider deletes only a file no record names any more — its own photo, taken off a visit.
+        if (role === 'provider' && !(await orphan(fm[1]))) throw new HttpError(403, 'PERMISSION_DENIED', 'Not allowed');
         await files.remove(fm[1]);
         return json(200, {});
       }
@@ -227,10 +245,10 @@ function createApi({ store, auth, files, accounts, images, now }) {
         if (!core.allowed(role, action, p.path)) {
           throw role ? new HttpError(403, 'PERMISSION_DENIED', 'Not allowed: ' + p.path) : new HttpError(401, 'UNAUTHENTICATED', 'Sign in first');
         }
-        if (method === 'GET') return await getDoc(p.path, query, role);
-        if (method === 'PATCH') return await patchDoc(p, query, req.body, role);
+        if (method === 'GET') return await getDoc(p.path, query, who);
+        if (method === 'PATCH') return await patchDoc(p, query, req.body, who);
         if (method === 'DELETE') {
-          if (core.viewed(role, p.path)) throw new HttpError(403, 'PERMISSION_DENIED', 'Not allowed: ' + p.path);
+          if (core.viewed(who, p.path)) throw new HttpError(403, 'PERMISSION_DENIED', 'Not allowed: ' + p.path);
           return await deleteDoc(p, query);
         }
       }

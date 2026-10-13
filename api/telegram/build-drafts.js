@@ -24,7 +24,7 @@
 
 const {
   fsString, fsInt, fsStringArray, readDoc, updateDoc, registerFiles, acquireLease, releaseLease,
-  RUN_QUERY_URL, dbFetch, uploadPhoto,
+  RUN_QUERY_URL, dbFetch, uploadPhoto, YANDEX, callerRole,
 } = require('../_lib/firestore');
 const { DRAFTS_LEASE_DOC, signalAfterCheck, nudgeGate } = require('../_lib/drafts-signal');
 
@@ -318,6 +318,11 @@ module.exports = async (req, res) => {
   // and returns what the model made of the group's internal messages. That's an operator's
   // tool, not something the public URL should offer anyone — so it takes the cron's secret.
   if (dryRun && !isCron) { res.status(401).json({ error: 'dryRun requires CRON_SECRET' }); return; }
+  // The app's «Проверить Telegram»: someone signed in to it as staff, not anyone who found the address.
+  if (!isCron && YANDEX) {
+    const role = await callerRole(req);
+    if (!role || role === 'provider') { res.status(401).json({ ok: false, error: 'Войдите в систему' }); return; }
+  }
   const holder = 'run-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   let leaseHeld = false;
   let attemptRecorded = false;

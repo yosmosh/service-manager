@@ -38,16 +38,21 @@ function verify(token) {
 
 // The caller's role, or null. tokenCurrent(payload), when given, also turns away a token
 // issued before its account's password was last changed.
-async function identify(headers, tokenCurrent) {
+// The caller as { role, sub } — sub the account within the role (a provider's id) — or null.
+async function whoIs(headers, tokenCurrent) {
   const h = {};
   for (const k of Object.keys(headers || {})) h[k.toLowerCase()] = headers[k];
   const sk = h['x-service-key'];
-  if (sk && process.env.SERVICE_KEY && sameText(sk, process.env.SERVICE_KEY)) return 'service';
+  if (sk && process.env.SERVICE_KEY && sameText(sk, process.env.SERVICE_KEY)) return { role: 'service', sub: null };
   const m = /^Bearer\s+(\S+)$/.exec(h['authorization'] || '');
   const p = m ? verify(m[1]) : null;
   if (!p) return null;
   if (tokenCurrent && !(await tokenCurrent(p))) return null;
-  return p.r;
+  return { role: p.r, sub: typeof p.s === 'string' ? p.s : null };
+}
+async function identify(headers, tokenCurrent) {
+  const w = await whoIs(headers, tokenCurrent);
+  return w ? w.role : null;
 }
 
-module.exports = { sign, verify, identify };
+module.exports = { sign, verify, identify, whoIs };

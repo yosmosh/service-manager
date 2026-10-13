@@ -47,6 +47,9 @@ const api = createApi({ store, auth, files, accounts, images });
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.woff2': 'font/woff2', '.png': 'image/png', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
 const NO_CACHE = 'no-store, no-cache, must-revalidate';
+// The app's own pages: not to be shown inside another site's frame (where a click could be
+// tricked out of whoever is signed in), no type guessed, no address of ours handed to others.
+const PAGE_HEADERS = { 'X-Frame-Options': 'SAMEORIGIN', 'Content-Security-Policy': "frame-ancestors 'self'", 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin' };
 const FOREVER = 'public, max-age=31536000, immutable';
 
 function send(res, status, headers, body) {
@@ -65,7 +68,7 @@ function serveStatic(req, res, rel, cache) {
   const f = appFile(rel);
   if (!f) return text(res, 404, 'Not found');
   const etag = '"' + f.st.size.toString(36) + '-' + Math.floor(f.st.mtimeMs).toString(36) + '"';
-  const headers = { 'Content-Type': TYPES[path.extname(f.full).toLowerCase()] || 'application/octet-stream', 'Cache-Control': cache, ETag: etag, 'Last-Modified': f.st.mtime.toUTCString(), 'Content-Length': f.st.size };
+  const headers = Object.assign({ 'Content-Type': TYPES[path.extname(f.full).toLowerCase()] || 'application/octet-stream', 'Cache-Control': cache, ETag: etag, 'Last-Modified': f.st.mtime.toUTCString(), 'Content-Length': f.st.size }, PAGE_HEADERS);
   if (req.headers['if-none-match'] === etag) return send(res, 304, headers);
   res.writeHead(200, headers);
   if (req.method === 'HEAD') return res.end();
@@ -97,11 +100,28 @@ async function handleDb(req, res, url) {
   send(res, r.status, r.headers || {}, r.body);
 }
 
+// A stored file is served from the site's own address: one that ran as a page (HTML, or an SVG
+// with a script in it) would run as the app itself — with the session of whoever opened it from
+// the app. So photos and PDFs open in the browser, and everything else anyone signed in uploaded
+// is a download only; nothing is let guess a type of its own (nosniff), and a photo opened on its
+// own runs nothing (sandbox).
+const INLINE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif', 'application/pdf',
+  'video/mp4', 'video/quicktime', 'video/webm', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/webm'];
+function fileHeaders(f) {
+  const type = String(f.type || '').toLowerCase().split(';')[0].trim();
+  const inline = INLINE_TYPES.includes(type);
+  const headers = { 'Content-Type': inline ? type : 'application/octet-stream', 'Content-Length': f.size,
+    'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' };
+  if (inline && type !== 'application/pdf') headers['Content-Security-Policy'] = 'sandbox';
+  const name = /filename\*?=.*$/i.exec(f.disposition || '');
+  headers['Content-Disposition'] = (inline ? 'inline' : 'attachment') + (name ? '; ' + name[0] : '');
+  return headers;
+}
+
 function serveFile(req, res, id) {
   const f = files.lookup(id);
   if (!f) return text(res, 404, 'Not found');
-  const headers = { 'Content-Type': f.type, 'Content-Length': f.size, 'Cache-Control': 'public, max-age=31536000, immutable' };
-  if (f.disposition) headers['Content-Disposition'] = f.disposition;
+  const headers = fileHeaders(f);
   res.writeHead(200, headers);
   if (req.method === 'HEAD') return res.end();
   pipeline(fs.createReadStream(f.path), res, () => {});
