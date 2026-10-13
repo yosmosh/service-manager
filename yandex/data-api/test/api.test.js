@@ -187,6 +187,31 @@ test('the credentials can be read by nobody but the service', async () => {
   }
 });
 
+test('passport details: the owner and the administrators alone, never the others signed in', async () => {
+  const t = await imported();
+  const tok = async (u, p) => (await login(t, u, p)).body.token;
+  const people = { fields: { people: { mapValue: { fields: { p1: { mapValue: { fields: { name: S('Шахинян Агавни Юриковна'), number: S('0272552') } } } } } } } };
+  const owner = await tok('Yosmosh', 'own-secret');
+  assert.strictEqual((await t.call('PATCH', 'v1/documents/private/people', { token: owner, body: people })).status, 200);
+  for (const [u, p] of [['Yosmosh', 'own-secret'], ['admin', 'adm-secret'], ['admin2', 'lichny2026']]) {
+    const k = await tok(u, p);
+    const r = await t.call('GET', 'v1/documents/private/people', { token: k });
+    assert.strictEqual(r.status, 200, u);
+    assert.ok(JSON.stringify(r.body).includes('0272552'), u);
+    assert.strictEqual((await t.call('PATCH', 'v1/documents/private/people', { token: k, query: { 'updateMask.fieldPaths': ['people.p2'] }, body: { fields: { people: { mapValue: { fields: { p2: { mapValue: { fields: {} } } } } } } } })).status, 200, u + ' writes');
+  }
+  const query = { structuredQuery: { from: [{ collectionId: 'private' }], where: { fieldFilter: { field: { fieldPath: 'date' }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: '2000' } } } } };
+  for (const [u, p] of [['kitchen', 'kitchen123'], ['worker', 'worker123'], ['alexander', 'alex123'], ['buh', 'buh-secret'], ['management', 'board2026'], ['energo', '7777']]) {
+    const k = await tok(u, p);
+    assert.strictEqual((await t.call('GET', 'v1/documents/private/people', { token: k })).status, 403, u + ' reads');
+    assert.strictEqual((await t.call('PATCH', 'v1/documents/private/people', { token: k, body: people })).status, 403, u + ' writes');
+    assert.strictEqual((await t.call('DELETE', 'v1/documents/private/people', { token: k })).status, 403, u + ' deletes');
+    assert.strictEqual((await t.call('POST', 'v1/documents:runQuery', { token: k, body: query })).status, 403, u + ' queries');
+  }
+  assert.strictEqual((await t.call('GET', 'v1/documents/private/people')).status, 401, 'nobody signed in');
+  assert.ok(t.store.docs.has('private/people'), 'still there');
+});
+
 test('the settings screen gets names, never passwords — all for the owner, providers for an admin', async () => {
   const t = await imported();
   const owner = (await login(t, 'Yosmosh', 'own-secret')).body.token;

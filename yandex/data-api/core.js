@@ -168,9 +168,14 @@ function queryDate(fields) {
   return v.timestampValue || v.stringValue || null;
 }
 
+// People's passport details, for the receipts printed when cash is handed over: the owner and
+// the administrators who hand it over — not the kitchen, the providers or anyone else signed in.
+const PRIVATE_ROLES = ['owner', 'admin', 'admin2'];
+
 // Who may do what. service: the server functions — everything. A signed-in user: the
 // app's documents and files. Nobody: only a share link's own document. Documents in
-// collections starting with "_" (credentials, sessions) are the server's alone.
+// collections starting with "_" (credentials, sessions) are the server's alone; those in
+// "private", PRIVATE_ROLES' alone.
 function allowed(role, action, docPath) {
   if (role === 'service') return true;
   const p = parseDocPath(docPath || '');
@@ -178,6 +183,7 @@ function allowed(role, action, docPath) {
   if (!p) return false;
   if (p.collection.startsWith('_')) return false;
   if (!role) return action === 'read' && p.collection === 'appdata' && p.id.startsWith('share_');
+  if (p.collection === 'private') return PRIVATE_ROLES.includes(role);
   if (p.collection === 'appdata') return !p.id.startsWith('_auth');
   if (p.collection === 'telegram_messages') return action === 'read';
   return false;
