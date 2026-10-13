@@ -82,7 +82,9 @@ body{font-family:'Segoe UI',Arial,sans-serif;direction:ltr;background:#f8fafc;co
 .close-btn{background:none;border:none;cursor:pointer;color:var(--gray);font-size:18px;padding:4px 6px;border-radius:6px;line-height:1}
 .close-btn:hover{background:var(--gray-light)}
 /* FORM */
-.form-group{margin-bottom:14px}
+.form-group{margin-bottom:14px;min-width:0}
+/* iPhone gives a time field a width of its own — wider than half the screen in a two-column row */
+input[type="time"].form-control{-webkit-appearance:none;appearance:none;min-width:0;min-height:36px;text-align:left}
 .form-group label{display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:5px}
 .form-control{width:100%;padding:8px 11px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;direction:ltr;font-family:inherit;background:white}
 .form-control:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-light)}
@@ -13823,6 +13825,7 @@ function openSettlementForm(lk, employee, txId) {
   _stl = { lk, picked: new Set(fromTx ? [txId] : []), employee: employee || (fromTx && fromTx.reimburse.employee) || (names.length === 1 ? names[0] : ''), all: false };
   pendingFiles = [];
   _modalGen++;
+  _actHostSet('stl');
   document.getElementById('modal-title').textContent = '💵 Выплата по чекам — ' + FINANCE_LEDGERS[lk].label;
   document.getElementById('modal-body').innerHTML = `
     <div style="font-size:12px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:10px">Деньги, выданные сотруднику за чеки, которые он оплатил сам. Отмеченные чеки закрываются этой распиской и считаются оплаченными. Сама выплата отдельным расходом не учитывается — иначе одни и те же деньги посчитались бы дважды.</div>
@@ -13898,18 +13901,10 @@ async function _saveSettlementInner() {
   if (!(amount > 0)) { alert('Укажите сумму по расписке / акту'); return; }
   if (!_stl.picked.size) { alert('Отметьте чеки, которые закрывает эта выплата'); return; }
   if (_filesStillProcessing()) { alert('⏳ Файлы ещё обрабатываются — подождите пару секунд'); return; }
-  const picked = pendingFiles.slice();
   // Signed on the screen: for exactly what the receipt says now.
-  const signed = _stl.act && _stl.act.signature;
-  if (signed) {
-    const d = _stlActDoc(true);
-    if (!d || _stlActKey(d) !== signed.key) {
-      _stl.act.signature = null; _stlActRender();
-      alert('✍️ После подписи изменились данные расписки (сумма, дата, сотрудник, паспортные данные или текст) — подпишите её заново.');
-      return;
-    }
-  }
-  if (!picked.length && !signed && currentUser !== 'owner') { alert('📎 Загрузите скан или фото расписки / акта выдачи — или дайте сотруднику подписать расписку на экране («📝 Сформировать расписку»)'); return; }
+  if (!_actSignatureCheck()) return;
+  const picked = pendingFiles.slice();
+  if (!picked.length && currentUser !== 'owner') { alert('📎 Загрузите скан или фото расписки / акта выдачи — или дайте сотруднику подписать расписку на экране («📝 Сформировать расписку»)'); return; }
   if (date.slice(0, 7) < _currentMonthKey() && !_ownerMayWriteMonth(lk, date.slice(0, 7))) {
     alert('⛔ Этот месяц уже закрыт — выплату можно провести датой текущего месяца.'); return;
   }
@@ -13934,26 +13929,12 @@ async function _saveSettlementInner() {
     fileIds.push(await dbSave({ name: f.name, type: f.type, size: f.size, data: f.data }, k + 1, picked.length));
     fileNames.push(f.name); fileTypes.push(f.type);
   }
-  const no = _settleNextNo(date);
-  let signature = null;
-  if (signed) {
-    const data = signed.data;
-    try {
-      const fid = await dbSave({ name: `Подпись ${no}.png`, type: 'image/png', size: Math.round((data.length - data.indexOf(',') - 1) * 3 / 4), data }, 1, 1);
-      signature = { fileId: fid, at: signed.at, by: currentUser };
-    } catch (e) {
-      if (btn) { btn.disabled = false; btn.textContent = '💾 Сохранить выплату'; }
-      alert('⚠️ Подпись не сохранилась: ' + ((e && e.message) || 'нет связи с сервером') + '.\n\nНе закрывайте окно — нажмите «Сохранить выплату» ещё раз, когда появится связь.');
-      return;
-    }
-  }
-  const s = { id: _newTxId(), no, ledger: lk, date, employee, amount, receiptIds: receipts.map(t => t.id),
+  const s = { id: _newTxId(), no: _settleNextNo(date), ledger: lk, date, employee, amount, receiptIds: receipts.map(t => t.id),
     fileIds, fileNames, fileTypes, note, createdBy: currentUser, createdAt: new Date().toISOString() };
-  if (signature) s.signature = signature;
   // A receipt printed or signed from the form: what it said, to print it the same again — the
   // people by their ids alone, their passport details stay in private/people.
-  const act = _stl.act;
-  if (act && (act.printed || signature)) s.act = { kind: act.kind, text: _stlActText(), place: act.place, recipientId: act.rec.id, payerId: act.pay.id };
+  const act = _actNow();
+  if (act && (act.printed || act.signature)) s.act = { kind: act.kind, text: _stlActText(), place: act.place, recipientId: act.rec.id, payerId: act.pay.id };
   // Noon UTC: the paid date stays the day of the payout in Russia, and with it the month.
   const paidAt = date + 'T12:00:00.000Z';
   const ids = new Set(s.receiptIds);
@@ -14009,10 +13990,7 @@ function openSettlement(id) {
     </div>
     <div style="font-size:12px;color:#64748b;margin-bottom:8px">${_escHtml(FINANCE_LEDGERS[s.ledger].label)}${s.note ? ' · ' + _escHtml(s.note) : ''}${s.createdBy ? ' · ✍️ ' + _escHtml(_roleDisplayName(s.createdBy)) : ''}</div>
     ${files.length ? `<div data-gids='${_jsonAttr(files.map(f => f.id))}' data-gtypes='${_jsonAttr(files.map(f => f.type))}' data-gnames='${_jsonAttr(files.map(f => f.name))}' style="margin-bottom:10px">
-      <a href="#" onclick="event.preventDefault();openGalleryEl(this,0)" style="font-size:13px;color:#2563eb;text-decoration:none">📎 Расписка / акт${files.length > 1 ? ` (${files.length})` : ''}</a></div>` : s.signature ? '' : '<div style="font-size:12px;color:#94a3b8;margin-bottom:10px">📄 Без скана расписки — внесено владельцем</div>'}
-    ${s.signature ? `<div id="stl-signed-card" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;font-size:13px">
-      ${((getLS('files') || {})[s.signature.fileId] || {}).url ? `<img src="${_escHtml(getLS('files')[s.signature.fileId].url)}" alt="" style="max-height:40px;max-width:140px">` : ''}
-      <span>✍️ Расписка подписана получателем на экране · ${_whSignedAt(s.signature.at)} — ${_whLink('открыть', `printSettlementAct('${s.id}')`)}</span></div>` : ''}
+      <a href="#" onclick="event.preventDefault();openGalleryEl(this,0)" style="font-size:13px;color:#2563eb;text-decoration:none">📎 Расписка / акт${files.length > 1 ? ` (${files.length})` : ''}</a></div>` : '<div style="font-size:12px;color:#94a3b8;margin-bottom:10px">📄 Без скана расписки — внесено владельцем</div>'}
     <div style="font-weight:800;margin-bottom:6px">🧾 Закрытые чеки (${receipts.length}) — ${_rubShort(sum)}</div>
     ${receipts.map(t => `<div style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9">
       <div style="min-width:0"><div style="font-weight:600;font-size:13px">${_escHtml(t.vendor || '')}</div>
@@ -14039,7 +14017,7 @@ async function _undoSettlementInner(id) {
   setLS('finance_settlements', getSettlements().filter(x => x.id !== id));
   clearTimeout(_saveTimer);
   if (!(await _flushState())) { alert('⚠️ Нет связи с сервером — отмена уйдёт, как только связь появится.'); render(); return; }
-  for (const f of (s.fileIds || []).concat(s.signature ? [s.signature.fileId] : [])) { try { await dbDel(f); } catch (e) {} }
+  for (const f of (s.fileIds || [])) { try { await dbDel(f); } catch (e) {} }
   closeModal(true);
   render();
   _showToast(`↩️ Выплата ${s.no} отменена`, true);
@@ -14154,15 +14132,31 @@ function _rubWords(n) {
 
 const _actReimburseText = receipts => 'в счёт возмещения расходов, оплаченных мною из личных средств'
   + (receipts.length ? ' (чеки: ' + receipts.map(t => `${t.vendor || 'чек'} от ${fmtDate(t.date)} — ${_whRub(t.amount).replace(' ₽', ' руб.')}`).join('; ') + ')' : '');
-function _stlActDefaultText(kind) {
+// «For what»: the kinds, and how each one's text starts.
+const _ACT_KINDS = { reimburse: 'Возмещение расходов по чекам', work: 'Оплата за выполненную работу', advance: 'Аванс за работу', other: 'Другое' };
+function _actStartText(kind) {
   if (kind === 'work') return 'в качестве оплаты за выполненную работу ';
+  if (kind === 'advance') return 'в качестве аванса за работу ';
   if (kind === 'other') return 'в качестве ';
   return _actReimburseText(_stl ? getBudgetTx(_stl.lk).filter(t => _stl.picked.has(t.id)) : []);
 }
-const _stlActText = () => { const a = _stl && _stl.act; return !a ? '' : a.textEdited ? a.text : _stlActDefaultText(a.kind); };
 
-// The receipt's paragraphs — the same on paper and on the screen it is signed on. a.sig: the
-// signature made on the screen (a picture's address), a.signedAt: when.
+// Where the receipt's part is: the payout form («stl»), or an expense paid in cash («bt») — the
+// form's own fields for who, when and how much, and the kinds it offers. `act` is the part's
+// state once opened. One form is open at a time: a host from a form since closed doesn't count.
+let _actHost = null;
+function _actHostSet(form) {
+  _actHost = form === 'stl'
+    ? { form, gen: _modalGen, act: null, ids: { emp: 'stl-emp', date: 'stl-date', amount: 'stl-amount' }, kinds: ['reimburse', 'work', 'other'], numbered: true }
+    : { form, gen: _modalGen, act: null, ids: { emp: 'bt-vendor', date: 'bt-date', amount: 'bt-amount' }, kinds: ['work', 'advance', 'other'], numbered: false };
+}
+const _actHere = () => (_actHost && _actHost.gen === _modalGen ? _actHost : null);
+const _actNow = () => { const h = _actHere(); return h ? h.act : null; };
+const _actField = k => { const h = _actHere(); return h ? ((document.getElementById(h.ids[k]) || {}).value || '').trim() : ''; };
+const _stlActText = () => { const a = _actNow(); return !a ? '' : a.textEdited ? a.text : _actStartText(a.kind); };
+
+// The receipt's paragraphs — the same on paper, on the screen it is signed on and in its picture.
+// a.sig: the signature made on the screen (a picture's address), a.signedAt: when.
 function _settlementActParas(a) {
   const r = a.rec, p = a.pay, got = r.gender === 'f' ? 'получила' : 'получил';
   // A blank to write on by hand — free to break where the line ends, on a narrow screen too.
@@ -14171,66 +14165,129 @@ function _settlementActParas(a) {
   const passport = x => `паспорт гражданина ${b(x.citizenship, 14)} ${x.series ? 'серии ' + _escHtml(x.series) + ' ' : x.number ? '' : 'серии ______ '}№ ${b(x.number, 12)}, выдан ${b(x.issuedBy, 40)} ${b(d(x.issued), 10)} г.`
     + (x.validUntil ? `, срок действия до ${_escHtml(d(x.validUntil))} г.` : '') + (x.code ? `, код подразделения ${_escHtml(x.code)}` : '');
   const m = _rubWords(a.amount);
-  const claims = { reimburse: 'расходы возмещены в полном объёме, финансовых претензий', work: 'работа выполнена в полном объёме, претензий по оплате труда и финансовых претензий' }[a.kind] || 'финансовых претензий';
+  const to = b(p.dat || _shortName(p.name, p.gender, 'dat'), 20);
+  // An advance: the work is still to be done, so nothing is said about it being paid for in full.
+  const claims = { reimburse: `, расходы возмещены в полном объёме, финансовых претензий к ${to} не имею`,
+    work: `, работа выполнена в полном объёме, претензий по оплате труда и финансовых претензий к ${to} не имею`, advance: '' }[a.kind];
   const text = String(a.text || '').trim().replace(/[.\s]+$/, '');
   return {
     head: [`Я, ${r.gender === 'f' ? 'гражданка' : 'гражданин'} ${b(r.citizenship, 14)} <b>${b(r.name, 40)}</b>${r.latin ? ` (${_escHtml(r.latin)})` : ''}, ${b(d(r.birth), 10)} года рождения, ${passport(r)}, ${r.gender === 'f' ? 'зарегистрированная' : 'зарегистрированный'} по адресу: ${b(r.address, 70)},`,
       `настоящей распиской подтверждаю, что ${got} лично от ${p.gender === 'f' ? 'гражданки' : 'гражданина'} ${b(p.citizenship, 6)} <b>${b(p.gen || _declineName(p.name, p.gender, 'gen'), 40)}</b>, ${b(d(p.birth), 10)} года рождения (${passport(p)}),`,
       `денежные средства в размере <b>${m.figures} (${m.words}) ${m.rub} ${m.kop} ${m.kopWord}</b>${text ? ' ' + _escHtml(text) : ''}.`,
-      `Указанную сумму ${got} полностью наличными денежными средствами, ${claims} к ${b(p.dat || _shortName(p.name, p.gender, 'dat'), 20)} не имею.`],
+      `Указанную сумму ${got} полностью наличными денежными средствами${claims === undefined ? `, финансовых претензий к ${to} не имею` : claims}.`],
+    got,
     sign: `Деньги ${got} лично: ${a.sig ? `<span class="sig"><img src="${_escHtml(a.sig)}" alt="подпись"></span>` : '_________________'} / ${b(_shortName(r.name), 20)} /`,
     note: a.sig ? `Подписано получателем собственноручно на экране устройства${a.signedAt ? ': ' + _escHtml(_whSignedAt(a.signedAt)) : ''}.` : '',
   };
 }
 function _settlementActHTML(a) {
   const t = _settlementActParas(a);
-  return _whPrintPage('Расписка ' + a.no, `<style>.rs { font-size: 14px; line-height: 1.6; } .rs p { margin: 10px 0; } .rs .sign-line { margin-top: 44px; }
+  return _whPrintPage('Расписка' + (a.no ? ' ' + a.no : ''), `<style>.rs { font-size: 14px; line-height: 1.6; } .rs p { margin: 10px 0; } .rs .sign-line { margin-top: 44px; }
     .rs .sig { display: inline-block; min-width: 150px; border-bottom: 1px solid #000; text-align: center; vertical-align: bottom; } .rs .sig img { max-height: 56px; max-width: 220px; margin-bottom: -8px; } .rs .note { font-size: 11px; }</style><div class="rs">
-    <h1>РАСПИСКА</h1><div class="sub">№ ${_escHtml(a.no)}</div>
+    <h1>РАСПИСКА</h1>${a.no ? `<div class="sub">№ ${_escHtml(a.no)}</div>` : ''}
     <div class="place"><span>${_escHtml(a.place || '')}</span><span>${_whLongDate(a.date)}</span></div>
     ${t.head.map(x => `<p>${x}</p>`).join('\n    ')}
     <p class="sign-line">${t.sign}</p>${t.note ? `<p class="note">${t.note}</p>` : ''}</div>`);
 }
 
+// The signed receipt as a picture — an A4 page at 150 dpi, the signature on the recipient's line.
+// It goes with the record as its document, the way the scan of a paper one would: the
+// approvers and the accountant see it like any other.
+const _actHtmlText = s => { const t = document.createElement('textarea'); t.innerHTML = s; return t.value; };
+const _actLoadImg = src => new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error('подпись не открылась')); i.src = src; });
+async function _actImage(d) {
+  const t = _settlementActParas(Object.assign({}, d, { sig: '' }));
+  const W = 1240, H = 1754, M = 120, LH = 44, maxW = W - 2 * M;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const font = (bold, size) => `${bold ? 'bold ' : ''}${size || 29}px "Times New Roman", Times, serif`;
+  g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); g.fillStyle = '#000';
+  let y = M + 30;
+  g.textAlign = 'center'; g.font = font(true, 36); g.fillText('РАСПИСКА', W / 2, y); y += 42;
+  if (d.no) { g.font = font(false, 27); g.fillText('№ ' + d.no, W / 2, y); y += 38; }
+  g.textAlign = 'left'; y += 20;
+  g.font = font(false); g.fillText(d.place || '', M, y);
+  const when = _whLongDate(d.date); g.fillText(when, W - M - g.measureText(when).width, y);
+  y += LH + 18;
+  // A paragraph: its words, bold where the receipt has <b>, wrapped to the page; a blank to
+  // fill in may break where it has <wbr>.
+  const para = html => {
+    const toks = [];
+    let gap = false;
+    String(html).replace(/<wbr>/g, '​').split(/(<b>|<\/b>)/).reduce((bold, part) => {
+      if (part === '<b>' || part === '</b>') return part === '<b>';
+      _actHtmlText(part).split(/(\s+|​)/).forEach(s => {
+        if (!s || s === '​') return;
+        if (/^\s+$/.test(s)) { gap = true; return; }
+        toks.push({ text: s, bold, gap }); gap = false;
+      });
+      return bold;
+    }, false);
+    let line = [], x = 0;
+    const out = () => { line.forEach(w => { g.font = font(w.bold); g.fillText(w.text, M + w.x, y); }); y += LH; line = []; x = 0; };
+    toks.forEach(tk => {
+      g.font = font(tk.bold);
+      const w = g.measureText(tk.text).width, sp = tk.gap && line.length ? g.measureText(' ').width : 0;
+      if (line.length && x + sp + w > maxW) out();
+      const at = line.length ? x + sp : 0;
+      line.push({ text: tk.text, bold: tk.bold, x: at }); x = at + w;
+    });
+    if (line.length) out();
+    y += 12;
+  };
+  t.head.forEach(para);
+  y += 70;
+  g.font = font(false);
+  const lead = `Деньги ${t.got} лично: `, lineW = 330;
+  g.fillText(lead, M, y);
+  const x0 = M + g.measureText(lead).width;
+  g.fillRect(x0, y + 8, lineW, 2);
+  if (d.sig) {
+    const img = await _actLoadImg(d.sig);
+    const k = Math.min(lineW / img.width, 120 / img.height, 1.6), iw = img.width * k, ih = img.height * k;
+    g.drawImage(img, x0 + (lineW - iw) / 2, y + 18 - ih, iw, ih);
+  }
+  g.fillText(`/ ${_shortName(d.rec.name) || '____________'} /`, x0 + lineW + 12, y);
+  if (d.sig) { y += LH + 16; g.font = font(false, 22); g.fillText(`Подписано получателем собственноручно на экране устройства: ${_whSignedAt(d.signedAt)}.`, M, y); }
+  return c.toDataURL('image/jpeg', 0.88);
+}
+
 // The form's part: opened under the buttons, filled from the saved people.
 function _stlActToggle() {
-  const box = document.getElementById('stl-act');
-  if (!box || !_stl) return;
+  const h = _actHere(), box = document.getElementById('stl-act');
+  if (!box || !h) return;
   if (box.style.display !== 'none') { box.style.display = 'none'; return; }
   box.style.display = '';
-  if (_stl.act) { _stlActRender(); return; }
-  _stl.act = { kind: 'reimburse', text: '', textEdited: false, place: '', rec: null, pay: null, loading: true, printed: false };
+  if (h.act) { _stlActRender(); return; }
+  h.act = { kind: h.kinds[0], text: '', textEdited: false, place: '', rec: null, pay: null, loading: true, printed: false };
   box.innerHTML = '<div style="padding:10px;color:#64748b;font-size:13px">⏳ Загружаем сохранённые данные…</div>';
-  const gen = _modalGen;
   _peopleLoad().then(pp => {
-    if (gen !== _modalGen || !_stl || !_stl.act) return;
-    const a = _stl.act, found = _personFind(pp, _stl.employee), payer = pp.people[(pp.payerOf || {})[currentUser]];
-    Object.assign(a, { loading: false, unavailable: !!pp.unavailable, place: pp.place || 'г. Москва / МО',
-      rec: found ? Object.assign({}, found) : _actPersonNew(_stl.employee), recNameAuto: !found,
+    if (_actHere() !== h || !h.act) return;
+    const emp = _actField('emp'), found = _personFind(pp, emp), payer = pp.people[(pp.payerOf || {})[currentUser]];
+    Object.assign(h.act, { loading: false, unavailable: !!pp.unavailable, place: pp.place || 'г. Москва / МО',
+      rec: found ? Object.assign({}, found) : _actPersonNew(emp), recNameAuto: !found,
       pay: payer ? Object.assign({}, payer) : _actPersonNew('', 'РФ') });
     _stlActRender();
   });
 }
 function _stlActRender() {
-  const box = document.getElementById('stl-act');
-  const a = _stl && _stl.act;
+  const h = _actHere(), a = h && h.act, box = document.getElementById('stl-act');
   if (!box || !a || a.loading) return;
   const names = Object.values((_people || {}).people || {}).map(p => p.name).filter(Boolean).sort((x, y) => x.localeCompare(y, 'ru'));
-  const kinds = [['reimburse', 'Возмещение расходов по чекам'], ['work', 'Оплата за выполненную работу'], ['other', 'Другое']];
   box.innerHTML = `<div style="border:1px solid #c7d2fe;background:#f8faff;border-radius:10px;padding:10px 12px;margin-top:8px">
-    <div style="font-size:12px;color:#475569;margin-bottom:8px">Сотрудник, дата, сумма и чеки берутся из этой формы. Распечатайте расписку, дайте подписать и загрузите скан кнопкой «📂 Загрузить скан или фото» — или дайте подписать прямо на экране (телефон, планшет, компьютер).<br>🔒 Паспортные данные запоминаются для следующих выплат и видны только владельцу и администраторам.${a.unavailable ? '<br><b style="color:#b45309">⚠️ Сохранённые данные сейчас недоступны — заполните вручную, в этот раз они не сохранятся.</b>' : ''}</div>
+    <div style="font-size:12px;color:#475569;margin-bottom:8px">${h.form === 'stl' ? 'Сотрудник, дата, сумма и чеки' : 'Получатель (поле «Наименование / поставщик»), дата и сумма'} берутся из этой формы. Распечатайте расписку, дайте подписать и загрузите скан кнопкой «📂 Загрузить…» — или дайте подписать прямо на экране (телефон, планшет, компьютер): расписка с подписью сама добавится к документам.<br>🔒 Паспортные данные запоминаются для следующих раз и видны только владельцу и администраторам.${a.unavailable ? '<br><b style="color:#b45309">⚠️ Сохранённые данные сейчас недоступны — заполните вручную, в этот раз они не сохранятся.</b>' : ''}</div>
     <datalist id="stl-act-people">${names.map(n => `<option value="${_escHtml(n)}">`).join('')}</datalist>
     <datalist id="stl-act-cit">${_ACT_CITIZENSHIPS.map(n => `<option value="${_escHtml(n)}">`).join('')}</datalist>
     ${_actPersonBlock('rec', '👤 Получает деньги', a.rec)}
     ${_actPersonBlock('pay', '💼 Выдаёт деньги', a.pay)}
     <div class="form-group" style="margin-top:8px"><label>За что выданы деньги</label>
-      <select class="form-control" id="stl-act-kind" onchange="_stlActKind(this.value)">${kinds.map(([v, l]) => `<option value="${v}"${a.kind === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
-      <textarea class="form-control" id="stl-act-text" rows="3" style="margin-top:6px" oninput="_stl.act.text=this.value;_stl.act.textEdited=true">${_escHtml(_stlActText())}</textarea>
+      <select class="form-control" id="stl-act-kind" onchange="_stlActKind(this.value)">${h.kinds.map(v => `<option value="${v}"${a.kind === v ? ' selected' : ''}>${_ACT_KINDS[v]}</option>`).join('')}</select>
+      <textarea class="form-control" id="stl-act-text" rows="3" style="margin-top:6px" oninput="_stlActSet('text',this.value)">${_escHtml(_stlActText())}</textarea>
       <div style="font-size:11px;color:#64748b">Продолжение фразы «…денежные средства в размере 28 000 (двадцать восемь тысяч) рублей 00 копеек …»</div></div>
-    <div class="form-group"><label>Место составления</label><input class="form-control" id="stl-act-place" value="${_escHtml(a.place)}" oninput="_stl.act.place=this.value"></div>
+    <div class="form-group"><label>Место составления</label><input class="form-control" id="stl-act-place" value="${_escHtml(a.place)}" oninput="_stlActSet('place',this.value)"></div>
     ${a.signature ? `<div id="stl-act-signed" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:8px 10px;margin-bottom:8px">
       <img src="${a.signature.data}" alt="" style="max-height:44px;max-width:160px">
-      <div style="flex:1 1 160px;font-size:13px"><b>✅ Подписано на экране</b> · ${_whSignedAt(a.signature.at)}<div style="font-size:11px;color:#64748b">Скан не нужен — подпись сохранится вместе с выплатой.</div></div>
+      <div style="flex:1 1 160px;font-size:13px"><b>✅ Подписано на экране</b> · ${_whSignedAt(a.signature.at)}<div style="font-size:11px;color:#64748b">Расписка с подписью добавлена к документам — скан не нужен.</div></div>
       <button type="button" class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="_stlActUnsign()">Стереть подпись</button></div>` : ''}
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button type="button" class="btn btn-outline" id="stl-act-print" style="flex:1 1 180px;justify-content:center" onclick="printSettlementAct()">🖨️ Печать расписки</button>
@@ -14238,12 +14295,18 @@ function _stlActRender() {
     <div id="stl-act-pad"></div>
   </div>`;
 }
+function _stlActSet(k, v) {
+  const a = _actNow();
+  if (!a) return;
+  a[k] = v;
+  if (k === 'text') a.textEdited = true;
+}
 
 // ---- signed on the screen ----
 // The recipient reads the whole receipt and signs under it with a finger or the mouse, in place
-// of the paper and its scan. The signature is kept with the payout as a picture (no passport in
-// it); printed again, the receipt has it on the recipient's line. Changed after signing — the
-// sum, the date, the people, the text — it has to be signed again.
+// of the paper. The receipt with the signature on it goes in with the form's documents, as a
+// picture (see _actImage) — no scan needed. Changed after signing — the sum, the date, the
+// people, the text — it is taken off again and has to be signed anew (_actSignatureCheck).
 const _stlActKey = d => JSON.stringify([d.employee, d.date, d.amount, d.kind, String(d.text || '').trim(), String(d.place || '').trim(),
   _ACT_FIELDS.map(k => [String(d.rec[k] || '').trim(), String(d.pay[k] || '').trim()])]);
 function _stlActSignOpen() {
@@ -14254,7 +14317,7 @@ function _stlActSignOpen() {
   box.innerHTML = `<div style="border:2px solid #2563eb;border-radius:10px;padding:10px;margin-top:8px;background:#fff">
     <div style="font-weight:700;font-size:13px;margin-bottom:6px">Прочитайте расписку и распишитесь под ней:</div>
     <div id="stl-act-preview" style="max-height:240px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font:13px/1.5 'Times New Roman',Times,serif;background:#fafafa;color:#000">
-      <div style="text-align:center;font-weight:700">РАСПИСКА № ${_escHtml(d.no)}</div>
+      <div style="text-align:center;font-weight:700">РАСПИСКА${d.no ? ' № ' + _escHtml(d.no) : ''}</div>
       <div style="display:flex;justify-content:space-between;gap:8px;margin:2px 0 6px"><span>${_escHtml(d.place || '')}</span><span>${_whLongDate(d.date)}</span></div>
       ${t.head.map(x => `<p style="margin:5px 0;text-align:justify">${x}</p>`).join('')}</div>
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:8px 0 4px">
@@ -14273,23 +14336,55 @@ function _stlActSignCancel() {
   const box = document.getElementById('stl-act-pad');
   if (box) box.innerHTML = '';
 }
-function _stlActSignDone() {
-  const a = _stl && _stl.act, pad = _whPad;
+async function _stlActSignDone() {
+  const h = _actHere(), a = h && h.act, pad = _whPad;
   if (!a || !pad || pad.docId !== 'stl' || pad.gen !== _modalGen) return;
   if (_whPadLength(pad.strokes) < _WH_MIN_INK) { alert('Распишитесь в рамке'); return; }
   const d = _stlActDoc();
   if (!d) return;
-  a.signature = { data: _whPadPNG(pad.strokes), at: new Date().toISOString(), key: _stlActKey(d) };
+  const btn = document.getElementById('stl-sign-ok');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Готовим расписку…'; }
+  const sig = _whPadPNG(pad.strokes), at = new Date().toISOString();
+  let data;
+  try { data = await _actImage(Object.assign({}, d, { sig, signedAt: at })); }
+  catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '✍️ Подписать расписку'; }
+    alert('⚠️ Не удалось подготовить расписку: ' + ((e && e.message) || e));
+    return;
+  }
+  if (_actHere() !== h) return;
+  const file = { name: `Расписка ${d.no ? d.no + ' ' : ''}${_shortName(d.rec.name)} — подписана на экране.jpg`, type: 'image/jpeg',
+    size: Math.round((data.length - data.indexOf(',') - 1) * 3 / 4), data };
+  pendingFiles.push(file);
+  renderPending();
+  a.signature = { data: sig, at, key: _stlActKey(d), file };
   _whPad = null;
   _stlActRender();
   _stlActRemember(d.employee);
-  _showToast('✍️ Расписка подписана — сохраните выплату', true);
+  _showToast('✍️ Расписка подписана и добавлена к документам', true);
 }
 function _stlActUnsign() {
-  const a = _stl && _stl.act;
-  if (!a) return;
+  const a = _actNow();
+  if (!a || !a.signature) return;
+  const i = pendingFiles.indexOf(a.signature.file);
+  if (i >= 0) { pendingFiles.splice(i, 1); renderPending(); }
   a.signature = null;
   _stlActRender();
+}
+// Before a save: the receipt signed on the screen still says what the form says. Changed since,
+// its picture comes off the documents and it is to be signed again — false. Its picture taken
+// off by hand (✕ in the list): simply not signed any more.
+function _actSignatureCheck() {
+  const a = _actNow(), sig = a && a.signature;
+  if (!sig) return true;
+  const i = pendingFiles.indexOf(sig.file);
+  if (i < 0) { a.signature = null; _stlActRender(); return true; }
+  const d = _stlActDoc(true);
+  if (d && _stlActKey(d) === sig.key) return true;
+  pendingFiles.splice(i, 1); renderPending();
+  a.signature = null; _stlActRender();
+  alert('✍️ После подписи изменились данные расписки (сумма, дата, получатель, паспортные данные или текст) — подпишите её заново.');
+  return false;
 }
 function _actPersonBlock(who, title, p) {
   const pay = who === 'pay';
@@ -14317,7 +14412,7 @@ function _actPersonBlock(who, title, p) {
     </div></details>`;
 }
 function _stlActField(who, k, v) {
-  const a = _stl && _stl.act;
+  const a = _actNow();
   if (!a || !a[who]) return;
   const p = a[who];
   p[k] = v;
@@ -14338,24 +14433,24 @@ function _stlActField(who, k, v) {
 }
 // A saved person picked by name: their details in.
 function _stlActPick(who, v) {
-  const a = _stl && _stl.act, found = _personFind(_people, v);
+  const a = _actNow(), found = _personFind(_people, v);
   if (!a || !found || found.id === a[who].id) return;
   a[who] = Object.assign({}, found);
   if (who === 'rec') a.recNameAuto = false;
   _stlActRender();
 }
-// The form's employee changed: the receipt's recipient with it.
+// The form's recipient changed: the receipt's with it.
 function _stlActEmployee() {
-  const a = _stl && _stl.act;
+  const a = _actNow();
   if (!a || a.loading) return;
-  const v = _stl.employee.trim(), found = _personFind(_people, v);
+  const v = _actField('emp'), found = _personFind(_people, v);
   if (found) { if (found.id !== a.rec.id) a.rec = Object.assign({}, found); a.recNameAuto = false; }
   else if (_people && _people.people[a.rec.id]) { a.rec = _actPersonNew(v); a.recNameAuto = true; }
   else if (!a.rec.name || a.recNameAuto) { a.rec.name = v; if (!a.rec.genderChosen) a.rec.gender = _guessGender(v); a.recNameAuto = true; }
   _stlActRender();
 }
 function _stlActKind(kind) {
-  const a = _stl && _stl.act;
+  const a = _actNow();
   if (!a) return;
   a.kind = kind; a.textEdited = false; a.text = '';
   const t = document.getElementById('stl-act-text');
@@ -14363,7 +14458,7 @@ function _stlActKind(kind) {
 }
 // The receipt list in the text follows the ticked receipts — until the text is written by hand.
 function _stlActSyncText() {
-  const a = _stl && _stl.act, t = document.getElementById('stl-act-text');
+  const a = _actNow(), t = document.getElementById('stl-act-text');
   if (a && t && !a.textEdited) t.value = _stlActText();
 }
 
@@ -14373,26 +14468,25 @@ async function printSettlementAct(id) {
   if (id) return _printSettlementActSaved(id);
   const d = _stlActDoc();
   if (!d) return;
-  _whOpenPrint(_settlementActHTML(d), 'Расписка_' + d.no);
-  _stl.act.printed = true;
+  _whOpenPrint(_settlementActHTML(d), 'Расписка_' + (d.no || d.date));
+  _actNow().printed = true;
   _stlActRemember(d.employee);
 }
 // The receipt as the form now has it — or null, the reason said (quiet: not said), if not yet.
 function _stlActDoc(quiet) {
-  const a = _stl && _stl.act;
+  const h = _actHere(), a = h && h.act;
   if (!a || a.loading) return null;
-  const v = k => ((document.getElementById(k) || {}).value || '').trim();
-  const employee = v('stl-emp'), date = v('stl-date') || _todayLocal();
-  const amount = Math.round((Number(v('stl-amount')) || 0) * 100) / 100;
-  if (!employee) { if (!quiet) alert('Укажите сотрудника, которому выдаются деньги'); return null; }
-  if (!(amount > 0)) { if (!quiet) alert('Укажите сумму по расписке'); return null; }
+  const employee = _actField('emp'), date = _actField('date') || _todayLocal();
+  const amount = Math.round((Number(_actField('amount')) || 0) * 100) / 100;
+  if (!employee) { if (!quiet) alert(h.form === 'stl' ? 'Укажите сотрудника, которому выдаются деньги' : 'Укажите получателя денег — в поле «Наименование / поставщик»'); return null; }
+  if (!(amount > 0)) { if (!quiet) alert(h.form === 'stl' ? 'Укажите сумму по расписке' : 'Укажите сумму'); return null; }
   if (!String(a.rec.name || '').trim()) a.rec.name = employee;
-  return { employee, no: _settleNextNo(date), date, place: a.place, amount, kind: a.kind, text: _stlActText(), rec: a.rec, pay: a.pay,
+  return { employee, no: h.numbered ? _settleNextNo(date) : '', date, place: a.place, amount, kind: a.kind, text: _stlActText(), rec: a.rec, pay: a.pay,
     sig: a.signature ? a.signature.data : '', signedAt: a.signature ? a.signature.at : '' };
 }
 // Kept for next time: both people, this role's payer and the place.
 async function _stlActRemember(employee) {
-  const a = _stl && _stl.act;
+  const a = _actNow();
   if (!a || a.unavailable) return;
   const stamp = { updatedAt: new Date().toISOString(), updatedBy: currentUser };
   const clean = p => { const o = { id: p.id, labels: p.labels || [] }; _ACT_FIELDS.forEach(k => { if (String(p[k] || '').trim()) o[k] = String(p[k]).trim(); }); return Object.assign(o, stamp); };
@@ -14412,10 +14506,22 @@ async function _printSettlementActSaved(id) {
   const saved = pid => (pid && pp.people[pid]) || null;
   const rec = Object.assign(_actPersonNew(s.employee), saved(act.recipientId) || _personFind(pp, s.employee) || {});
   const pay = Object.assign(_actPersonNew('', 'РФ'), saved(act.payerId) || saved((pp.payerOf || {})[currentUser]) || {});
-  const sig = s.signature ? ((getLS('files') || {})[s.signature.fileId] || {}).url || '' : '';
   const html = _settlementActHTML({ no: s.no, date: s.date, place: act.place || pp.place || 'г. Москва / МО', amount: s.amount,
-    kind: act.kind || 'reimburse', text: act.text || _actReimburseText(_settlementReceipts(s)), rec, pay, sig, signedAt: s.signature ? s.signature.at : '' });
+    kind: act.kind || 'reimburse', text: act.text || _actReimburseText(_settlementReceipts(s)), rec, pay });
   if (w) _writeAppWindow(w, html); else _whOpenPrint(html, 'Расписка_' + s.no);
+}
+
+// The receipt's button in an expense form: cash handed over — an expense from Наличные, and not
+// a receipt an employee paid out of their own pocket (that one is paid back with a payout, and
+// its receipt is made there).
+function _btActVisibility() {
+  const btn = document.getElementById('stl-act-btn'), h = _actHere();
+  if (!btn || !h || h.form !== 'bt') return;
+  const type = (document.getElementById('bt-type') || {}).value, fund = (document.getElementById('bt-fund') || {}).value;
+  const show = type === 'expense' && fund === _REIMBURSE_FUND && !(document.getElementById('bt-reimb') || {}).checked;
+  btn.style.display = show ? '' : 'none';
+  const box = document.getElementById('stl-act');
+  if (!show && box) box.style.display = 'none';
 }
 
 const getBudgetFunds = () => getLS('finance_funds') || [];
@@ -15880,6 +15986,9 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
   _budgetFormFiles(_txFiles(t));
   pendingFiles = [];
   _modalGen++;
+  _actHostSet('bt');
+  // Cash handed over by the owner or an administrator: a receipt can be made right here.
+  const actOk = _SETTLE_ROLES.includes(currentUser) && !window._budgetTxReadOnly;
   // A new entry made while the owner is looking at an ended month he still has open goes into
   // THAT month by default (its last day) — that is the only reason he'd be adding it there.
   const viewedMk = `${budgetYear}-${String(budgetMonth).padStart(2,'0')}`;
@@ -15931,7 +16040,7 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
       <div class="form-group"><label>Дата *</label><input type="date" class="form-control" id="bt-date" value="${t.date||today}" ${window._budgetTxReadOnly?'disabled':''}></div>
       <div class="form-group"><label>Время</label><input type="time" class="form-control" id="bt-time" value="${t.time||nowTime}" ${window._budgetTxReadOnly?'disabled':''}></div>
     </div>
-    <div class="form-group" id="bt-vendor-group" ${vendorNeeded?'':'hidden'}><label id="bt-vendor-label">Наименование / поставщик *</label><input class="form-control" id="bt-vendor" list="bt-vendor-list-${ledgerKey}" name="bt-vendor-${ledgerKey}" autocomplete="off-${ledgerKey}" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="Поставщик, сотрудник, назначение..." ${window._budgetTxReadOnly?'disabled':''}>
+    <div class="form-group" id="bt-vendor-group" ${vendorNeeded?'':'hidden'}><label id="bt-vendor-label">Наименование / поставщик *</label><input class="form-control" id="bt-vendor" list="bt-vendor-list-${ledgerKey}" name="bt-vendor-${ledgerKey}" autocomplete="off-${ledgerKey}" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="Поставщик, сотрудник, назначение..." onchange="_stlActEmployee()" ${window._budgetTxReadOnly?'disabled':''}>
       <datalist id="bt-vendor-list-${ledgerKey}">${_budgetVendorSuggestions(ledgerKey).map(v=>`<option value="${v.replace(/"/g,'&quot;')}">`).join('')}</datalist>
     </div>
     <div class="form-group"><label>Сумма ₽ *</label><input type="number" class="form-control" id="bt-amount" value="${t.amount||''}" min="0" step="0.01" ${window._budgetTxReadOnly?'disabled':''}></div>
@@ -15943,7 +16052,10 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
       <div id="bt-saved-files">${_renderBudgetSavedFiles()}</div>
       ${window._budgetTxReadOnly ? '' : `
       <input type="file" id="bt-file" accept="image/*,application/pdf" multiple style="display:none" onchange="onFilePick(event)">
-      <button type="button" class="btn btn-outline" style="width:100%;justify-content:center" onclick="document.getElementById('bt-file').click()">📂 ${_budgetSavedFiles().length?'Добавить ещё':'Загрузить'}</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${actOk ? `<button type="button" class="btn btn-outline" id="stl-act-btn" style="flex:1 1 200px;justify-content:center;display:none" onclick="_stlActToggle()">📝 Сформировать расписку</button>` : ''}
+        <button type="button" class="btn btn-outline" style="flex:1 1 200px;justify-content:center" onclick="document.getElementById('bt-file').click()">📂 ${_budgetSavedFiles().length?'Добавить ещё':'Загрузить'}</button></div>
+      ${actOk ? '<div id="stl-act" style="display:none"></div>' : ''}
       <div id="pending-list"></div>`}
     </div>
     <div class="form-group"><label>Примечание</label><textarea class="form-control" id="bt-notes" ${window._budgetTxReadOnly?'disabled':''}>${t.notes||''}</textarea></div>`;
@@ -15953,6 +16065,7 @@ function openBudgetTxModal(ledgerKey, id, defaultType) {
     : `<button class="btn btn-outline" onclick="closeModal()">Отмена</button>
     <button class="btn btn-primary" id="bt-save-btn" onclick="saveBudgetTx('${ledgerKey}')">💾 Сохранить</button>`;
   document.getElementById('modal-overlay').classList.remove('hidden');
+  _btActVisibility();
   _ffLoadThumbs();
 }
 
@@ -15991,7 +16104,7 @@ function _budgetExpenseExtraHtml(t, type, ledgerKey) {
   const emp = (t.reimburse && t.reimburse.employee) || '';
   const reimb = settled
     ? `<div style="font-size:12px;color:#166534">🧾 Чек закрыт распиской № ${_escHtml(settled.no)} от ${fmtDate(settled.date)} — ${_escHtml(settled.employee)}. Сумму, поставщика, дату и фонд не изменить, пока выплата не отменена.</div>`
-    : `<label style="display:flex;gap:8px;align-items:center;cursor:pointer;margin:0;font-weight:600"><input type="checkbox" id="bt-reimb" ${t.reimburse ? 'checked' : ''} ${ro ? 'disabled' : ''} onchange="document.getElementById('bt-reimb-emp-wrap').hidden=!this.checked" style="width:18px;height:18px"> 💵 Оплачено сотрудником из своих денег — к возмещению</label>
+    : `<label style="display:flex;gap:8px;align-items:center;cursor:pointer;margin:0;font-weight:600"><input type="checkbox" id="bt-reimb" ${t.reimburse ? 'checked' : ''} ${ro ? 'disabled' : ''} onchange="document.getElementById('bt-reimb-emp-wrap').hidden=!this.checked;_btActVisibility()" style="width:18px;height:18px"> 💵 Оплачено сотрудником из своих денег — к возмещению</label>
       <div id="bt-reimb-emp-wrap" ${t.reimburse ? '' : 'hidden'} style="margin-top:6px">
         <input class="form-control" id="bt-reimb-emp" list="bt-reimb-list" autocomplete="off" placeholder="ФИО сотрудника, которому вернуть деньги" value="${_escHtml(emp)}" ${ro ? 'disabled' : ''}>
         <datalist id="bt-reimb-list">${_reimburseNames().map(n => `<option value="${_escHtml(n)}">`).join('')}</datalist>
@@ -16050,6 +16163,7 @@ function _toggleBudgetVendorField(ledgerKey) {
   if (rb && document.getElementById('bt-reimb')) rb.hidden = !(fundEl && fundEl.value === _REIMBURSE_FUND);
   const label = document.getElementById('bt-vendor-label');
   if (label) label.textContent = 'Наименование / поставщик *';
+  _btActVisibility();
 }
 
 // One budget save at a time. A second tap on Save during a slow multi-file upload used
@@ -16095,6 +16209,8 @@ async function _saveBudgetTxInner(ledgerKey) {
   // documents from Storage.
   const formGen = _modalGen;
   const editingId = _editingBudgetTx;
+  // A receipt signed on the screen and changed since: signed again first (it is one of the documents).
+  if (!_actSignatureCheck()) return;
   const picked = pendingFiles.slice();
   const time = (document.getElementById('bt-time').value || '');
   const notes = (document.getElementById('bt-notes').value || '').trim();
