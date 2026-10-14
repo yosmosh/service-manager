@@ -22,6 +22,8 @@
 #   ... -CloudBackup       the nightly copy to the cloud (selfhost/cloud-backup.js): a key of the
 #                          service account «backup», which adds to the backup bucket and can't
 #                          delete (yc signs in through the browser); run again to replace the key
+#   ... -ImageSearch       the warehouse's product photo search (Yandex's): an API key limited to
+#                          that search (yc signs in through the browser); run again to replace it
 #
 # What it sets up, in C:\SadBudushego:
 #   app\         the app (replaced as a whole on every update)
@@ -43,6 +45,7 @@ param(
   [switch]$Stop,
   [switch]$RefreshServiceKey,
   [switch]$CloudBackup,
+  [switch]$ImageSearch,
   [string]$Root = 'C:\SadBudushego',
   [switch]$Elevated
 )
@@ -61,7 +64,7 @@ $installLog = Join-Path $logs 'install.log'
 $me = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not ([Security.Principal.WindowsPrincipal]$me).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Elevated', '-Root', "`"$Root`"")
-  foreach ($s in 'ImportData', 'SetOwnerPassword', 'ResetPasswords', 'Restart', 'Stop', 'RefreshServiceKey', 'CloudBackup') { if ((Get-Variable $s).Value) { $a += "-$s" } }
+  foreach ($s in 'ImportData', 'SetOwnerPassword', 'ResetPasswords', 'Restart', 'Stop', 'RefreshServiceKey', 'CloudBackup', 'ImageSearch') { if ((Get-Variable $s).Value) { $a += "-$s" } }
   Write-Output 'Windows will ask for permission; the work goes on in a new window.'
   $p = Start-Process powershell.exe -Verb RunAs -ArgumentList $a -Wait -PassThru
   if (Test-Path $installLog) { Get-Content $installLog -Encoding UTF8 | Where-Object { $_ -notmatch '^\*{10}|^(Start|End) time|^(Username|RunAs User|Configuration Name|Machine|Host Application|Process ID|PSVersion|PSEdition|PSCompatibleVersions|BuildVersion|CLRVersion|WSManStackVersion|PSRemotingProtocolVersion|SerializationVersion|Windows PowerShell transcript)' } }
@@ -261,6 +264,25 @@ try {
         }
       } elseif ($e['BACKUP_KEY_ID']) { Write-Output '== cloud backup: the key kept here' }
       else { Write-Output '== cloud backup: not set up (-CloudBackup)' }
+      # The warehouse's product photo search (yandex/data-api/images.js): an API key of the data-api
+      # service account (which has search-api.webSearch.user), scoped to the search alone — made
+      # by yc, kept in env only, never shown; one made before is deleted once the new one is kept.
+      if ($ImageSearch) {
+        if (-not (Test-Path $yc)) { Write-Output '== photo search: NO KEY — yc is not on this computer' }
+        else {
+          $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+          $made = ((& $yc iam api-key create --service-account-id 'ajediqo8e0399kg5966s' --scopes 'yc.search-api.execute' --description 'Сад Будущего: поиск фото для склада с компьютера-сервера' --format json 2>$null | Out-String) | ConvertFrom-Json -ErrorAction SilentlyContinue)
+          $ErrorActionPreference = $eap
+          if ($made -and $made.api_key.id -and $made.secret) {
+            $oldRef = $e['SEARCH_API_KEY_REF']
+            $e['SEARCH_API_KEY'] = $made.secret; $e['SEARCH_API_KEY_REF'] = $made.api_key.id
+            Write-Output '== photo search: a key for Yandex''s image search (that and nothing else)'
+            if ($oldRef) { $ErrorActionPreference = 'Continue'; $null = (& $yc iam api-key delete $oldRef 2>$null); $ErrorActionPreference = $eap }
+          } else { Write-Output '== photo search: NO KEY — yc could not make one (sign in to Yandex in the browser it opens, then run this again)'; $script:failed = $true }
+          $made = $null
+        }
+      } elseif ($e['SEARCH_API_KEY']) { Write-Output '== photo search: the key kept here' }
+      else { Write-Output '== photo search: not set up (-ImageSearch)' }
       if (-not (Test-Path $envFile)) { New-Item -ItemType File $envFile | Out-Null }
       Grant $envFile @("$($sid.System):F", "$($sid.Admins):F", "$($sid.LocalService):R") -Only
       [IO.File]::WriteAllLines($envFile, [string[]]@(foreach ($k in $e.Keys) { "$k=$($e[$k])" }), (New-Object Text.UTF8Encoding $false))

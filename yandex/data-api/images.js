@@ -7,7 +7,8 @@
 //
 // Only addresses this service handed out itself are fetched: each result carries a signature
 // (HMAC with AUTH_SECRET) over its two addresses, so the fetch can't be pointed anywhere else.
-// The search runs as the function's service account (role search-api.webSearch.user).
+// The search runs as the function's service account (role search-api.webSearch.user) — on our
+// own computer with an API key of it, scoped to the search alone.
 
 'use strict';
 
@@ -59,10 +60,14 @@ function parseResults(xml) {
 async function search(query, page, iamToken, fetchImpl) {
   const q = String(query || '').trim().slice(0, 200);
   if (!q) return [];
-  if (!iamToken) throw new Error('no IAM token for the search');
+  // In the cloud the function's own IAM token; on our own computer an API key of the same
+  // service account, limited to the search (SEARCH_API_KEY, made by deploy\selfhost-windows.ps1
+  // -ImageSearch).
+  const apiKey = process.env.SEARCH_API_KEY;
+  if (!iamToken && !apiKey) throw new Error('no credentials for the search');
   const r = await (fetchImpl || fetch)(SEARCH_URL, {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + iamToken, 'Content-Type': 'application/json' },
+    headers: { Authorization: iamToken ? 'Bearer ' + iamToken : 'Api-Key ' + apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       query: { searchType: 'SEARCH_TYPE_RU', queryText: q, familyMode: 'FAMILY_MODE_STRICT', page: String(Math.max(0, Math.min(9, Number(page) || 0))) },
       docsOnPage: String(PER_PAGE),

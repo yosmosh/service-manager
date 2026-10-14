@@ -56,6 +56,21 @@ test('search: asks Yandex as the function, and signs every result', async () => 
   assert.deepStrictEqual(await images.search('   ', 0, 'iam-token', fake), []);
 });
 
+test('search on our own computer: with the API key from env when there is no IAM token; neither — an error', async () => {
+  let sent = null;
+  const fake = async (url, opts) => { sent = { url, opts }; return respond(200, Buffer.from(JSON.stringify({ rawData: Buffer.from(XML).toString('base64') }))); };
+  await assert.rejects(images.search('Дрель', 0, undefined, fake), /no credentials/);
+  assert.strictEqual(sent, null, 'nothing sent without credentials');
+  process.env.SEARCH_API_KEY = 'AQVN-test';
+  try {
+    const r = await images.search('Дрель', 0, undefined, fake);
+    assert.strictEqual(sent.opts.headers.Authorization, 'Api-Key AQVN-test');
+    assert.strictEqual(r.length, 1);
+    await images.search('Дрель', 0, 'iam-token', fake);
+    assert.strictEqual(sent.opts.headers.Authorization, 'Bearer iam-token', 'in the cloud the function\'s token still');
+  } finally { delete process.env.SEARCH_API_KEY; }
+});
+
 test('fetch: only signed addresses; original first, thumbnail when it fails; bytes decide the type', async () => {
   const [hit] = images.parseResults(XML);
   const sig = images.sign(hit.url, hit.thumb);

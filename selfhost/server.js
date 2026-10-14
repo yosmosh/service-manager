@@ -40,8 +40,10 @@ const { createLocalFiles } = require('./files-local');
 const store = createFileStore(path.join(DATA_DIR, 'db'));
 const files = createLocalFiles({ dir: path.join(DATA_DIR, 'files'), publicBase: PUBLIC_ORIGIN, secret: crypto.createHash('sha256').update('files:' + env.AUTH_SECRET).digest('hex') });
 const accounts = createAccounts({ store, auth });
-// The product photo search is Yandex's (it needs Yandex's own credentials): not available here.
-const images = { search: async () => { throw new Error('no image search here'); }, fetchImage: async () => null };
+// The product photo search is Yandex's: here once an API key for it is set (SEARCH_API_KEY in
+// env, deploy\selfhost-windows.ps1 -ImageSearch), and not before.
+const images = env.SEARCH_API_KEY ? require(path.join(API_SRC, 'images'))
+  : { search: async () => { throw new Error('no image search here'); }, fetchImage: async () => null };
 const api = createApi({ store, auth, files, accounts, images });
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
