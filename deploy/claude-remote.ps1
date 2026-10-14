@@ -37,8 +37,17 @@ $ver = { param($p) try { [version](((& $p --version 2>$null) -join '') -replace 
 $exe = $found | Sort-Object { & $ver $_ } | Select-Object -Last 1
 if (-not $exe) { throw 'Claude Code was not found on this computer' }
 
-Set-Location (Split-Path -Parent $PSScriptRoot)
+# Sessions start in claude-remote\ — not the home folder itself, whose trust Claude Code never
+# saves (so every start would stop on the question). Its CLAUDE.md points at the project here,
+# its settings add this folder to the workspace, and its memory folder is a junction to ours.
+$work = Join-Path (Split-Path -Parent $PSScriptRoot) 'claude-remote'
+if (-not (Test-Path (Join-Path $work 'CLAUDE.md'))) { throw "$work is missing — see the commit that made it" }
+Set-Location $work
 $Host.UI.RawUI.WindowTitle = 'Claude remote - Sad Budushego'
+# One server is enough: another start (a second sign-in, a double click) leaves the running one.
+if (-not $Interactive -and (Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | Where-Object { $_.CommandLine -match 'remote-control' -and $_.CommandLine -match 'sad-budushego' })) {
+  Write-Output 'The Remote Control server is already running.'; Start-Sleep -Seconds 5; return
+}
 Write-Output "Claude Code $((& $exe --version) -join ''), Remote Control — open the Claude app (or claude.ai/code) → Code on the phone."
 if ($Interactive) { & $exe --remote-control 'sad-budushego' }
 else { & $exe remote-control --name 'sad-budushego' --permission-mode auto }
