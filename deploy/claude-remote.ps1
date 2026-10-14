@@ -50,4 +50,4 @@ if (-not $Interactive -and (Get-CimInstance Win32_Process -Filter "Name='claude.
 }
 Write-Output "Claude Code $((& $exe --version) -join ''), Remote Control — open the Claude app (or claude.ai/code) → Code on the phone."
 if ($Interactive) { & $exe --remote-control 'sad-budushego' }
-else { & $exe remote-control --name 'sad-budushego' --permission-mode auto }
+else { & $exe remote-control --name 'sad-budushego' --permission-mode auto --spawn=same-dir }
