@@ -1655,7 +1655,8 @@ async function openSettingsModal() {
   if (isOwner && _YDB) _showBackupStatus();
 }
 
-// The nightly backup (Yandex function «backup», 03:00 Moscow) leaves its report in
+// The nightly backup (since the move to the owner's computer: selfhost/cloud-backup.js, after the
+// 00:30 snapshot; before it, the Yandex function «backup») leaves its report in
 // appdata/backup_status: the last run, and the last one that went well. Shown to the owner in
 // Настройки, so a backup that silently stopped working is noticed.
 // A night may be missed (an outage); two in a row turn the line red.
@@ -1679,7 +1680,7 @@ async function _showBackupStatus() {
     ? '💾 <b>Резервной копии ещё нет</b>' + (last && last.error ? ' — ошибка: ' + _escHtml(last.error) : '')
     : `💾 <b>Резервная копия: ${when(ok.at)}</b>${files}${fresh ? ' ✅' : ' — <b>давно не обновлялась, проверьте!</b>'}`
       + (last && !last.ok && last.at !== ok.at ? `<div style="margin-top:4px">⚠️ Последний запуск ${when(last.at)} с ошибкой: ${_escHtml(last.error || '')}</div>` : '')
-      + '<div style="margin-top:4px;font-size:11px;opacity:.8">Каждую ночь; копии данных хранятся год, файлы — без срока. Копия также скачивается на компьютер владельца.</div>';
+      + '<div style="margin-top:4px;font-size:11px;opacity:.8">Каждую ночь — с компьютера-сервера в облако Yandex (удалить оттуда компьютер не может); копии данных хранятся год, файлы — без срока.</div>';
 }
 
 function saveNotifyConfig() {

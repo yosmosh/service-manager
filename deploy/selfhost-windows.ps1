@@ -19,6 +19,9 @@
 #   ... -RefreshServiceKey read the service key from Lockbox again (yc signs in through the
 #                          browser) — only after it was changed there; otherwise the one kept
 #                          in env is used and an update asks nothing
+#   ... -CloudBackup       the nightly copy to the cloud (selfhost/cloud-backup.js): a key of the
+#                          service account «backup», which adds to the backup bucket and can't
+#                          delete (yc signs in through the browser); run again to replace the key
 #
 # What it sets up, in C:\SadBudushego:
 #   app\         the app (replaced as a whole on every update)
@@ -39,6 +42,7 @@ param(
   [switch]$Restart,
   [switch]$Stop,
   [switch]$RefreshServiceKey,
+  [switch]$CloudBackup,
   [string]$Root = 'C:\SadBudushego',
   [switch]$Elevated
 )
@@ -57,7 +61,7 @@ $installLog = Join-Path $logs 'install.log'
 $me = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not ([Security.Principal.WindowsPrincipal]$me).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Elevated', '-Root', "`"$Root`"")
-  foreach ($s in 'ImportData', 'SetOwnerPassword', 'ResetPasswords', 'Restart', 'Stop', 'RefreshServiceKey') { if ((Get-Variable $s).Value) { $a += "-$s" } }
+  foreach ($s in 'ImportData', 'SetOwnerPassword', 'ResetPasswords', 'Restart', 'Stop', 'RefreshServiceKey', 'CloudBackup') { if ((Get-Variable $s).Value) { $a += "-$s" } }
   Write-Output 'Windows will ask for permission; the work goes on in a new window.'
   $p = Start-Process powershell.exe -Verb RunAs -ArgumentList $a -Wait -PassThru
   if (Test-Path $installLog) { Get-Content $installLog -Encoding UTF8 | Where-Object { $_ -notmatch '^\*{10}|^(Start|End) time|^(Username|RunAs User|Configuration Name|Machine|Host Application|Process ID|PSVersion|PSEdition|PSCompatibleVersions|BuildVersion|CLRVersion|WSManStackVersion|PSRemotingProtocolVersion|SerializationVersion|Windows PowerShell transcript)' } }
@@ -231,6 +235,26 @@ try {
       elseif (-not $e['SERVICE_KEY']) { $e['SERVICE_KEY'] = & $secret; Write-Output '== service key: Lockbox not reachable — a new one; the Vercel functions will not reach this server until it is set' }
       elseif (-not $RefreshServiceKey) { Write-Output '== service key: the one kept here (-RefreshServiceKey reads it from Lockbox again)' }
       $serviceKey = $null
+      # The copy in the cloud (selfhost/cloud-backup.js): a static access key of the service account
+      # «backup» — which adds to sad-budushego-backup and can't delete. Made by yc (it may sign in
+      # through the browser), read into memory, written to env, never shown; a key made before is
+      # deleted once the new one is kept.
+      if ($CloudBackup) {
+        if (-not (Test-Path $yc)) { Write-Output '== cloud backup: NO KEY — yc is not on this computer' }
+        else {
+          $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+          $made = ((& $yc iam access-key create --service-account-name backup --description 'Сад Будущего: ночная копия с компьютера-сервера в облако' --format json 2>$null | Out-String) | ConvertFrom-Json -ErrorAction SilentlyContinue)
+          $ErrorActionPreference = $eap
+          if ($made -and $made.access_key.key_id -and $made.secret) {
+            $oldRef = $e['BACKUP_KEY_REF']
+            $e['BACKUP_KEY_ID'] = $made.access_key.key_id; $e['BACKUP_KEY_SECRET'] = $made.secret; $e['BACKUP_KEY_REF'] = $made.access_key.id
+            Write-Output '== cloud backup: a key of the account «backup» (adds to the backup, never deletes) — every night after the snapshot'
+            if ($oldRef) { $ErrorActionPreference = 'Continue'; $null = (& $yc iam access-key delete $oldRef 2>$null); $ErrorActionPreference = $eap }
+          } else { Write-Output '== cloud backup: NO KEY — yc could not make one (sign in to Yandex in the browser it opens, then run this again)'; $script:failed = $true }
+          $made = $null
+        }
+      } elseif ($e['BACKUP_KEY_ID']) { Write-Output '== cloud backup: the key kept here' }
+      else { Write-Output '== cloud backup: not set up (-CloudBackup)' }
       if (-not (Test-Path $envFile)) { New-Item -ItemType File $envFile | Out-Null }
       Grant $envFile @("$($sid.System):F", "$($sid.Admins):F", "$($sid.LocalService):R") -Only
       [IO.File]::WriteAllLines($envFile, [string[]]@(foreach ($k in $e.Keys) { "$k=$($e[$k])" }), (New-Object Text.UTF8Encoding $false))

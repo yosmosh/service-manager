@@ -8,6 +8,7 @@
 // for HTTPS (<root>\caddy\caddy.exe, <root>\Caddyfile), starts either again whenever it stops,
 // keeps their output in <root>\logs, takes a snapshot of the data every night at 00:30
 // (<root>\data\backups, sixty kept) — and soon after starting, if the last is over a day old —
+// copies it with the new files to the cloud (selfhost/cloud-backup.js, once its key is in env),
 // and keeps ports 80 and 443 of the router in front open to this computer (selfhost/upnp.js).
 
 'use strict';
@@ -88,13 +89,29 @@ function endLeftovers() {
   } catch (e) {}
 }
 
-function snapshot() {
+// A step of the backup, its output in <root>\logs\backup.log; then() when it went well.
+function backupStep(name, script, args, then) {
   const log = logger('backup');
-  const child = spawn(process.execPath, [path.join(APP, 'selfhost', 'admin.js'), 'snapshot'], { cwd: ROOT, env: appEnv, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [path.join(APP, 'selfhost', script)].concat(args), { cwd: ROOT, env: appEnv, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const out = d => log(new Date().toISOString() + ' ' + d);
   child.stdout.on('data', out);
   child.stderr.on('data', out);
-  child.on('error', e => say('snapshot could not start: ' + e.message));
+  child.on('error', e => say(name + ' could not start: ' + e.message));
+  child.on('exit', code => { if (code === 0 && then) then(); });
+  return child;
+}
+// The copy in the cloud (selfhost/cloud-backup.js) — once a key is set, and one run at a time.
+let cloudRunning = false;
+function cloudBackup() {
+  if (!settings.BACKUP_KEY_ID || cloudRunning) return;
+  cloudRunning = true;
+  const child = backupStep('cloud backup', 'cloud-backup.js', []);
+  child.on('close', () => { cloudRunning = false; });
+  child.on('error', () => { cloudRunning = false; });
+}
+// The night's snapshot, and then its copy to the cloud with the files not there yet.
+function snapshot() {
+  backupStep('snapshot', 'admin.js', ['snapshot'], cloudBackup);
 }
 function nightly() {
   const now = new Date();
@@ -127,7 +144,10 @@ endLeftovers();
 keep('server', process.execPath, [path.join(APP, 'selfhost', 'server.js')], Object.assign({}, appEnv, { SADB_PARENT_PID: String(process.pid) }));
 keep('caddy', CADDY, ['run', '--config', path.join(ROOT, 'Caddyfile'), '--adapter', 'caddyfile'], caddyEnv);
 nightly();
+// Soon after starting: the snapshot if it's over a day old (the cloud copy follows it), else the
+// cloud copy alone — a night it missed (the computer was restarting) caught up on.
 if (snapshotOverdue()) setTimeout(snapshot, 2 * 60 * 1000);
+else setTimeout(cloudBackup, 3 * 60 * 1000);
 
 // The router in front of this computer keeps 80 and 443 open to it (selfhost/upnp.js) — checked
 // soon after starting and every ten minutes. UPNP_PORTS=off in <root>\env turns it off.
