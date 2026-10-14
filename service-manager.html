@@ -3795,21 +3795,50 @@ function closeMobileSidebar() {
 // 📹 Камеры: the security cameras are watched in their own app, SuperLive Plus — this only opens
 // it. Nothing of the cameras passes through the site and the site keeps none of their passwords
 // (the owner's choice, 2026-10-14: a shortcut, not a connection). The app has no link of its own
-// that opens it, so on an iPhone its App Store page opens, with «Открыть» when it is installed; on
-// Android, its Google Play page.
+// that opens it; on an iPhone the iOS Shortcuts app does it — a shortcut named «SuperLive» that
+// opens the app, made once on the phone (the first press explains how; once it's made, this phone
+// remembers it). Its App Store page stays as the other way in; on Android, its Google Play page.
 const CAMERA_APP = {
   ios: 'https://apps.apple.com/app/id1058758642',
   android: 'https://play.google.com/store/apps/details?id=com.tvt.superliveplus',
+  shortcut: 'shortcuts://run-shortcut?name=SuperLive',
 };
-function openCameraApp() {
-  closeMobileSidebar();
-  const ua = navigator.userAgent || '';
-  const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const url = ios ? CAMERA_APP.ios : /Android/.test(ua) ? CAMERA_APP.android : null;
-  if (!url) { alert('Камеры смотрятся в приложении SuperLive Plus на телефоне — откройте «📹 Камеры» с телефона.'); return; }
-  // In a window of its own: this page stays as it is — leaving it would mean signing in again.
+const _CAM_SHORTCUT_KEY = 'sadb_camera_shortcut';
+const _camIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function _camShortcutMade(set) {
+  try { if (set !== undefined) localStorage.setItem(_CAM_SHORTCUT_KEY, set ? '1' : ''); return localStorage.getItem(_CAM_SHORTCUT_KEY) === '1'; }
+  catch (e) { return !!set; }
+}
+// A page in a window of its own: this one stays as it is — leaving it would mean signing in again.
+function _camOpenPage(url) {
   const w = window.open(url, '_blank');
   if (w) w.opener = null; else location.href = url;
+}
+function openCameraApp() {
+  closeMobileSidebar();
+  if (_camIos()) {
+    if (_camShortcutMade()) { location.href = CAMERA_APP.shortcut; return; }
+    _openCameraSetup();
+    return;
+  }
+  if (/Android/.test(navigator.userAgent || '')) { _camOpenPage(CAMERA_APP.android); return; }
+  alert('Камеры смотрятся в приложении SuperLive Plus на телефоне — откройте «📹 Камеры» с телефона.');
+}
+// The first press on an iPhone: how to make the shortcut, then open the app through it.
+function _openCameraSetup() {
+  _modalGen++;
+  document.getElementById('modal-title').textContent = '📹 Камеры';
+  const step = (n, html) => `<div style="display:flex;gap:10px;margin-bottom:8px"><b style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#2563eb;color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center">${n}</b><div>${html}</div></div>`;
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-size:13px;margin-bottom:12px">Чтобы эта кнопка сразу открывала <b>SuperLive Plus</b>, один раз создайте на этом iPhone быструю команду:</div>
+    ${step(1, 'Откройте приложение <b>«Быстрые команды»</b> (Shortcuts) и нажмите <b>＋</b>.')}
+    ${step(2, '<b>«Добавить действие»</b> → найдите <b>«Открыть приложение»</b> → выберите <b>SuperLive Plus</b>.')}
+    ${step(3, 'Назовите команду <b style="font-family:monospace;background:#f1f5f9;padding:1px 6px;border-radius:4px">SuperLive</b> — точно так, латиницей — и нажмите «Готово».')}
+    <div style="font-size:12px;color:#64748b;margin-top:10px">Safari может спросить «Открыть в “Быстрых командах”?» — нажмите «Открыть». Если команда удалена или названа иначе, «Быстрые команды» скажут, что её нет: создайте её снова.</div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="closeModal();_camOpenPage(CAMERA_APP.ios)">App Store</button>
+    <button class="btn btn-primary" onclick="_camShortcutMade(true);closeModal();location.href=CAMERA_APP.shortcut">✅ Команда создана — открыть</button>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
 // ---------- Going back ----------
