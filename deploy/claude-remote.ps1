@@ -49,5 +49,15 @@ if (-not $Interactive -and (Get-CimInstance Win32_Process -Filter "Name='claude.
   Write-Output 'The Remote Control server is already running.'; Start-Sleep -Seconds 5; return
 }
 Write-Output "Claude Code $((& $exe --version) -join ''), Remote Control — open the Claude app (or claude.ai/code) → Code on the phone."
-if ($Interactive) { & $exe --remote-control 'sad-budushego' }
-else { & $exe remote-control --name 'sad-budushego' --permission-mode auto --spawn=same-dir }
+if ($Interactive) { & $exe --remote-control 'sad-budushego'; return }
+# The server again whenever it stops — a phone left waiting otherwise sees its session freeze.
+# Closing this window is what ends it. Its debug log says why it stopped, if it does.
+$logDir = Join-Path $env:LOCALAPPDATA 'SadBudushego'
+New-Item -ItemType Directory -Force $logDir | Out-Null
+while ($true) {
+  $log = Join-Path $logDir ('claude-remote-' + (Get-Date -Format 'yyyy-MM-dd') + '.log')
+  & $exe remote-control --name 'sad-budushego' --permission-mode auto --spawn=same-dir --debug-file $log
+  Write-Output ''
+  Write-Output "$(Get-Date -Format 'HH:mm:ss') The server stopped (exit $LASTEXITCODE) — starting it again in 10 s. Close this window to stop it for good."
+  Start-Sleep -Seconds 10
+}
