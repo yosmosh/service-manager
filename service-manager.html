@@ -533,6 +533,7 @@ img{max-width:100%;height:auto}
       <span>🔔 Заявки на закупку</span>
       <span id="req-badge" style="display:none;background:#ef4444;color:white;border-radius:10px;font-size:10px;font-weight:700;padding:2px 8px;min-width:20px;text-align:center;flex-shrink:0"></span>
     </div>
+    <div class="nav-item owner-only" id="nav-cameras" onclick="openCameraApp()">📹 Камеры</div>
   </div>
   <div>
     <div class="sidebar-section-title">Аналитика</div>
@@ -3789,6 +3790,26 @@ function toggleMobileSidebar() {
 function closeMobileSidebar() {
   document.getElementById('sidebar').classList.remove('mobile-open');
   document.getElementById('sidebar-overlay').classList.remove('active');
+}
+
+// 📹 Камеры: the security cameras are watched in their own app, SuperLive Plus — this only opens
+// it. Nothing of the cameras passes through the site and the site keeps none of their passwords
+// (the owner's choice, 2026-10-14: a shortcut, not a connection). The app has no link of its own
+// that opens it, so on an iPhone its App Store page opens, with «Открыть» when it is installed; on
+// Android, its Google Play page.
+const CAMERA_APP = {
+  ios: 'https://apps.apple.com/app/id1058758642',
+  android: 'https://play.google.com/store/apps/details?id=com.tvt.superliveplus',
+};
+function openCameraApp() {
+  closeMobileSidebar();
+  const ua = navigator.userAgent || '';
+  const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const url = ios ? CAMERA_APP.ios : /Android/.test(ua) ? CAMERA_APP.android : null;
+  if (!url) { alert('Камеры смотрятся в приложении SuperLive Plus на телефоне — откройте «📹 Камеры» с телефона.'); return; }
+  // In a window of its own: this page stays as it is — leaving it would mean signing in again.
+  const w = window.open(url, '_blank');
+  if (w) w.opener = null; else location.href = url;
 }
 
 // ---------- Going back ----------
