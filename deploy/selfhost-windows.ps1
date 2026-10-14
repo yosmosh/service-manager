@@ -16,6 +16,9 @@
 #                          pointed here, so that the HTTPS certificates are fetched at once)
 #   ... -Stop              stop it and keep it stopped, also after a restart of the computer
 #                          (before the address goes back to Yandex)
+#   ... -RefreshServiceKey read the service key from Lockbox again (yc signs in through the
+#                          browser) — only after it was changed there; otherwise the one kept
+#                          in env is used and an update asks nothing
 #
 # What it sets up, in C:\SadBudushego:
 #   app\         the app (replaced as a whole on every update)
@@ -35,6 +38,7 @@ param(
   [switch]$ResetPasswords,
   [switch]$Restart,
   [switch]$Stop,
+  [switch]$RefreshServiceKey,
   [string]$Root = 'C:\SadBudushego',
   [switch]$Elevated
 )
@@ -53,7 +57,7 @@ $installLog = Join-Path $logs 'install.log'
 $me = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not ([Security.Principal.WindowsPrincipal]$me).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Elevated', '-Root', "`"$Root`"")
-  foreach ($s in 'ImportData', 'SetOwnerPassword', 'ResetPasswords', 'Restart', 'Stop') { if ((Get-Variable $s).Value) { $a += "-$s" } }
+  foreach ($s in 'ImportData', 'SetOwnerPassword', 'ResetPasswords', 'Restart', 'Stop', 'RefreshServiceKey') { if ((Get-Variable $s).Value) { $a += "-$s" } }
   Write-Output 'Windows will ask for permission; the work goes on in a new window.'
   $p = Start-Process powershell.exe -Verb RunAs -ArgumentList $a -Wait -PassThru
   if (Test-Path $installLog) { Get-Content $installLog -Encoding UTF8 | Where-Object { $_ -notmatch '^\*{10}|^(Start|End) time|^(Username|RunAs User|Configuration Name|Machine|Host Application|Process ID|PSVersion|PSEdition|PSCompatibleVersions|BuildVersion|CLRVersion|WSManStackVersion|PSRemotingProtocolVersion|SerializationVersion|Windows PowerShell transcript)' } }
@@ -200,7 +204,8 @@ try {
       Grant (Join-Path $app 'service-manager.html') @("$($sid.Me):M")
 
       # Settings, made once. The service key is the one the Vercel functions use (Lockbox) —
-      # read into memory, written to env, never shown.
+      # read into memory, written to env, never shown; read only when env has none yet (or with
+      # -RefreshServiceKey), since yc may have to sign in through the browser and waits for it.
       $e = Read-Env
       $secret = { $b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); -join ($b | ForEach-Object { $_.ToString('x2') }) }
       $defaults = [ordered]@{ PORT = '8080'; HOST = '127.0.0.1'; APP_DIR = $app; DATA_DIR = (Join-Path $Root 'data'); PUBLIC_ORIGIN = 'https://www.sad-budushego.ru'; API_ORIGIN = 'https://api.sad-budushego.ru' }
@@ -209,7 +214,7 @@ try {
       $serviceKey = ''
       $env:YC_CLI_INITIALIZATION_SILENCE = 'true'
       $yc = Join-Path $env:USERPROFILE 'yandex-cloud\bin\yc.exe'
-      if (Test-Path $yc) {
+      if ((Test-Path $yc) -and ($RefreshServiceKey -or -not $e['SERVICE_KEY'])) {
         $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
         $iam = ((& $yc iam create-token 2>$null | Out-String) -split "`r?`n" | Where-Object { $_ -match '^t1.' } | Select-Object -First 1)
         $ErrorActionPreference = $eap
@@ -224,6 +229,7 @@ try {
       }
       if ($serviceKey -and $serviceKey.Length -ge 32) { $e['SERVICE_KEY'] = $serviceKey; Write-Output '== service key: the one the Vercel functions use' }
       elseif (-not $e['SERVICE_KEY']) { $e['SERVICE_KEY'] = & $secret; Write-Output '== service key: Lockbox not reachable — a new one; the Vercel functions will not reach this server until it is set' }
+      elseif (-not $RefreshServiceKey) { Write-Output '== service key: the one kept here (-RefreshServiceKey reads it from Lockbox again)' }
       $serviceKey = $null
       if (-not (Test-Path $envFile)) { New-Item -ItemType File $envFile | Out-Null }
       Grant $envFile @("$($sid.System):F", "$($sid.Admins):F", "$($sid.LocalService):R") -Only
