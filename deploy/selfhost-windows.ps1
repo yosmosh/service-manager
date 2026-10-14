@@ -94,7 +94,13 @@ try {
   }
 
   function Stop-App {
-    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue }
+    # Disabled while this script works, or its five-minute trigger starts it again half-way — as on
+    # 2026-10-14, with the new app but the settings from before (Start-App then found it running and
+    # left it so). Start-App enables it again.
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+      Disable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null
+      Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    }
     # And whatever it had started (the server, Caddy, a snapshot) — by where they run from.
     $deadline = (Get-Date).AddSeconds(20)
     do {
