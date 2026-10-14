@@ -1,11 +1,33 @@
-﻿# Opens a Claude Code session on this computer that you can continue from anywhere — the Claude
-# app on the phone, or claude.ai — through Remote Control. It runs in this window, in the
-# project folder; closing the window ends it. Uses the newest Claude Code on this computer (the
-# installed one, or one that came with an editor's extension), signed in as you.
+﻿# Claude Code on this computer, reachable from anywhere — the Claude app on the phone, or
+# claude.ai/code — through Remote Control. Uses the newest Claude Code on this computer (the
+# installed one, or one that came with an editor's extension), signed in as you, in the project
+# folder.
 #
 #   powershell -ExecutionPolicy Bypass -File deploy\claude-remote.ps1
+#        the Remote Control server: from the phone you open sessions on this computer whenever
+#        you like (it keeps running in this window — minimised is fine; closing it ends it)
+#   ... -Install       also start it by itself, minimised, every time you sign in to Windows
+#                      (a shortcut in Startup) — after the night's update restart it comes back
+#                      as soon as someone signs in
+#   ... -Uninstall     no longer start it at sign-in
+#   ... -Interactive   one session in this window instead, also continued from the phone
+
+param([switch]$Install, [switch]$Uninstall, [switch]$Interactive)
 
 $ErrorActionPreference = 'Stop'
+$lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Claude remote - Sad Budushego.lnk'
+if ($Uninstall) { Remove-Item $lnk -ErrorAction SilentlyContinue; Write-Output 'No longer started at sign-in.'; return }
+if ($Install) {
+  $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+  $s.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $s.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+  $s.WorkingDirectory = Split-Path -Parent $PSScriptRoot
+  $s.WindowStyle = 7   # minimised
+  $s.Description = 'Claude Code Remote Control for Сад Будущего (deploy\claude-remote.ps1)'
+  $s.Save()
+  Write-Output "Starts by itself at every sign-in to Windows: $lnk"
+}
+
 $found = @(@("$env:USERPROFILE\.local\bin\claude.exe") | Where-Object { Test-Path $_ })
 foreach ($root in "$env:USERPROFILE\.antigravity-ide\extensions", "$env:USERPROFILE\.antigravity\extensions", "$env:USERPROFILE\.vscode\extensions") {
   $found += Get-ChildItem $root -Directory -Filter 'anthropic.claude-code-*' -ErrorAction SilentlyContinue |
@@ -16,5 +38,7 @@ $exe = $found | Sort-Object { & $ver $_ } | Select-Object -Last 1
 if (-not $exe) { throw 'Claude Code was not found on this computer' }
 
 Set-Location (Split-Path -Parent $PSScriptRoot)
-Write-Output "Claude Code $((& $exe --version) -join ''), Remote Control on — open the Claude app → Code to continue from the phone."
-& $exe --remote-control 'sad-budushego'
+$Host.UI.RawUI.WindowTitle = 'Claude remote - Sad Budushego'
+Write-Output "Claude Code $((& $exe --version) -join ''), Remote Control — open the Claude app (or claude.ai/code) → Code on the phone."
+if ($Interactive) { & $exe --remote-control 'sad-budushego' }
+else { & $exe remote-control --name 'sad-budushego' --permission-mode auto }
