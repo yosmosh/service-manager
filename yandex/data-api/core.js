@@ -176,9 +176,11 @@ function queryDate(fields) {
 // The budgets. Личный бюджет (finance_tx_personal): the owner and the administrators — and the
 // accountant its records other than cash (she pays the funds that go through a bank; cash never
 // passes through her). Its payouts for employees' receipts (finance_settlements): the owner and
-// the administrators. The files registry: without the documents of the records a role isn't
-// given. Writes keep to the same part: the accountant's write of Личный бюджет keeps the cash
-// records as the server has them; anyone else writing either field is refused.
+// the administrators. Writes keep to the same part: the accountant's write of Личный бюджет keeps
+// the cash records as the server has them; anyone else writing either field is refused.
+//
+// The files registry, for every account but the owner and the administrators: only the documents
+// named in what that account is given (namedFor).
 //
 // A provider (its own page and nothing else): of the shared state only its visits, its purchase
 // requests, and the owner's address the app emails when it records one — a list of what it is
@@ -198,20 +200,71 @@ const entryField = (e, k) => mapOf(e)[k];
 const entryId = e => strOf(entryField(e, 'id'));
 const asList = values => ({ arrayValue: { values } });
 const asMap = fields => ({ mapValue: { fields } });
-// A record of Личный бюджет (a Firestore Value) this role is given.
-// The warehouse keepers receive what Личный бюджет paid for their part ("после оплаты — на склад").
+const boolOf = v => !!(v && v.booleanValue === true);
+// The warehouse keepers receive what the budgets paid for their part ("после оплаты — на склад").
 const KEEPER_PART = { storekeeper: 'tools', cleaning_head: 'cleaning' };
-const personalSeen = (role, e) => !limited(role) || (role === 'accountant' && strOf(entryField(e, 'fund')) !== CASH_FUND)
-  || (!!KEEPER_PART[role] && strOf(entryField(e, 'whIntake')) === KEEPER_PART[role]);
+const keepersPart = (role, e) => !!KEEPER_PART[role] && strOf(entryField(e, 'whIntake')) === KEEPER_PART[role];
+// A record of Личный бюджет (a Firestore Value) this role is given.
+const personalSeen = (role, e) => !limited(role) || (role === 'accountant' && strOf(entryField(e, 'fund')) !== CASH_FUND) || keepersPart(role, e);
 
 // -- the staff (every signed-in role but the owner, the administrators and the providers) --
-// Of the shared state, not what only the owner and the administrator work with: Telegram (its
-// settings, with the code that subscribes to the daily digest; the drafts; the bot's log) and the
-// journal of everyone's actions — to which they still add their own lines, as the app does.
-const STAFF_HIDDEN = ['telegram_config', 'telegram_drafts', 'telegram_log', 'telegram_processed_ids', 'telegram_drafts_run_at', 'activity_log', 'anthropic_api_key'];
-// The kitchen's budget lives in the shared state; the ledger has nothing of theirs.
-const NO_LEDGER_ROLES = ['kitchen', 'kitchen_worker'];
+// Each is given, of the shared state, a list of what its own screens show (read) and save (write)
+// — a list, so that whatever the state carries later stays out of their reach too; a role not
+// listed gets none of it. Not on any list: Telegram (its settings, with the code that subscribes to
+// the daily digest; the drafts; the bot's log), the journal of everyone's actions (to which they
+// still add their own lines, as the app does), the providers' prices and payments.
+const KITCHEN_KEYS = ['kitchen_invoices', 'kitchen_deliveries', 'kitchen_inventory', 'kitchen_writeoffs', 'kitchen_suppliers', 'kitchen_daily_usage', 'kitchen_inv_snapshots'];
+// Журнал визитов and Обслуживание территории, to look at (with the projects' names on the works).
+const LOOKERS = ['svc_records', 'maint_works', 'projects'];
+const STAFF_STATE = {
+  // Приём доставки: the deliveries, the invoices that come with them, the stock they add to.
+  kitchen_worker: { read: ['kitchen_deliveries', 'kitchen_invoices', 'kitchen_inventory', 'kitchen_suppliers', 'kitchen_inv_snapshots'],
+    write: ['kitchen_deliveries', 'kitchen_invoices', 'kitchen_inventory', 'kitchen_inv_snapshots'] },
+  // Управление кухней, and Бюджет's Кухня, which she fills.
+  kitchen: { read: KITCHEN_KEYS.concat(['finance_tx_kitchen', 'finance_month_locks']), write: KITCHEN_KEYS.concat(['finance_tx_kitchen']) },
+  // Склад alone: its own documents (appdata/warehouse*), and in the ledger what was paid for its part.
+  storekeeper: { read: [], write: [] },
+  cleaning_head: { read: [], write: [] },
+  // Alexander approves Кухня (and ТО, in the ledger); the management only looks.
+  alexander: { read: LOOKERS.concat(['finance_tx_kitchen', 'finance_month_locks']), write: ['finance_tx_kitchen'] },
+  management: { read: LOOKERS.concat(['finance_tx_kitchen', 'finance_month_locks']), write: [] },
+  // The chief engineer: those two, the calendar (visits, works, SOS) and the providers' contacts —
+  // all to look at; in Бюджет only the invoices waiting for him (in the ledger).
+  engineer: { read: LOOKERS.concat(['sos_items', 'provider_contacts', 'finance_month_locks']), write: [] },
+  // The accountant pays Кухня too; the funds' names, and the projects her register names.
+  accountant: { read: ['finance_tx_kitchen', 'finance_month_locks', 'finance_funds', 'projects'], write: ['finance_tx_kitchen'] },
+};
+// For every one of them: whether Бюджет is published, and the addresses the app emails when one of
+// them does what another must act on (an invoice to approve, one ready to pay).
+const STAFF_COMMON = ['budget_released', 'notify_config'];
+const STAFF_NOTIFY = ['enabled', 'emailjs_key', 'emailjs_service', 'emailjs_template', 'owner_email', 'alexander_email', 'accountant_email', 'engineer_email'];
+const staffReads = role => STAFF_COMMON.concat((STAFF_STATE[role] || { read: [] }).read);
+const staffWrites = role => (STAFF_STATE[role] || { write: [] }).write;
 const staff = role => !!role && limited(role) && role !== 'provider';
+// The documents of appdata a staff account may open at all (and, for some, APPDATA_ROLES below).
+const STAFF_DOCS = ['state', 'finance_ledger', 'files_registry', '_ping'];
+
+// Of the ledger's budgets, the records each is given. ТО и зарплаты: all of it to Alexander (who
+// approves it), the accountant (who pays it) and the management (who look at it); to the chief
+// engineer the invoices that wait for his sign-off; to the warehouse keepers what was bought for
+// their part. Личный бюджет: personalSeen. The payouts for receipts: none of the staff.
+const LEDGER_LISTS = ['finance_tx_personal', 'finance_tx_maintenance', 'finance_settlements'];
+const MAINT_ALL = ['alexander', 'accountant', 'management'];
+const LEDGER_GIVEN = {
+  finance_tx_maintenance: MAINT_ALL.concat(['engineer'], Object.keys(KEEPER_PART)),
+  finance_tx_personal: ['accountant'].concat(Object.keys(KEEPER_PART)),
+};
+const ledgerGiven = (role, name) => !limited(role) || (LEDGER_GIVEN[name] || []).includes(role);
+function ledgerSeen(role, name, e) {
+  if (!limited(role)) return true;
+  if (!ledgerGiven(role, name)) return false;
+  if (name === 'finance_tx_personal') return personalSeen(role, e);
+  return MAINT_ALL.includes(role) || keepersPart(role, e) || (role === 'engineer' && boolOf(entryField(e, 'needsEngineer')));
+}
+// Who writes which: Alexander approves ТО, the chief engineer his part of it, the accountant pays
+// both. A writer given only part of a list has the rest kept as the server has it (mergeSeen).
+const LEDGER_WRITERS = { finance_tx_maintenance: ['alexander', 'accountant', 'engineer'], finance_tx_personal: ['accountant'] };
+const seesAll = (role, name) => !limited(role) || (name === 'finance_tx_maintenance' && MAINT_ALL.includes(role));
 // Lines added to the journal by someone who can't read it: new ones only, a few at a time, short.
 function appendOnly(current, sent, kinds) {
   const had = new Set(listOf(current).map(entryId));
@@ -244,81 +297,70 @@ function textsIn(v, out) {
   return out;
 }
 
-// The files of the records a budget-limited role isn't given — left out of the registry, and
-// not its to write. ledger: the ledger document's fields, parsed.
-function hiddenFileIds(role, ledger) {
-  const ids = new Set();
-  if (!limited(role)) return ids;
-  const add = v => { const s = strOf(v); if (s) ids.add(s); };
-  for (const e of listOf((ledger || {}).finance_tx_personal)) {
-    if (personalSeen(role, e)) continue;
-    for (const r of listOf(entryField(e, 'fileRefs'))) add(entryField(r, 'id'));
-    add(entryField(entryField(e, 'fileRef'), 'id'));
-  }
-  for (const s of listOf((ledger || {}).finance_settlements)) for (const v of listOf(entryField(s, 'fileIds'))) add(v);
-  if (NO_LEDGER_ROLES.includes(role)) for (const e of listOf((ledger || {}).finance_tx_maintenance)) {
-    for (const r of listOf(entryField(e, 'fileRefs'))) add(entryField(r, 'id'));
-    add(entryField(entryField(e, 'fileRef'), 'id'));
-  }
-  return ids;
+// The documents a caller's part of the files registry is worked out from: whatever names a file
+// in what it is given. ctx: the documents viewNeeds named, by path → their fields, parsed.
+const WAREHOUSE_DOCS = ['appdata/warehouse', 'appdata/warehouse_docs'];
+function namedFor(who, ctx) {
+  const role = roleOf(who), named = new Set();
+  if (role === 'provider') return textsIn(asMap(providerState(who.sub, ctx[STATE_DOC] || {})), named);
+  const st = ctx[STATE_DOC] || {};
+  for (const n of staffReads(role)) if (st[n] !== undefined) textsIn(st[n], named);
+  const lg = ctx[LEDGER_DOC] || {};
+  for (const n of Object.keys(lg)) for (const e of listOf(lg[n])) if (ledgerSeen(role, n, e)) textsIn(e, named);
+  for (const p of WAREHOUSE_DOCS) if (ctx[p]) for (const n of Object.keys(ctx[p])) textsIn(ctx[p][n], named);
+  return named;
 }
 
-// Does this document's view depend on who asks — and what does working it out need:
-// 'ledger' (the ledger's two budget fields) or 'state' (the provider's records)?
+// Does this document's view depend on who asks?
 function viewed(who, path) {
   const role = roleOf(who);
   if (role === 'provider' || staff(role)) return path === STATE_DOC || path === LEDGER_DOC || path === FILES_DOC;
   return limited(role) && (path === LEDGER_DOC || path === FILES_DOC);
 }
+// What working it out needs: [document path, its field names (null: all)] — for the registry, the
+// documents whose records name files (and, for the warehouse keepers, their own two).
 function viewNeeds(who, path) {
   if (path !== FILES_DOC || !viewed(who, path)) return null;
-  return roleOf(who) === 'provider' ? 'state' : 'ledger';
+  const role = roleOf(who);
+  if (role === 'provider') return [[STATE_DOC, ['svc_records', 'purchase_requests']]];
+  const out = [[STATE_DOC, staffReads(role)], [LEDGER_DOC, LEDGER_LISTS]];
+  if (WAREHOUSE_DOC_ROLES.includes(role)) WAREHOUSE_DOCS.forEach(p => out.push([p, null]));
+  return out;
 }
 
 // A document's fields (name → JSON text, as stored) as this caller is given them. ctx: what
-// viewNeeds named — { ledger } or { state } (fields, parsed).
+// viewNeeds named, by path.
 function viewFields(who, path, texts, ctx) {
   if (!viewed(who, path)) return texts;
   const role = roleOf(who);
-  if (role === 'provider') {
-    if (path === LEDGER_DOC) return {};
-    if (path === STATE_DOC) {
-      const parsed = {};
-      for (const n of ['svc_records', 'purchase_requests', 'notify_config']) if (texts[n] !== undefined) parsed[n] = JSON.parse(texts[n]);
-      const mine = providerState(who.sub, parsed), out = {};
-      for (const n of Object.keys(mine)) out[n] = JSON.stringify(mine[n]);
-      return out;
-    }
+  if (path === FILES_DOC) {
     if (texts.files === undefined) return texts;
-    const named = textsIn(asMap(providerState(who.sub, (ctx || {}).state || {})), new Set());
+    const named = namedFor(who, ctx || {});
     const f = Object.fromEntries(Object.entries(mapOf(JSON.parse(texts.files))).filter(([id]) => named.has(id)));
     return Object.assign({}, texts, { files: JSON.stringify(asMap(f)) });
   }
-  const out = Object.assign({}, texts);
+  if (role === 'provider') {
+    if (path === LEDGER_DOC) return {};
+    const parsed = {};
+    for (const n of ['svc_records', 'purchase_requests', 'notify_config']) if (texts[n] !== undefined) parsed[n] = JSON.parse(texts[n]);
+    const mine = providerState(who.sub, parsed), out = {};
+    for (const n of Object.keys(mine)) out[n] = JSON.stringify(mine[n]);
+    return out;
+  }
+  const out = {};
   if (path === STATE_DOC) {
-    STAFF_HIDDEN.forEach(n => { delete out[n]; });
-    return out;
-  }
-  if (path === LEDGER_DOC) {
-    if (NO_LEDGER_ROLES.includes(role)) return {};
-    delete out.finance_settlements;
-    if (out.finance_tx_personal !== undefined) {
-      if (role !== 'accountant' && !KEEPER_PART[role]) delete out.finance_tx_personal;
-      else {
-        const v = JSON.parse(out.finance_tx_personal);
-        out.finance_tx_personal = JSON.stringify(v && v.arrayValue ? asList(listOf(v).filter(e => personalSeen(role, e))) : v);
-      }
+    for (const n of staffReads(role)) if (texts[n] !== undefined) out[n] = texts[n];
+    if (out.notify_config !== undefined) {
+      const v = JSON.parse(out.notify_config);
+      out.notify_config = JSON.stringify(isMap(v) ? asMap(Object.fromEntries(Object.entries(mapOf(v)).filter(([k]) => STAFF_NOTIFY.includes(k)))) : v);
     }
     return out;
   }
-  if (out.files !== undefined) {
-    const hidden = hiddenFileIds(role, (ctx || {}).ledger);
-    const v = JSON.parse(out.files);
-    if (hidden.size && isMap(v)) {
-      const f = Object.assign({}, mapOf(v));
-      hidden.forEach(id => { delete f[id]; });
-      out.files = JSON.stringify(asMap(f));
-    }
+  // The ledger: of each list it is given, the records it is given.
+  for (const n of Object.keys(texts)) {
+    if (!LEDGER_LISTS.includes(n) || !ledgerGiven(role, n)) continue;
+    const v = JSON.parse(texts[n]);
+    out[n] = seesAll(role, n) || !(v && v.arrayValue) ? texts[n] : JSON.stringify(asList(listOf(v).filter(e => ledgerSeen(role, n, e))));
   }
   return out;
 }
@@ -362,52 +404,67 @@ function providerStateWrite(pid, paths, fields, current) {
   return out;
 }
 
+// A writer's records of a ledger list it is given in part, put back among those it isn't: null when
+// it sends one it isn't given, new or one the server keeps from it (for the accountant: never a cash
+// record). The accountant's she may add and take off, as before; the chief engineer only changes
+// his (approves, rejects) — never adds one, never takes one off.
+function mergeSeen(role, name, sent, cur) {
+  const seen = e => ledgerSeen(role, name, e);
+  const keptIds = new Set(cur.filter(e => !seen(e)).map(entryId));
+  if (sent.some(e => !seen(e) || keptIds.has(entryId(e)))) return null;
+  const onlyChange = role === 'engineer';
+  const had = new Set(cur.map(entryId));
+  if (onlyChange && sent.some(e => !had.has(entryId(e)))) return null;
+  const mine = new Map(sent.map(e => [entryId(e), e]));
+  const merged = [];
+  for (const e of cur) {
+    if (!seen(e)) merged.push(e);
+    else if (mine.has(entryId(e))) { merged.push(mine.get(entryId(e))); mine.delete(entryId(e)); }
+    else if (onlyChange) merged.push(e);
+  }
+  for (const e of sent) if (mine.has(entryId(e))) { merged.push(e); mine.delete(entryId(e)); }
+  return merged;
+}
+
 // A write by this caller, within its part: null when it reaches beyond it; else the body's
 // fields to write, completed with what the server has of the rest. current(names): those
-// fields as stored now, parsed (within the write). ctx: for the files registry —
-// { ledger } (a budget-limited role), or { state, registry, orphan(id) } (a provider).
+// fields as stored now, parsed (within the write). ctx: for the files registry — what
+// viewNeeds named (by path), the registry's ids (registry) and orphan(id).
 async function viewWrite(who, path, maskPaths, fields, current, ctx) {
   if (!viewed(who, path)) return fields;
   if (!maskPaths || !maskPaths.length) return null;
   const role = roleOf(who), paths = maskPaths.map(splitFieldPath);
-  if (role === 'provider') {
-    if (path === STATE_DOC) return providerStateWrite(who.sub, paths, fields, await current(['svc_records', 'purchase_requests', 'activity_log']));
-    if (path !== FILES_DOC) return null;
-    // A document of its own records, one it has just uploaded (new to the registry), or one no
-    // record names any more (its own photo, taken off a visit).
-    const named = textsIn(asMap(providerState(who.sub, ctx.state || {})), new Set());
+  if (path === FILES_DOC) {
+    // A document of what it is given, one it has just uploaded (new to the registry), or one no
+    // record names any more (taken off a record).
+    const named = namedFor(who, ctx || {});
     for (const s of paths) {
       if (s[0] !== 'files' || s.length !== 2) return null;
       if (!(named.has(s[1]) || !ctx.registry.has(s[1]) || await ctx.orphan(s[1]))) return null;
     }
     return fields;
   }
-  if (path === FILES_DOC) {
-    const hidden = hiddenFileIds(role, (ctx || {}).ledger);
-    return paths.every(s => s[0] !== 'files' || (s.length > 1 && !hidden.has(s[1]))) ? fields : null;
+  if (role === 'provider') {
+    return path === STATE_DOC ? providerStateWrite(who.sub, paths, fields, await current(['svc_records', 'purchase_requests', 'activity_log'])) : null;
   }
   if (path === STATE_DOC) {
-    // What the staff aren't given they don't write — but the journal, where they add their lines.
-    if (paths.some(s => STAFF_HIDDEN.includes(s[0]) && (s[0] !== 'activity_log' || s.length > 1))) return null;
+    // Only what its own screens save — and the journal, where it adds its lines.
+    const may = staffWrites(role);
+    if (paths.some(s => (s[0] === 'activity_log' ? s.length > 1 : !may.includes(s[0])))) return null;
     if (!paths.some(s => s[0] === 'activity_log')) return fields;
     const log = appendOnly((await current(['activity_log'])).activity_log, (fields || {}).activity_log, null);
     return log ? Object.assign({}, fields, { activity_log: log }) : null;
   }
-  if (NO_LEDGER_ROLES.includes(role)) return null;
-  if (paths.some(s => s[0] === 'finance_settlements' || (s[0] === 'finance_tx_personal' && (role !== 'accountant' || s.length > 1)))) return null;
-  if (!paths.some(s => s[0] === 'finance_tx_personal')) return fields;
-  const sent = listOf((fields || {}).finance_tx_personal), cur = listOf((await current(['finance_tx_personal'])).finance_tx_personal);
-  const keptIds = new Set(cur.filter(e => !personalSeen(role, e)).map(entryId));
-  // Only records she is given: never a cash record, new or one the server has.
-  if (sent.some(e => !personalSeen(role, e) || keptIds.has(entryId(e)))) return null;
-  const mine = new Map(sent.map(e => [entryId(e), e]));
-  const merged = [];
-  for (const e of cur) {
-    if (!personalSeen(role, e)) merged.push(e);
-    else if (mine.has(entryId(e))) { merged.push(mine.get(entryId(e))); mine.delete(entryId(e)); }
+  // The ledger: only the lists it writes, each whole; of one it is given in part, its records.
+  if (paths.some(s => s.length > 1 || !(LEDGER_WRITERS[s[0]] || []).includes(role))) return null;
+  const out = Object.assign({}, fields);
+  for (const [name] of paths) {
+    if (seesAll(role, name)) continue;
+    const merged = mergeSeen(role, name, listOf((fields || {})[name]), listOf((await current([name]))[name]));
+    if (!merged) return null;
+    out[name] = asList(merged);
   }
-  for (const e of sent) if (mine.has(entryId(e))) { merged.push(e); mine.delete(entryId(e)); }
-  return Object.assign({}, fields, { finance_tx_personal: asList(merged) });
+  return out;
 }
 
 // People's passport details, for the receipts printed when cash is handed over: the owner and
@@ -439,7 +496,10 @@ function allowed(role, action, docPath) {
     // the owner and the administrators, who share the reports.
     if (p.id.startsWith('share_')) return action === 'read' || SHARE_ROLES.includes(role);
     const only = APPDATA_ROLES[p.id];
-    return only ? only.includes(role) : true;
+    if (only) return only.includes(role);
+    // The staff: the app's shared documents and the connection check — nothing else, a document
+    // added later included.
+    return !staff(role) || STAFF_DOCS.includes(p.id);
   }
   // The Telegram messages are the server functions' alone (the bot, the digest); no screen reads them.
   return false;

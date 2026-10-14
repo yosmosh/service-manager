@@ -340,12 +340,13 @@ test('a provider is given its own: its months, its requests, the owner\'s addres
   assert.ok(all.telegram_config && all.activity_log, 'the owner: all of it');
 });
 
-test('the warehouse keepers: of Личный бюджет what was paid for their part — read, never written', async () => {
+test('the warehouse keepers: of the budgets what was paid for their part — read, never written', async () => {
   const { t, T, read, ids } = await budgets();
-  await t.call('PATCH', 'v1/documents/appdata/finance_ledger', { service: true, query: { 'updateMask.fieldPaths': ['finance_tx_personal'] }, body: { fields: {
+  await t.call('PATCH', 'v1/documents/appdata/finance_ledger', { service: true, query: { 'updateMask.fieldPaths': ['finance_tx_personal', 'finance_tx_maintenance'] }, body: { fields: {
     finance_tx_personal: A_([rec('c1', 'Наличные', 'f1'), rec('b1', 'РООИ-ММЕО', 'f2'), rec('w1', 'РООИ-ММЕО', 'fw1', { whIntake: S('tools') }), rec('w2', 'Наличные', 'fw2', { whIntake: S('cleaning') })]),
+    finance_tx_maintenance: A_([rec('m1', '', 'f4'), rec('mw', '', 'fmw', { whIntake: S('tools') })]),
   } } });
-  await t.call('PATCH', 'v1/documents/appdata/files_registry', { service: true, query: { 'updateMask.fieldPaths': ['files.fw1', 'files.fw2'] }, body: { fields: { files: M_({ fw1: M_({ url: S('w1') }), fw2: M_({ url: S('w2') }) }) } } });
+  await t.call('PATCH', 'v1/documents/appdata/files_registry', { service: true, query: { 'updateMask.fieldPaths': ['files.fw1', 'files.fw2', 'files.fmw'] }, body: { fields: { files: M_({ fw1: M_({ url: S('w1') }), fw2: M_({ url: S('w2') }), fmw: M_({ url: S('mw') }) }) } } });
   const owner = T.owner;
   const keeper = async (id, user) => {
     await t.call('POST', 'v1/auth:setAccount', { token: owner, body: { kind: 'role', id, user, password: user + '-pass-1' } });
@@ -353,11 +354,15 @@ test('the warehouse keepers: of Личный бюджет what was paid for thei
   };
   const sk = await keeper('storekeeper', 'sklad'), cl = await keeper('cleaning_head', 'klining');
   const l1 = await read(sk, 'appdata/finance_ledger'), l2 = await read(cl, 'appdata/finance_ledger');
-  assert.deepStrictEqual([ids(l1.finance_tx_personal), ids(l1.finance_tx_maintenance), l1.finance_settlements], [['w1'], ['m1'], undefined], 'the storekeeper: the tools paid for');
-  assert.deepStrictEqual(ids(l2.finance_tx_personal), ['w2'], 'cleaning: its part, even paid in cash');
-  assert.deepStrictEqual(Object.keys((await read(sk, 'appdata/files_registry')).files.mapValue.fields).sort(), ['f4', 'fw1'], 'the documents of those');
-  const r = await t.call('PATCH', 'v1/documents/appdata/finance_ledger', { token: sk, query: { 'updateMask.fieldPaths': ['finance_tx_personal'] }, body: { fields: { finance_tx_personal: A_([rec('w1', 'РООИ-ММЕО', 'fw1', { whIntake: S('tools') })]) } } });
-  assert.strictEqual(r.status, 403, 'never written');
+  assert.deepStrictEqual([ids(l1.finance_tx_personal), ids(l1.finance_tx_maintenance), l1.finance_settlements], [['w1'], ['mw'], undefined], 'the storekeeper: the tools paid for — not the rest of ТО');
+  assert.deepStrictEqual([ids(l2.finance_tx_personal), ids(l2.finance_tx_maintenance)], [['w2'], []], 'cleaning: its part, even paid in cash');
+  assert.deepStrictEqual(Object.keys((await read(sk, 'appdata/files_registry')).files.mapValue.fields).sort(), ['fmw', 'fw1'], 'the documents of those');
+  for (const name of ['finance_tx_personal', 'finance_tx_maintenance']) {
+    const r = await t.call('PATCH', 'v1/documents/appdata/finance_ledger', { token: sk, query: { 'updateMask.fieldPaths': [name] }, body: { fields: { [name]: A_([rec(name === 'finance_tx_personal' ? 'w1' : 'mw', 'РООИ-ММЕО', 'fw1', { whIntake: S('tools') })]) } } });
+    assert.strictEqual(r.status, 403, name + ': never written');
+  }
+  const st = await read(sk, 'appdata/state');
+  assert.deepStrictEqual(Object.keys(st).sort(), ['budget_released'], 'of the state: whether Бюджет is published');
   for (const [tok, path, want] of [[sk, 'appdata/warehouse', 404], [cl, 'appdata/warehouse_docs', 404], [T.kitchen, 'appdata/warehouse', 403], [T.alexander, 'appdata/warehouse_docs', 403]]) {
     assert.strictEqual((await t.call('GET', 'v1/documents/' + path, { token: tok })).status, want, path);
   }
@@ -374,7 +379,7 @@ test('the staff: not Telegram, not the journal — to which they still add their
   const K = await tok('kitchen', 'kitchen123'), A = await tok('alexander', 'alex123'), O = await tok('Yosmosh', 'own-secret'), AD = await tok('admin', 'adm-secret');
   const st = async token => (await t.call('GET', 'v1/documents/appdata/state', { token })).body.fields || {};
   for (const [who, token] of [['kitchen', K], ['alexander', A]]) {
-    assert.deepStrictEqual(Object.keys(await st(token)).sort(), ['budget_released', 'notify_config', 'sos_items'], who);
+    assert.deepStrictEqual(Object.keys(await st(token)).sort(), ['budget_released', 'notify_config'], who + ': not even the SOS list, which neither screen shows');
   }
   assert.deepStrictEqual(Object.keys(await st(O)).sort(), ['activity_log', 'budget_released', 'notify_config', 'sos_items', 'telegram_config', 'telegram_drafts', 'telegram_log'], 'the owner');
   assert.ok((await st(AD)).telegram_drafts, 'the administrator: the drafts');
@@ -385,8 +390,139 @@ test('the staff: not Telegram, not the journal — to which they still add their
   assert.deepStrictEqual(log(), ['a1', 'a2'], 'its line added, the rest kept');
   assert.strictEqual((await W(K, { activity_log: A_(Array.from({ length: 6 }, (_, i) => M_({ id: S('x' + i), type: S('maint') }))) }, ['activity_log'])).status, 403, 'not many at once');
   for (const name of ['telegram_config', 'telegram_drafts', 'telegram_log']) assert.strictEqual((await W(K, { [name]: A_([]) }, [name])).status, 403, name);
-  assert.strictEqual((await W(K, { sos_items: A_([M_({ id: S('s1') }), M_({ id: S('s2') })]) }, ['sos_items'])).status, 200, 'the rest as before');
+  assert.strictEqual((await W(K, { sos_items: A_([M_({ id: S('s1') }), M_({ id: S('s2') })]) }, ['sos_items'])).status, 403, 'nor what its screens never save');
+  assert.strictEqual((await W(K, { kitchen_invoices: A_([M_({ id: S('i1') })]) }, ['kitchen_invoices'])).status, 200, 'what they do, as before');
   assert.strictEqual((await W(O, { telegram_drafts: A_([]) }, ['telegram_drafts'])).status, 200, 'the owner');
+});
+
+// Every role signed in, over a state with one entry of everything the live one carries, each naming
+// a document of its own; the ledger's lists, with an invoice waiting for the chief engineer (e1); a
+// warehouse act; and the registry of all those documents, plus one no record names.
+async function everyone() {
+  const t = await imported();
+  const one = (id, file) => A_([M_({ id: S(id), fileIds: A_([S(file)]) })]);
+  await t.seedState({
+    svc_records: M_({ energiya_2026_9: M_({ visits: A_([M_({ fileIds: A_([S('f-svc')]) })]) }) }),
+    payment_records: M_({ energiya_2026_9: M_({ paid: { booleanValue: true } }) }),
+    provider_contacts: M_({ energiya: M_({ phone: S('+7 900 000') }) }), provider_prices: M_({ energiya: { integerValue: '28000' } }),
+    maint_works: one('w1', 'f-maint'), sos_items: one('s1', 'f-sos'), projects: A_([M_({ id: S('p1'), name: S('Крыша') })]),
+    purchase_requests: one('q1', 'f-req'),
+    finance_tx_kitchen: one('k1', 'f-ktx'), finance_funds: A_([M_({ id: S('fd1'), name: S('Наличные') })]), finance_month_locks: M_({ kitchen: M_({}) }),
+    kitchen_invoices: one('ki1', 'f-kinv'), kitchen_deliveries: one('kd1', 'f-kdel'), kitchen_inventory: one('kv1', 'f-kinvt'), kitchen_writeoffs: one('kw1', 'f-kwo'),
+    kitchen_suppliers: one('ks1', 'f-ksup'), kitchen_daily_usage: one('ku1', 'f-kuse'), kitchen_inv_snapshots: one('kn1', 'f-ksnap'),
+    activity_log: A_([M_({ id: S('a1'), type: S('budget') })]), telegram_config: M_({ digest: M_({ code: S('123456') }) }), telegram_drafts: one('d1', 'f-tg'),
+    notify_config: M_({ enabled: { booleanValue: true }, owner_email: S('o@x'), alexander_email: S('al@x'), accountant_email: S('b@x'), engineer_email: S('e@x'),
+      emailjs_key: S('k'), emailjs_service: S('s'), emailjs_template: S('t'), fcm_vapid: S('v'), fcm_token: S('tok') }),
+    budget_released: { booleanValue: true }, anthropic_api_key: S('sk-x'),
+  });
+  await t.call('PATCH', 'v1/documents/appdata/finance_ledger', { service: true, body: { fields: {
+    finance_tx_maintenance: A_([rec('m1', '', 'f-m1'), rec('e1', '', 'f-e1', { needsEngineer: { booleanValue: true } })]),
+    finance_tx_personal: A_([rec('c1', 'Наличные', 'f-cash1'), rec('b1', 'РООИ-ММЕО', 'f-b1')]),
+    finance_settlements: A_([M_({ id: S('s1'), fileIds: A_([S('f-set')]) })]),
+  } } });
+  await t.call('PATCH', 'v1/documents/appdata/warehouse_docs', { service: true, body: { fields: { wh_docs: one('wd1', 'f-wh') } } });
+  const all = ['f-svc', 'f-maint', 'f-sos', 'f-req', 'f-ktx', 'f-kinv', 'f-kdel', 'f-kinvt', 'f-kwo', 'f-ksup', 'f-kuse', 'f-ksnap', 'f-tg', 'f-m1', 'f-e1', 'f-cash1', 'f-b1', 'f-set', 'f-wh', 'f-orphan'];
+  await t.call('PATCH', 'v1/documents/appdata/files_registry', { service: true, body: { fields: { files: M_(Object.fromEntries(all.map(id => [id, M_({ url: S('u-' + id) })]))) } } });
+  const tok = async (u, p) => (await login(t, u, p)).body.token;
+  const T = { owner: await tok('Yosmosh', 'own-secret'), kitchen: await tok('kitchen', 'kitchen123'), worker: await tok('worker', 'worker123'),
+    alexander: await tok('alexander', 'alex123'), management: await tok('management', 'board2026'), buh: await tok('buh', 'buh-secret') };
+  for (const [id, user] of [['storekeeper', 'sklad'], ['cleaning_head', 'klining'], ['engineer', 'inzh']]) {
+    await t.call('POST', 'v1/auth:setAccount', { token: T.owner, body: { kind: 'role', id, user, password: user + '-pass-1' } });
+    T[id] = await tok(user, user + '-pass-1');
+  }
+  const read = async (token, path, query) => { const r = await t.call('GET', 'v1/documents/' + path, { token, query }); return r.status === 200 ? r.body.fields || {} : r.status; };
+  const ids = v => (v && v.arrayValue ? (v.arrayValue.values || []).map(e => e.mapValue.fields.id.stringValue) : v);
+  return { t, T, read, ids };
+}
+
+test('the staff: each given of the shared state what its own screens use, and its documents alone', async () => {
+  const { t, T, read } = await everyone();
+  const common = ['budget_released', 'notify_config'];
+  const want = {
+    worker: ['kitchen_deliveries', 'kitchen_inv_snapshots', 'kitchen_inventory', 'kitchen_invoices', 'kitchen_suppliers'],
+    kitchen: ['finance_month_locks', 'finance_tx_kitchen', 'kitchen_daily_usage', 'kitchen_deliveries', 'kitchen_inv_snapshots', 'kitchen_inventory', 'kitchen_invoices', 'kitchen_suppliers', 'kitchen_writeoffs'],
+    storekeeper: [], cleaning_head: [],
+    alexander: ['finance_month_locks', 'finance_tx_kitchen', 'maint_works', 'projects', 'svc_records'],
+    management: ['finance_month_locks', 'finance_tx_kitchen', 'maint_works', 'projects', 'svc_records'],
+    engineer: ['finance_month_locks', 'maint_works', 'projects', 'provider_contacts', 'sos_items', 'svc_records'],
+    buh: ['finance_funds', 'finance_month_locks', 'finance_tx_kitchen', 'projects'],
+  };
+  const files = {
+    worker: ['f-kdel', 'f-kinv', 'f-kinvt', 'f-ksnap', 'f-ksup'],
+    kitchen: ['f-kdel', 'f-kinv', 'f-kinvt', 'f-ksnap', 'f-ksup', 'f-ktx', 'f-kuse', 'f-kwo'],
+    storekeeper: ['f-wh'], cleaning_head: ['f-wh'],
+    alexander: ['f-e1', 'f-ktx', 'f-m1', 'f-maint', 'f-svc'], management: ['f-e1', 'f-ktx', 'f-m1', 'f-maint', 'f-svc'],
+    engineer: ['f-e1', 'f-maint', 'f-sos', 'f-svc'],
+    buh: ['f-b1', 'f-e1', 'f-ktx', 'f-m1'],
+  };
+  for (const who of Object.keys(want)) {
+    const s = await read(T[who], 'appdata/state');
+    assert.deepStrictEqual(Object.keys(s).sort(), common.concat(want[who]).sort(), who + ': the state');
+    assert.deepStrictEqual(Object.keys(s.notify_config.mapValue.fields).sort(),
+      ['accountant_email', 'alexander_email', 'emailjs_key', 'emailjs_service', 'emailjs_template', 'enabled', 'engineer_email', 'owner_email'], who + ': the addresses it emails, no more');
+    assert.deepStrictEqual(Object.keys((await read(T[who], 'appdata/files_registry')).files.mapValue.fields).sort(), files[who], who + ': the documents of what it is given');
+    assert.deepStrictEqual(await read(T[who], 'appdata/state', { 'mask.fieldPaths': ['telegram_config', 'payment_records', 'provider_prices', 'activity_log'] }), {}, who + ': asking for others by name');
+    assert.strictEqual(await read(T[who], 'appdata/some_new_document'), 403, who + ': a document added later');
+  }
+  assert.strictEqual(await read(T.owner, 'appdata/some_new_document'), 404, 'the owner: there is none');
+  assert.strictEqual(Object.keys(await read(T.owner, 'appdata/state')).length, 24, 'the owner: all of it');
+  const q = { structuredQuery: { from: [{ collectionId: 'appdata' }], where: { fieldFilter: { field: { fieldPath: 'date' }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: '2000' } } } } };
+  assert.strictEqual((await t.call('POST', 'v1/documents:runQuery', { token: T.kitchen, body: q })).status, 403, 'nor by a query');
+});
+
+test('the staff save only what their screens save; the journal they add to', async () => {
+  const { t, T } = await everyone();
+  const W = (token, name) => t.call('PATCH', 'v1/documents/appdata/state', { token, query: { 'updateMask.fieldPaths': [name] }, body: { fields: { [name]: A_([M_({ id: S('n1') })]) } } }).then(r => r.status);
+  const cases = {
+    worker: { 200: ['kitchen_deliveries', 'kitchen_invoices', 'kitchen_inventory', 'kitchen_inv_snapshots'], 403: ['kitchen_suppliers', 'kitchen_writeoffs', 'finance_tx_kitchen'] },
+    kitchen: { 200: ['kitchen_writeoffs', 'kitchen_suppliers', 'kitchen_daily_usage', 'finance_tx_kitchen'], 403: ['finance_month_locks', 'svc_records', 'sos_items'] },
+    alexander: { 200: ['finance_tx_kitchen'], 403: ['maint_works', 'svc_records', 'projects', 'finance_month_locks'] },
+    management: { 200: [], 403: ['finance_tx_kitchen', 'maint_works', 'svc_records'] },
+    engineer: { 200: [], 403: ['svc_records', 'provider_contacts', 'sos_items', 'maint_works'] },
+    buh: { 200: ['finance_tx_kitchen'], 403: ['finance_funds', 'projects', 'payment_records'] },
+    storekeeper: { 200: [], 403: ['budget_released', 'notify_config', 'wh_items'] },
+  };
+  for (const who of Object.keys(cases)) {
+    for (const n of cases[who][200]) assert.strictEqual(await W(T[who], n), 200, who + ' saves ' + n);
+    for (const n of cases[who][403].concat(['telegram_config', 'anthropic_api_key'])) assert.strictEqual(await W(T[who], n), 403, who + ' never ' + n);
+    assert.strictEqual((await t.call('PATCH', 'v1/documents/appdata/state', { token: T[who], query: { 'updateMask.fieldPaths': ['activity_log'] }, body: { fields: { activity_log: A_([M_({ id: S('a-' + who), type: S('budget') })]) } } })).status, 200, who + ': a line of the journal');
+  }
+  assert.strictEqual(JSON.parse(t.store.docs.get('appdata/state').fields.activity_log).arrayValue.values.length, 8, 'every line added, none lost');
+  assert.strictEqual(await W(T.owner, 'telegram_config'), 200, 'the owner');
+});
+
+test('ТО и зарплаты: the chief engineer his invoices alone, changed but never added or taken off', async () => {
+  const { t, T, read, ids } = await everyone();
+  const l = await read(T.engineer, 'appdata/finance_ledger');
+  assert.deepStrictEqual([ids(l.finance_tx_maintenance), l.finance_tx_personal, l.finance_settlements], [['e1'], undefined, undefined], 'the invoice waiting for him');
+  for (const who of ['alexander', 'management', 'buh']) assert.deepStrictEqual(ids((await read(T[who], 'appdata/finance_ledger')).finance_tx_maintenance), ['m1', 'e1'], who + ': all of ТО');
+  const W = (token, list, name) => t.call('PATCH', 'v1/documents/appdata/finance_ledger', { token, query: { 'updateMask.fieldPaths': [name || 'finance_tx_maintenance'] }, body: { fields: { [name || 'finance_tx_maintenance']: A_(list) } } }).then(r => r.status);
+  const stored = () => JSON.parse(t.store.docs.get('appdata/finance_ledger').fields.finance_tx_maintenance).arrayValue.values;
+  const eng = { needsEngineer: { booleanValue: true } };
+  const approved = Object.assign({ approvals: M_({ engineer: M_({ approved: { booleanValue: true } }) }) }, eng);
+  assert.strictEqual(await W(T.engineer, [rec('e1', '', 'f-e1', approved)]), 200, 'he approves his');
+  assert.deepStrictEqual(stored().map(e => [e.mapValue.fields.id.stringValue, !!e.mapValue.fields.approvals]), [['m1', false], ['e1', true]], 'his approved, the rest as it was');
+  assert.strictEqual(await W(T.engineer, []), 200, 'an empty list…');
+  assert.deepStrictEqual(stored().map(e => e.mapValue.fields.id.stringValue), ['m1', 'e1'], '…takes nothing off');
+  for (const [what, list] of [['another invoice', [rec('m1', '', 'f-m1', approved)]], ['a new one', [rec('x1', '', 'f-x1', eng)]], ['his made not his', [rec('e1', '', 'f-e1')]]]) {
+    assert.strictEqual(await W(T.engineer, list), 403, 'the engineer: ' + what);
+  }
+  assert.strictEqual(await W(T.engineer, [rec('b1', 'РООИ-ММЕО', 'f-b1')], 'finance_tx_personal'), 403, 'the engineer: Личный бюджет');
+  for (const who of ['management', 'kitchen', 'storekeeper']) assert.strictEqual(await W(T[who], [rec('m1', '', 'f-m1'), rec('e1', '', 'f-e1', eng)]), 403, who + ' writes no budget');
+  for (const who of ['alexander', 'buh']) assert.strictEqual(await W(T[who], [rec('m1', '', 'f-m1', { status: S('approved') }), rec('e1', '', 'f-e1', approved)]), 200, who + ': ТО as before');
+  assert.strictEqual(await W(T.alexander, [], 'finance_settlements'), 403, 'nobody of the staff: the payouts');
+});
+
+test('the staff\'s documents: theirs, new ones, and ones no record names — written or deleted', async () => {
+  const { t, T } = await everyone();
+  const Wf = (token, id) => t.call('PATCH', 'v1/documents/appdata/files_registry', { token, query: { 'updateMask.fieldPaths': ['files.' + id] }, body: { fields: { files: M_({ [id]: M_({ url: S('x') }) }) } } }).then(r => r.status);
+  assert.deepStrictEqual([await Wf(T.kitchen, 'f-kinv'), await Wf(T.kitchen, 'f-new1'), await Wf(T.kitchen, 'f-orphan')], [200, 200, 200], 'the kitchen: its own, a new upload, one no record names');
+  assert.deepStrictEqual([await Wf(T.kitchen, 'f-svc'), await Wf(T.kitchen, 'f-b1'), await Wf(T.worker, 'f-kwo')], [403, 403, 403], 'what it isn\'t given');
+  assert.deepStrictEqual([await Wf(T.engineer, 'f-e1'), await Wf(T.engineer, 'f-m1')], [200, 403], 'the engineer');
+  assert.deepStrictEqual([await Wf(T.storekeeper, 'f-wh'), await Wf(T.storekeeper, 'f-maint')], [200, 403], 'the storekeeper');
+  const D = async (token, id) => (await t.call('DELETE', 'v1/files/' + id, { token })).status;
+  assert.deepStrictEqual([await D(T.kitchen, 'f-kinv'), await D(T.alexander, 'f-maint'), await D(T.buh, 'f-cash1')], [403, 403, 403], 'a document a record still names: no one of the staff deletes it');
+  assert.deepStrictEqual([await D(T.kitchen, 'f-orphan'), await D(T.owner, 'f-kdel')], [200, 200], 'one no record names; the owner, any');
 });
 
 test('share pages: written by the owner and the administrators, read by anyone with the link', async () => {

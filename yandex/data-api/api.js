@@ -51,16 +51,18 @@ const IMAGE_ROLES = ['owner', 'admin', 'storekeeper', 'cleaning_head', 'service'
 function createApi({ store, auth, files, accounts, images, now }) {
   const clock = now || (() => Date.now());
 
-  // What working out a caller's view of a document needs (core.viewNeeds): the ledger's two
-  // budget fields, or the shared state's provider records — parsed.
+  // What working out a caller's view of a document needs (core.viewNeeds): the documents whose
+  // records name its files — by path, their fields parsed.
   async function viewCtx(who, path) {
     const need = core.viewNeeds(who, path);
     if (!need) return null;
-    const names = need === 'ledger' ? ['finance_tx_personal', 'finance_settlements', 'finance_tx_maintenance'] : ['svc_records', 'purchase_requests'];
-    const d = await store.read(need === 'ledger' ? core.LEDGER_DOC : core.STATE_DOC, names);
-    const out = {};
-    if (d) for (const n of Object.keys(d.fields)) out[n] = JSON.parse(d.fields[n]);
-    return { [need]: out };
+    const ctx = {};
+    for (const [docPath, names] of need) {
+      const d = await store.read(docPath, names), out = {};
+      if (d) for (const n of Object.keys(d.fields)) out[n] = JSON.parse(d.fields[n]);
+      ctx[docPath] = out;
+    }
+    return ctx;
   }
   // No record names this file any more: the documents that keep records, as text.
   async function orphan(id) {
@@ -231,8 +233,9 @@ function createApi({ store, auth, files, accounts, images, now }) {
       const fm = /^v1\/files\/([A-Za-z0-9_-]{6,80})$/.exec(rest);
       if (fm && method === 'DELETE') {
         if (!core.allowed(role, 'file')) throw new HttpError(401, 'UNAUTHENTICATED', 'Sign in first');
-        // A provider deletes only a file no record names any more — its own photo, taken off a visit.
-        if (role === 'provider' && !(await orphan(fm[1]))) throw new HttpError(403, 'PERMISSION_DENIED', 'Not allowed');
+        // A provider or one of the staff deletes only a file no record names any more — a photo
+        // taken off a record. (The owner and the administrators, any.)
+        if (core.viewed(who, core.FILES_DOC) && !(await orphan(fm[1]))) throw new HttpError(403, 'PERMISSION_DENIED', 'Not allowed');
         await files.remove(fm[1]);
         return json(200, {});
       }
