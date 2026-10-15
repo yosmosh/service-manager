@@ -24,6 +24,8 @@
 #                          delete (yc signs in through the browser); run again to replace the key
 #   ... -ImageSearch       the warehouse's product photo search (Yandex's): an API key limited to
 #                          that search (yc signs in through the browser); run again to replace it
+#   ... -DriveDocs         the budgets' documents kept only as Google Drive links copied into the
+#                          app, beside the links (selfhost/drive-docs.js; a snapshot first)
 #
 # What it sets up, in C:\SadBudushego:
 #   app\         the app (replaced as a whole on every update)
@@ -46,6 +48,7 @@ param(
   [switch]$RefreshServiceKey,
   [switch]$CloudBackup,
   [switch]$ImageSearch,
+  [switch]$DriveDocs,
   [string]$Root = 'C:\SadBudushego',
   [switch]$Elevated
 )
@@ -64,7 +67,7 @@ $installLog = Join-Path $logs 'install.log'
 $me = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not ([Security.Principal.WindowsPrincipal]$me).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Elevated', '-Root', "`"$Root`"")
-  foreach ($s in 'ImportData', 'SetOwnerPassword', 'ResetPasswords', 'Restart', 'Stop', 'RefreshServiceKey', 'CloudBackup', 'ImageSearch') { if ((Get-Variable $s).Value) { $a += "-$s" } }
+  foreach ($s in 'ImportData', 'SetOwnerPassword', 'ResetPasswords', 'Restart', 'Stop', 'RefreshServiceKey', 'CloudBackup', 'ImageSearch', 'DriveDocs') { if ((Get-Variable $s).Value) { $a += "-$s" } }
   Write-Output 'Windows will ask for permission; the work goes on in a new window.'
   $p = Start-Process powershell.exe -Verb RunAs -ArgumentList $a -Wait -PassThru
   if (Test-Path $installLog) { Get-Content $installLog -Encoding UTF8 | Where-Object { $_ -notmatch '^\*{10}|^(Start|End) time|^(Username|RunAs User|Configuration Name|Machine|Host Application|Process ID|PSVersion|PSEdition|PSCompatibleVersions|BuildVersion|CLRVersion|WSManStackVersion|PSRemotingProtocolVersion|SerializationVersion|Windows PowerShell transcript)' } }
@@ -366,6 +369,18 @@ www.sad-budushego.ru, sad-budushego.ru {
       Invoke-Admin @('init-credentials')
     }
 
+    # ---- the budgets' Google Drive documents into the app's own files (selfhost/drive-docs.js) ----
+    # Downloaded beforehand into SadBudushego-Backup\drive-docs\cache (node selfhost\drive-docs.js
+    # fetch …), so the app is stopped only for the copying in; a snapshot of the data first.
+    if ($DriveDocs) {
+      $cache = Join-Path $env:USERPROFILE 'SadBudushego-Backup\drive-docs\cache'
+      New-Item -ItemType Directory -Force $cache | Out-Null
+      Write-Output '== a snapshot of the data, before the change'
+      Invoke-Admin @('snapshot')
+      Write-Output '== the budgets'' Google Drive documents into the app'
+      Invoke-Admin @('drive-docs', $cache)
+    }
+
     # ---- the owner's password: typed in this window, straight into admin.js ----
     if ($SetOwnerPassword) {
       Write-Output '== the owner''s name and new password (the password is not shown while typed)'
@@ -400,6 +415,11 @@ www.sad-budushego.ru, sad-budushego.ru {
   $failed = $true
   Write-Output "FAILED: $($_.Exception.Message)"
   Write-Output ($_.InvocationInfo.PositionMessage)
+  # Stop-App disabled the task, so nothing would start the site again: start it as it is now.
+  if (-not $Stop -and (Get-Command Start-App -ErrorAction SilentlyContinue) -and (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {
+    Write-Output '== starting the site again as it is'
+    try { Start-App } catch { Write-Output "NOT STARTED: $($_.Exception.Message)" }
+  }
 } finally {
   Stop-Transcript | Out-Null
   if ($Elevated) { Read-Host 'Готово — нажмите Enter, чтобы закрыть окно' | Out-Null }

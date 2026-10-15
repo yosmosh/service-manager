@@ -15,6 +15,8 @@
 //        -ResetPasswords opens it for the owner and deletes it after)
 //   sadb-admin accounts                    the account names (no passwords)
 //   sadb-admin snapshot [<dir>]            a backup in the same format; run nightly by cron
+//   sadb-admin drive-docs <cacheDir>       the budgets' Google Drive documents into the app's own
+//        files, beside their links (selfhost/drive-docs.js) — with the app stopped
 
 'use strict';
 
@@ -230,9 +232,16 @@ async function cmdSnapshot(args) {
   console.log(`Snapshot ${out}: ${Object.keys(documents).length} documents`);
 }
 
+async function cmdDriveDocs(args) {
+  if (!args[0]) die('Usage: drive-docs <cacheDir>');
+  const { attachAll } = require('./drive-docs');
+  await attachAll(openStore(), { cacheDir: path.resolve(args[0]), filesDir: path.join(DATA_DIR, 'files'), publicOrigin: PUBLIC_ORIGIN,
+    nextTime: core.nextTime, log: m => console.log(m) });
+}
+
 (async () => {
   const [cmd, ...args] = process.argv.slice(2);
-  const cmds = { import: cmdImport, 'init-credentials': cmdInitCredentials, 'set-password': cmdSetPassword, 'reset-passwords': cmdResetPasswords, accounts: cmdAccounts, snapshot: cmdSnapshot };
+  const cmds = { import: cmdImport, 'init-credentials': cmdInitCredentials, 'set-password': cmdSetPassword, 'reset-passwords': cmdResetPasswords, accounts: cmdAccounts, snapshot: cmdSnapshot, 'drive-docs': cmdDriveDocs };
   if (!cmds[cmd]) die('Commands: ' + Object.keys(cmds).join(', '));
   await cmds[cmd](args);
 })().catch(e => die(e && e.stack || String(e)));
